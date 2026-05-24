@@ -17,6 +17,13 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 如果迁移时报 `permission denied for schema public`，说明当前 RDS 应用账号只有连接权限、没有建表权限。请先用高权限账号参考 `script/prepare_rds_database.sql` 创建业务库并授权，再重新执行迁移。
 
+服务器上已通过 `star-page-backend.service` 常驻运行：
+
+```bash
+systemctl restart star-page-backend.service
+journalctl -u star-page-backend.service -f
+```
+
 ## 关键接口
 
 - `POST /api/generations`：创建页面生成任务。

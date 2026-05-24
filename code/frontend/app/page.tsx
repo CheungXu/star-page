@@ -36,6 +36,31 @@ type ProgressStep = {
   tokenSource?: "actual" | "estimated";
 };
 
+type StoredSession = {
+  id: string;
+  taskId?: string;
+  pageId?: string;
+  prompt: string;
+  status: GenerationStatus;
+  reasoning: string;
+  statusText: string;
+  pageUrl: string;
+  errorMessage: string;
+  progressSteps: ProgressStep[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+type HistoryItem = {
+  id: string;
+  title: string;
+  prompt: string;
+  pageUrl: string;
+  status: GenerationStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 function createInitialProgressSteps(): ProgressStep[] {
   return [
     {
@@ -63,9 +88,14 @@ function createInitialProgressSteps(): ProgressStep[] {
 
 const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
+const CURRENT_SESSION_KEY = "star-page-current-session";
+const HISTORY_KEY = "star-page-history";
 
 export default function HomePage() {
   const [prompt, setPrompt] = useState("");
+  const [currentSessionId, setCurrentSessionId] = useState("");
+  const [currentTaskId, setCurrentTaskId] = useState("");
+  const [currentPageId, setCurrentPageId] = useState("");
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [status, setStatus] = useState<GenerationStatus>("idle");
   const [reasoning, setReasoning] = useState("");
@@ -74,6 +104,8 @@ export default function HomePage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState("");
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [hasHydrated, setHasHydrated] = useState(false);
   const [previewMetrics, setPreviewMetrics] = useState({
     viewportWidth: PREVIEW_VIEWPORT_WIDTH,
     contentHeight: PREVIEW_DEFAULT_HEIGHT,
@@ -92,6 +124,56 @@ export default function HomePage() {
     return `${window.location.origin}${pageUrl}`;
   }, [pageUrl]);
 
+  useEffect(() => {
+    const history = readHistory();
+    setHistoryItems(history);
+
+    const session = readCurrentSession();
+    if (session) {
+      applyStoredSession(session);
+      if ((session.status === "thinking" || session.status === "creating") && session.taskId) {
+        connectToEvents(session.taskId);
+      }
+    }
+
+    setHasHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydrated || status === "idle" || !currentSessionId) return;
+
+    const now = new Date().toISOString();
+    const session: StoredSession = {
+      id: currentSessionId,
+      taskId: currentTaskId || undefined,
+      pageId: currentPageId || undefined,
+      prompt: submittedPrompt,
+      status,
+      reasoning,
+      statusText,
+      pageUrl,
+      errorMessage,
+      progressSteps,
+      createdAt: readCurrentSession()?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    writeCurrentSession(session);
+    setHistoryItems(upsertHistory(session));
+  }, [
+    currentSessionId,
+    currentTaskId,
+    currentPageId,
+    errorMessage,
+    hasHydrated,
+    pageUrl,
+    progressSteps,
+    reasoning,
+    status,
+    statusText,
+    submittedPrompt,
+  ]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedPrompt = prompt.trim();
@@ -106,6 +188,11 @@ export default function HomePage() {
     }
 
     eventSourceRef.current?.close();
+    const optimisticSessionId = createClientId();
+    const now = new Date().toISOString();
+    setCurrentSessionId(optimisticSessionId);
+    setCurrentTaskId("");
+    setCurrentPageId("");
     setSubmittedPrompt(trimmedPrompt);
     setStatus("thinking");
     setReasoning("");
@@ -121,6 +208,18 @@ export default function HomePage() {
     setStatusText("正在提交你的需求...");
     setProgressSteps(createInitialProgressSteps());
     setPrompt("");
+    writeCurrentSession({
+      id: optimisticSessionId,
+      prompt: trimmedPrompt,
+      status: "thinking",
+      reasoning: "",
+      statusText: "正在提交你的需求...",
+      pageUrl: "",
+      errorMessage: "",
+      progressSteps: createInitialProgressSteps(),
+      createdAt: now,
+      updatedAt: now,
+    });
 
     try {
       const response = await fetch("/api/generations", {
@@ -134,6 +233,9 @@ export default function HomePage() {
       }
 
       const data = (await response.json()) as CreateGenerationResponse;
+      setCurrentSessionId(data.task_id);
+      setCurrentTaskId(data.task_id);
+      setCurrentPageId(data.page_id);
       connectToEvents(data.task_id);
     } catch (error) {
       setStatus("failed");
@@ -143,6 +245,7 @@ export default function HomePage() {
   }
 
   function connectToEvents(taskId: string) {
+    eventSourceRef.current?.close();
     const source = new EventSource(`/api/generations/${taskId}/events`);
     eventSourceRef.current = source;
 
@@ -189,6 +292,7 @@ export default function HomePage() {
       setStatus("completed");
       setStatusText("页面已创建完成");
       setPageUrl(payload.url ?? "");
+      if (payload.page_id) setCurrentPageId(payload.page_id);
       setProgressSteps((current) =>
         current.map((step) => ({
           ...step,
@@ -217,6 +321,58 @@ export default function HomePage() {
       }
       source.close();
     };
+  }
+
+  function startNewChat() {
+    eventSourceRef.current?.close();
+    localStorage.removeItem(CURRENT_SESSION_KEY);
+    setCurrentSessionId("");
+    setCurrentTaskId("");
+    setCurrentPageId("");
+    setPrompt("");
+    setSubmittedPrompt("");
+    setStatus("idle");
+    setReasoning("");
+    setStatusText("描述你想创建的页面");
+    setPageUrl("");
+    setErrorMessage("");
+    setCopied(false);
+    setCopyFeedback("");
+    setProgressSteps(createInitialProgressSteps());
+    setPreviewMetrics({
+      viewportWidth: PREVIEW_VIEWPORT_WIDTH,
+      contentHeight: PREVIEW_DEFAULT_HEIGHT,
+      scale: 0.5,
+    });
+  }
+
+  function restoreHistoryItem(item: HistoryItem) {
+    const stored = readStoredSession(item.id);
+    if (!stored) return;
+
+    eventSourceRef.current?.close();
+    writeCurrentSession(stored);
+    applyStoredSession(stored);
+
+    if ((stored.status === "thinking" || stored.status === "creating") && stored.taskId) {
+      connectToEvents(stored.taskId);
+    }
+  }
+
+  function applyStoredSession(session: StoredSession) {
+    setCurrentSessionId(session.id);
+    setCurrentTaskId(session.taskId ?? "");
+    setCurrentPageId(session.pageId ?? "");
+    setSubmittedPrompt(session.prompt);
+    setPrompt("");
+    setStatus(session.status);
+    setReasoning(session.reasoning);
+    setStatusText(session.statusText);
+    setPageUrl(session.pageUrl);
+    setErrorMessage(session.errorMessage);
+    setProgressSteps(session.progressSteps.length ? session.progressSteps : createInitialProgressSteps());
+    setCopied(false);
+    setCopyFeedback("");
   }
 
   async function copyPageUrl() {
@@ -336,6 +492,29 @@ export default function HomePage() {
   return (
     <main className="workspace-shell">
       <section className="workspace-layout">
+        <nav className="history-sidebar" aria-label="历史创建">
+          <button className="new-chat-button" type="button" onClick={startNewChat} title="新对话">
+            +
+          </button>
+          <div className="history-title">历史创建</div>
+          <div className="history-list">
+            {historyItems.length === 0 ? (
+              <p className="history-empty">暂无历史</p>
+            ) : (
+              historyItems.map((item) => (
+                <button
+                  className={`history-item ${item.id === currentSessionId ? "active" : ""}`}
+                  key={item.id}
+                  type="button"
+                  onClick={() => restoreHistoryItem(item)}
+                >
+                  <span>{item.title}</span>
+                  <small>{formatHistoryTime(item.updatedAt)}</small>
+                </button>
+              ))
+            )}
+          </div>
+        </nav>
         <aside className="conversation-pane">
           <div className="conversation-scroll">
             <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`}>
@@ -413,15 +592,10 @@ export default function HomePage() {
                   <a href={absolutePageUrl} target="_blank" rel="noreferrer">
                     打开页面
                   </a>
-                  <button type="button" onClick={copyPageUrl}>
-                    复制链接
+                  <button className={copied ? "copied" : ""} type="button" onClick={copyPageUrl}>
+                    {copied ? "复制成功" : copyFeedback || "复制链接"}
                   </button>
                 </div>
-                {copyFeedback && (
-                  <div className={`copy-feedback ${copied ? "success" : "error"}`} role="status">
-                    {copyFeedback}
-                  </div>
-                )}
               </>
             )}
 
@@ -439,6 +613,74 @@ export default function HomePage() {
       </section>
     </main>
   );
+}
+
+function readCurrentSession(): StoredSession | null {
+  return readJson<StoredSession>(CURRENT_SESSION_KEY);
+}
+
+function writeCurrentSession(session: StoredSession): void {
+  localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(`${CURRENT_SESSION_KEY}:${session.id}`, JSON.stringify(session));
+}
+
+function readStoredSession(id: string): StoredSession | null {
+  return readJson<StoredSession>(`${CURRENT_SESSION_KEY}:${id}`);
+}
+
+function readHistory(): HistoryItem[] {
+  return readJson<HistoryItem[]>(HISTORY_KEY) ?? [];
+}
+
+function upsertHistory(session: StoredSession): HistoryItem[] {
+  const history = readHistory();
+  const item: HistoryItem = {
+    id: session.id,
+    title: buildHistoryTitle(session.prompt),
+    prompt: session.prompt,
+    pageUrl: session.pageUrl,
+    status: session.status,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
+
+  const nextHistory = [item, ...history.filter((entry) => entry.id !== session.id)].slice(0, 20);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(nextHistory));
+  return nextHistory;
+}
+
+function readJson<T>(key: string): T | null {
+  try {
+    const rawValue = localStorage.getItem(key);
+    return rawValue ? (JSON.parse(rawValue) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildHistoryTitle(prompt: string): string {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  return normalized.length > 22 ? `${normalized.slice(0, 22)}...` : normalized || "未命名页面";
+}
+
+function formatHistoryTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function createClientId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function parsePayload(event: Event): SsePayload {

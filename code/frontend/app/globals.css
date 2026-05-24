@@ -30,7 +30,7 @@ textarea {
 }
 
 .workspace-shell {
-  width: min(1440px, calc(100% - 32px));
+  width: min(1540px, calc(100% - 32px));
   margin: 0 auto;
   padding: 24px 0;
 }
@@ -198,9 +198,87 @@ h1 {
 
 .workspace-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1fr);
   gap: 24px;
   height: calc(100vh - 48px);
+}
+
+.history-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  height: calc(100vh - 48px);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.06);
+  padding: 16px;
+}
+
+.new-chat-button {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 0;
+  border-radius: 16px;
+  background: #111827;
+  color: #fff;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.history-title {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.history-empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.history-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.history-item:hover,
+.history-item.active {
+  border-color: rgba(66, 133, 244, 0.18);
+  background: rgba(239, 246, 255, 0.82);
+}
+
+.history-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.history-item small {
+  color: #94a3b8;
+  font-size: 11px;
 }
 
 .conversation-pane {
@@ -575,26 +653,13 @@ h1 {
   padding: 0 18px;
 }
 
+.link-actions button.copied {
+  background: #16803c;
+}
+
 .link-actions a {
   background: #eef2ff;
   color: #3730a3;
-}
-
-.copy-feedback {
-  align-self: flex-end;
-  margin: 0 18px 16px auto;
-  border-radius: 999px;
-  background: #ecfdf3;
-  color: #16803c;
-  padding: 7px 12px;
-  font-size: 13px;
-  font-weight: 700;
-  text-align: right;
-}
-
-.copy-feedback.error {
-  background: #fef2f2;
-  color: #b42318;
 }
 
 @media (max-width: 860px) {
@@ -609,6 +674,11 @@ h1 {
 
   .workspace-layout {
     grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .history-sidebar {
+    height: auto;
   }
 
   .conversation-pane,

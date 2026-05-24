@@ -18,6 +18,17 @@
 右侧预览采用固定 `1200px` 桌面视口渲染 iframe，再整体缩放到预览区域。这样可以尽量还原用户单独打开页面时的桌面视觉效果，避免因为预览区域较窄触发生成页面的移动端布局。
 
 复制链接在 HTTP 环境下使用降级复制方案，点击后只显示单一反馈文案。
+当前成功反馈会直接更新按钮本身：按钮变为绿色并显示“复制成功”。
+
+## 本地状态保存
+
+前端使用浏览器 `localStorage` 保存：
+
+- 当前会话。
+- 最近历史创建记录。
+- 已完成页面链接、思考过程和创建节点状态。
+
+刷新页面后会恢复当前会话；只有点击左侧“新对话”按钮才会回到初始首页。该方案适合当前 demo，后续正式多用户版本应改为从后端用户页面列表读取历史记录。
 
 ## 本地运行
 
@@ -44,4 +55,11 @@ rm -rf .next/standalone/.next/static .next/standalone/public
 cp -r .next/static .next/standalone/.next/
 cp -r public .next/standalone/
 HOSTNAME=127.0.0.1 PORT=3000 npx -y -p node@22 node .next/standalone/server.js
+```
+
+服务器上已通过 `star-page-frontend.service` 常驻运行：
+
+```bash
+systemctl restart star-page-frontend.service
+journalctl -u star-page-frontend.service -f
 ```

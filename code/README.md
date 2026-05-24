@@ -39,7 +39,8 @@ python -m app.db.migrate
 - 开始生成后，切换为左侧 LLM 对话流、右侧页面预览的 1:1 双栏。
 - 左侧展示用户需求、模型思考过程和创建节点。
 - 右侧用固定 `1200px` 桌面视口渲染生成页，再缩放到预览区域，尽量还原单独打开页面时的视觉效果。
-- 复制链接支持 HTTP 环境下的降级复制，并给出单一成功/失败反馈。
+- 复制链接支持 HTTP 环境下的降级复制，成功后按钮变绿并显示“复制成功”。
+- 历史创建和当前会话暂存在浏览器 `localStorage`，刷新页面可恢复当前会话。
 
 ## Docker Compose
 
@@ -55,15 +56,28 @@ Compose 只将服务绑定在本机：
 
 公网仍只需要开放 `22/80/443`，由 Nginx 将 `/` 转发到前端，将 `/api/` 和 `/p/` 转发到后端。
 
-## 当前临时访问方式
+## 当前运行方式
 
-当前服务器上已临时启动：
+当前服务器上由 Nginx + systemd 常驻运行：
 
 - Next.js：`127.0.0.1:3000`
 - FastAPI：`127.0.0.1:8000`
 - Nginx：`http://8.138.118.232/`
 
-注意：这是临时后台进程，不是正式常驻部署。服务器重启或进程退出后，需要重新启动，后续应切换为 Docker Compose 或 systemd。
+当前已使用 systemd 常驻运行：
+
+```bash
+systemctl status star-page-backend.service
+systemctl status star-page-frontend.service
+```
+
+重启服务：
+
+```bash
+systemctl restart star-page-backend.service star-page-frontend.service
+```
+
+systemd 模板文件位于 `code/systemd/`，实际运行文件已复制到 `/etc/systemd/system/`。
 
 ## 后台队列升级提醒
 

@@ -20,6 +20,7 @@
 - 使用临时 Node 22 执行 `next build` 成功。
 - RDS 业务库已统一使用 `stars_page`，迁移已成功执行，`default_test` 默认用户已初始化。
 - 当前临时访问入口为 `http://8.138.118.232/`，Nginx 将 `/` 转发到 Next.js，将 `/api/` 和 `/p/` 转发到 FastAPI。
+- 前后端已改为 systemd 常驻运行：`star-page-backend.service` 和 `star-page-frontend.service`。
 - 当前 LLM 配置为 `LLM_PROVIDER=qwen`、`LLM_PROTOCOL=openai`、`LLM_MODEL=qwen3.7-max`。
 - 创建中阶段已增加进度节点：模型输出答案、上传文件中、记录数据库；模型输出节点优先展示模型返回的真实输出 token 数。
 - 前端交互调整为两态布局：未开始生成时保持 Gemini 风格居中输入框；开始生成后切换为左侧 LLM 对话流、右侧页面预览的 1:1 双栏布局，创建节点展示在思考过程下方。
@@ -69,9 +70,17 @@ cp -r public .next/standalone/
 
 ### 当前仍需补齐
 
-- 当前前后端是临时后台进程，服务器重启后不会自动恢复。后续应切换到 Docker Compose 或 systemd 常驻。
+- 当前前后端已使用 systemd 常驻。后续如果切换为 Docker Compose，需要同步替换 systemd 服务或避免两套进程同时占用端口。
 - 当前公网是 HTTP，复制链接已做降级复制；正式上线后应配置域名和 HTTPS。
 - 生成任务仍是 SSE 长连接，后续达到升级条件时再拆后台队列和 Worker。
+
+## 2026-05-24 晚间交互优化
+
+- 复制链接按钮不再向上弹出成功提示，点击后按钮本身变为绿色并显示“复制成功”。
+- 生成态增加左侧历史创建侧边栏，支持点击历史记录恢复会话。
+- 增加“新对话”按钮；刷新页面会恢复当前会话，只有点击新对话才回到初始首页。
+- 当前历史和会话状态保存在浏览器 `localStorage`，适合 demo；未来接入真实用户系统后，应改为后端页面列表和用户历史。
+- 已补充 `wiki/systemd-nextjs-fastapi-deployment.md`，记录 Next.js + FastAPI 早期 MVP 使用 systemd 常驻运行的通用要点。
 
 ## 后台队列升级提醒
 
