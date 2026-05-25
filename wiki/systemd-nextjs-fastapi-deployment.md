@@ -15,6 +15,15 @@
 3. Next.js standalone 每次重新构建后，要复制 `.next/static` 和 `public` 到 `.next/standalone/`。
 4. 如果后续改用 Docker Compose，需要先停止或替换 systemd 服务，避免端口冲突。
 
+## Next.js standalone 静态资源教训
+
+在服务运行中执行 `npm run build` 会重新生成 `.next/standalone`。如果构建后没有重启 `star-page-frontend.service`，运行目录可能缺少 `.next/standalone/.next/static`，表现为首页 HTML 能打开，但 `/_next/static/*.css` 返回 500，页面退化成裸 HTML。
+
+处理原则：
+
+- 构建后必须重启 `star-page-frontend.service`，让 `ExecStartPre` 重新复制 `.next/static` 和 `public`。
+- 不能只用首页 `200 OK` 判断部署成功，还要验证 CSS 资源返回 `200 text/css`。
+
 ## 常用命令
 
 ```bash

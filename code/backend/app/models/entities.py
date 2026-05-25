@@ -87,6 +87,7 @@ class GenerationTask(Base):
     extracted_file_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_html_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     llm_openai_extra_body_json: str | None = Field(default=None, alias="LLM_OPENAI_EXTRA_BODY_JSON")
     llm_max_tokens: int = Field(default=8192, alias="LLM_MAX_TOKENS")
     llm_temperature: float = Field(default=0.7, alias="LLM_TEMPERATURE")
+    llm_retry_attempts: int = Field(default=3, alias="LLM_RETRY_ATTEMPTS")
+    llm_retry_initial_delay_ms: int = Field(default=800, alias="LLM_RETRY_INITIAL_DELAY_MS")
+    llm_retry_max_delay_ms: int = Field(default=5000, alias="LLM_RETRY_MAX_DELAY_MS")
 
     object_storage_provider: str = Field(default="aliyun", alias="OBJECT_STORAGE_PROVIDER")
     object_storage_bucket: str = Field(default="", alias="OBJECT_STORAGE_BUCKET")

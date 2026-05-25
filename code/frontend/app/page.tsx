@@ -151,6 +151,7 @@ export default function HomePage() {
   const [copied, setCopied] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState("");
   const [thinkingExpanded, setThinkingExpanded] = useState(true);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [previewMetrics, setPreviewMetrics] = useState({
@@ -437,6 +438,65 @@ export default function HomePage() {
     }
   }
 
+  function renderHistorySidebar() {
+    return (
+      <nav className={`history-sidebar ${isSidebarCollapsed ? "collapsed" : ""}`} aria-label="历史创建">
+        <button
+          className="sidebar-icon-button sidebar-toggle-button"
+          type="button"
+          onClick={() => setIsSidebarCollapsed((value) => !value)}
+          title={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-label={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-expanded={!isSidebarCollapsed}
+        >
+          ✦
+        </button>
+        <button className="new-chat-button" type="button" onClick={startNewChat} title="新对话" aria-label="新对话">
+          +
+        </button>
+        <button
+          className="sidebar-icon-button"
+          type="button"
+          onClick={() => setIsSidebarCollapsed(false)}
+          title="搜索历史"
+          aria-label="搜索历史"
+        >
+          ⌕
+        </button>
+        <button
+          className="sidebar-icon-button"
+          type="button"
+          onClick={() => setIsSidebarCollapsed(false)}
+          title="历史创建"
+          aria-label="历史创建"
+        >
+          ⠿
+        </button>
+
+        <div className="history-content" aria-hidden={isSidebarCollapsed}>
+          <div className="history-title">历史创建</div>
+          <div className="history-list">
+            {historyItems.length === 0 ? (
+              <p className="history-empty">暂无历史</p>
+            ) : (
+              historyItems.map((item) => (
+                <button
+                  className={`history-item ${item.id === currentSessionId ? "active" : ""}`}
+                  key={item.id}
+                  type="button"
+                  onClick={() => restoreHistoryItem(item)}
+                >
+                  <span>{item.title}</span>
+                  <small>{formatHistoryTime(item.updatedAt)}</small>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </nav>
+    );
+  }
+
   function applyStoredSession(session: StoredSession) {
     setCurrentSessionId(session.id);
     setCurrentTaskId(session.taskId ?? "");
@@ -531,17 +591,10 @@ export default function HomePage() {
       const stage = previewStageRef.current;
       if (!doc || !stage) return;
 
-      const root = doc.documentElement;
-      const body = doc.body;
-      const contentHeight = Math.max(
-        root.scrollHeight,
-        body?.scrollHeight ?? 0,
-        root.offsetHeight,
-        body?.offsetHeight ?? 0,
-        PREVIEW_DEFAULT_HEIGHT,
-      );
       const availableWidth = Math.max(stage.clientWidth - 28, 320);
       const scale = Math.min(1, availableWidth / PREVIEW_VIEWPORT_WIDTH);
+      const availableHeight = Math.max(stage.clientHeight - 28, PREVIEW_DEFAULT_HEIGHT * scale);
+      const contentHeight = Math.max(PREVIEW_DEFAULT_HEIGHT, Math.round(availableHeight / scale));
 
       setPreviewMetrics({
         viewportWidth: PREVIEW_VIEWPORT_WIDTH,
@@ -605,44 +658,25 @@ export default function HomePage() {
 
   if (status === "idle") {
     return (
-    <main className="page-shell">
-      <section className="hero">
-        <div className="brand-mark">✦</div>
-        <h1>想做什么页面？</h1>
-        <p className="subtitle">描述你的想法，我会生成一个可以分享的 HTML 页面。</p>
+      <main className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+        {renderHistorySidebar()}
+        <section className="page-shell">
+          <div className="hero">
+            <div className="brand-mark">✦</div>
+            <h1>想做什么页面？</h1>
+            <p className="subtitle">描述你的想法，我会生成一个可以分享的 HTML 页面。</p>
 
-        {renderPromptForm()}
-      </section>
-    </main>
+            {renderPromptForm()}
+          </div>
+        </section>
+      </main>
     );
   }
 
   return (
     <main className="workspace-shell">
-      <section className="workspace-layout">
-        <nav className="history-sidebar" aria-label="历史创建">
-          <button className="new-chat-button" type="button" onClick={startNewChat} title="新对话">
-            +
-          </button>
-          <div className="history-title">历史创建</div>
-          <div className="history-list">
-            {historyItems.length === 0 ? (
-              <p className="history-empty">暂无历史</p>
-            ) : (
-              historyItems.map((item) => (
-                <button
-                  className={`history-item ${item.id === currentSessionId ? "active" : ""}`}
-                  key={item.id}
-                  type="button"
-                  onClick={() => restoreHistoryItem(item)}
-                >
-                  <span>{item.title}</span>
-                  <small>{formatHistoryTime(item.updatedAt)}</small>
-                </button>
-              ))
-            )}
-          </div>
-        </nav>
+      <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+        {renderHistorySidebar()}
         <aside className="conversation-pane">
           <div className="conversation-scroll">
             <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`}>

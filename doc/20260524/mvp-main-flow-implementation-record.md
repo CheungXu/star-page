@@ -35,8 +35,18 @@
 - 原始上传文件当前不持久保存；后端读取并抽取文本，Office 类文件通过 `MarkItDown` 临时落盘解析，临时文件解析后删除。
 - 文件抽取文本超过 5000 字符时，先调用 LLM 压缩为面向页面生成任务的资料简报，再进入页面生成模型。
 - `generation_tasks` 增加调试字段，记录用户原始 prompt、上传文件名、文件抽取文本、压缩 prompt、最终入模 prompt、生成 HTML 的 OSS 调试定位信息。
+- 2026-05-26 追加 LLM 重试机制：底层客户端重试网络、超时、限流和 5xx 错误；资料压缩对空正文重试；页面生成在正式 HTML 输出开始前失败或空输出时重试。
 - 前端生成过程统一为节点流：上传文件（如有）-> 解析文件 -> 压缩内容 -> 模型思考 -> 模型输出答案 -> 部署。
 - `reasoning_content` 已并入“模型思考”节点，默认展开，支持手动收起；部署节点合并 HTML 上传 OSS 与数据库记录更新。
+
+## 2026-05-26 预览、侧边栏和 LLM 可靠性修复
+
+- 左侧历史区域改为贴边可折叠 tabbar，首页和生成页都展示；折叠态保留品牌、新对话、搜索和历史入口，展开后显示历史列表。
+- 输入框优化方向调整为“压薄高度，不压窄宽度”：首页输入仍保持居中宽度，生成态底部输入框降低高度和阴影。
+- 生成页预览继续使用固定 `1200px` 桌面视口宽度，但高度改为按预览区域反算，不再读取生成页整页 `scrollHeight`，避免生成页内 `100vh` 被超高 iframe 撑大导致首屏只露出大块背景。
+- 排查到一次空白页问题：任务成功但 OSS 中 HTML 只有空壳 `<head>`、无 `<body>`。随后补充 `model_output_text` 调试字段，保存模型原始输出，便于区分模型输出问题和 HTML 提取/清洗问题。
+- 排查到一次上传资料生成失败：请求在创建任务前的长文压缩阶段返回 `422`，原因是 LLM 压缩调用没有拿到正式 content。随后补充 LLM 重试机制，资料压缩对空正文重试，页面生成在正式输出开始前失败或空输出时重试。
+- 再次确认 standalone 静态资源问题：`npm run build` 会重建 `.next/standalone`，可能移除 `.next/standalone/.next/static`。构建后必须重启 `star-page-frontend.service`，并检查 `/_next/static/*.css` 返回 `200 text/css`。
 
 ## 已解决问题
 
@@ -73,6 +83,8 @@ rm -rf .next/standalone/.next/static .next/standalone/public
 cp -r .next/static .next/standalone/.next/
 cp -r public .next/standalone/
 ```
+
+2026-05-26 再次复盘：在 systemd 服务运行中执行 `npm run build` 会重新生成 `.next/standalone`，可能把此前复制进去的 `.next/standalone/.next/static` 清掉。此时首页 HTML 仍可能返回 `200`，但 CSS 资源会返回 `500`，页面变成裸 HTML。以后每次构建后必须重启 `star-page-frontend.service`，并额外检查 `/_next/static/*.css` 返回 `200 text/css`。
 
 ### 生成页面预览
 

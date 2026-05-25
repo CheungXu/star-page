@@ -9,7 +9,7 @@
 - OpenAI Chat Completions 兼容格式。
 - Anthropic Messages 兼容格式。
 
-业务层只依赖统一接口，例如 `generateText()`，不直接依赖具体厂商 SDK、URL 或响应结构。
+业务层只依赖统一接口，例如 `streamText()` / `completeText()`，不直接依赖具体厂商 SDK、URL 或响应结构。
 
 ## 配置维度
 
@@ -46,6 +46,15 @@ Qwen 的深度思考能力不应写死在业务层，可通过配置把 `enable_
 - `assistant`：历史助手回复。
 
 适配器负责转换成目标协议格式。例如 Anthropic 协议需要把 `system` 拆到顶层字段，OpenAI 协议则直接放在 `messages` 中。
+
+## 重试与空输出
+
+LLM 适配层应提供统一重试能力，而不是让每个业务调用点各自实现：
+
+- 可重试错误包括网络失败、超时、远端协议中断、JSON 解析失败、`429`、`408` 和常见 `5xx`。
+- 重试次数和退避时间应通过配置控制，例如 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY_INITIAL_DELAY_MS`、`LLM_RETRY_MAX_DELAY_MS`。
+- 非流式任务可以封装为 `completeText(requireContent=True)`；如果模型只返回 reasoning、没有正式 content，应视为可重试空输出。
+- 流式任务要区分“开始输出前失败”和“开始输出后失败”。开始输出前可以整体重试；开始输出后不应自动重试拼接，避免重复内容或半截 HTML。
 
 ## 密钥处理
 

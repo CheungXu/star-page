@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
+from json import JSONDecodeError
 
 import httpx
 
 from app.core.config import Settings
 from app.services.llm.types import LlmMessage, LlmStreamChunk, LlmUsage
+
+RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 class OpenAICompatibleClient:
@@ -15,6 +19,48 @@ class OpenAICompatibleClient:
         self.base_url = settings.llm_base_url.rstrip("/")
 
     async def stream_text(self, messages: list[LlmMessage]) -> AsyncIterator[LlmStreamChunk]:
+        attempts = self._retry_attempts()
+
+        for attempt in range(1, attempts + 1):
+            yielded_chunk = False
+            try:
+                async for chunk in self._stream_text_once(messages):
+                    yielded_chunk = True
+                    yield chunk
+                return
+            except Exception as exc:
+                if yielded_chunk or attempt >= attempts or not _is_retryable_exception(exc):
+                    raise
+                await self._sleep_before_retry(attempt)
+
+    async def complete_text(self, messages: list[LlmMessage], *, require_content: bool = True) -> str:
+        attempts = self._retry_attempts()
+        last_text = ""
+
+        for attempt in range(1, attempts + 1):
+            parts: list[str] = []
+            try:
+                async for chunk in self._stream_text_once(messages):
+                    if chunk.type == "text_delta" and chunk.text:
+                        parts.append(chunk.text)
+            except Exception as exc:
+                if attempt >= attempts or not _is_retryable_exception(exc):
+                    raise
+                await self._sleep_before_retry(attempt)
+                continue
+
+            last_text = "".join(parts).strip()
+            if last_text or not require_content:
+                return last_text
+
+            if attempt < attempts:
+                await self._sleep_before_retry(attempt)
+
+        if require_content:
+            raise ValueError("LLM 返回空正文")
+        return last_text
+
+    async def _stream_text_once(self, messages: list[LlmMessage]) -> AsyncIterator[LlmStreamChunk]:
         body = {
             "model": self.settings.llm_model,
             "messages": [{"role": message.role, "content": message.content} for message in messages],
@@ -91,3 +137,28 @@ class OpenAICompatibleClient:
             provider=self.settings.llm_provider,
             model=self.settings.llm_model,
         )
+
+    def _retry_attempts(self) -> int:
+        return max(1, self.settings.llm_retry_attempts)
+
+    async def _sleep_before_retry(self, attempt: int) -> None:
+        delay_ms = min(
+            self.settings.llm_retry_max_delay_ms,
+            self.settings.llm_retry_initial_delay_ms * (2 ** max(0, attempt - 1)),
+        )
+        await asyncio.sleep(delay_ms / 1000)
+
+
+def _is_retryable_exception(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in RETRYABLE_STATUS_CODES
+
+    return isinstance(
+        exc,
+        (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+            JSONDecodeError,
+        ),
+    )

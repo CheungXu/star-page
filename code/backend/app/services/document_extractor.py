@@ -210,24 +210,19 @@ async def _call_llm_for_document_compression(user_prompt: str, scope: str, docum
         scope=scope,
         document_text=document_text,
     )
-    parts: list[str] = []
-
-    async for chunk in llm_client.stream_text(
-        [
-            LlmMessage(role="system", content=DOCUMENT_COMPRESSION_SYSTEM_PROMPT),
-            LlmMessage(role="user", content=compression_user_prompt),
-        ]
-    ):
-        if chunk.type == "text_delta" and chunk.text:
-            parts.append(chunk.text)
-
-    compressed_text = "".join(parts).strip()
-    if not compressed_text:
+    try:
+        return await llm_client.complete_text(
+            [
+                LlmMessage(role="system", content=DOCUMENT_COMPRESSION_SYSTEM_PROMPT),
+                LlmMessage(role="user", content=compression_user_prompt),
+            ],
+            require_content=True,
+        )
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="文件内容过长且压缩失败，请缩短文件内容后重试",
-        )
-    return compressed_text
+        ) from exc
 
 
 def _build_compression_prompt_log(user_prompt: str, chunk_count: int, extracted_chars: int) -> str:

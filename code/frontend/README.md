@@ -6,8 +6,10 @@
 
 当前前端分为两种主要状态：
 
-- 未开始生成：保持 Gemini 风格的居中窄胶囊输入框。
-- 开始生成后：切换为左右 1:1 分栏，左侧是 LLM 对话流，右侧是页面预览。
+- 未开始生成：左侧展示可折叠 tabbar 和历史创建，主区域保持 Gemini 风格的居中输入框。
+- 开始生成后：保留左侧可折叠 tabbar，主区域切换为左右 1:1 分栏，左侧是 LLM 对话流，右侧是页面预览。
+
+左侧 tabbar 贴近视口左边缘，默认折叠，只显示品牌、新对话、搜索和历史入口；点击品牌图标可展开或收起历史列表。输入框优化方向是压薄高度，而不是压窄宽度。
 
 左侧对话流包含：
 
@@ -17,7 +19,7 @@
 
 上传资料当前限制为 1 个文件、最大 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`txt`、`md`、`html`。
 
-右侧预览采用固定 `1200px` 桌面视口渲染 iframe，再整体缩放到预览区域。这样可以尽量还原用户单独打开页面时的桌面视觉效果，避免因为预览区域较窄触发生成页面的移动端布局。
+右侧预览采用固定 `1200px` 桌面视口宽度渲染 iframe，再整体缩放到预览区域。iframe 高度按预览区域可用高度反算，避免读取生成页整页 `scrollHeight` 导致页面内 `100vh` 被撑大，同时尽量铺满预览卡片。
 
 复制链接在 HTTP 环境下使用降级复制方案，点击后只显示单一反馈文案。
 当前成功反馈会直接更新按钮本身：按钮变为绿色并显示“复制成功”。
@@ -65,3 +67,5 @@ HOSTNAME=127.0.0.1 PORT=3000 npx -y -p node@22 node .next/standalone/server.js
 systemctl restart star-page-frontend.service
 journalctl -u star-page-frontend.service -f
 ```
+
+重要教训：不要在服务运行中只执行 `npm run build` 后就结束。`next build` 会重新生成 `.next/standalone`，可能清掉运行目录里的 `.next/standalone/.next/static`；此时 HTML 还能返回，但 `/_next/static/*.css` 会 500，页面会退化成裸 HTML。每次构建后必须重启 `star-page-frontend.service`，让 `ExecStartPre` 重新复制 `.next/static`，并用 CSS URL 验证返回 `200 text/css`。

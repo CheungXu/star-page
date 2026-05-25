@@ -47,7 +47,10 @@ Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client
 - 文件抽取文本。
 - 触发压缩时使用的压缩 prompt 说明。
 - 最终输入页面生成模型的 prompt。
+- 模型原始输出文本，便于排查 HTML 提取或清洗导致的内容丢失。
 - 生成 HTML 上传后的 OSS 调试定位信息。
+
+LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY_INITIAL_DELAY_MS`、`LLM_RETRY_MAX_DELAY_MS`。底层客户端会重试可恢复的网络、超时、限流和 5xx 错误；资料压缩会对“调用成功但正文为空”的情况重试；页面生成会在正式 HTML 输出开始前失败或空输出时重试。
 
 ## 生成过程事件
 

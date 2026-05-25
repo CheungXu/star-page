@@ -142,69 +142,104 @@ class GenerationService:
                 LlmMessage(role="user", content=task.prompt),
             ]
 
-            async for chunk in llm_client.stream_text(messages):
-                model_provider = chunk.provider or model_provider
-                model_name = chunk.model or model_name
+            llm_attempts = max(1, self.settings.llm_retry_attempts)
+            for llm_attempt in range(1, llm_attempts + 1):
+                try:
+                    async for chunk in llm_client.stream_text(messages):
+                        model_provider = chunk.provider or model_provider
+                        model_name = chunk.model or model_name
 
-                if chunk.type == "reasoning_delta" and chunk.reasoning_text:
+                        if chunk.type == "reasoning_delta" and chunk.reasoning_text:
+                            yield await self._record_event(
+                                task.id,
+                                "reasoning_delta",
+                                {"type": "reasoning_delta", "text": chunk.reasoning_text},
+                            )
+
+                        if chunk.type == "text_delta" and chunk.text:
+                            if not answer_started:
+                                answer_started = True
+                                yield await self._record_event(
+                                    task.id,
+                                    "progress",
+                                    {
+                                        "type": "progress",
+                                        "step": "model_thinking",
+                                        "status": "completed",
+                                        "text": "模型思考完成",
+                                    },
+                                )
+                                yield await self._record_event(task.id, "answer_started", {"type": "answer_started"})
+                                yield await self._record_event(
+                                    task.id,
+                                    "status",
+                                    {"type": "status", "text": "页面创建中..."},
+                                )
+                                yield await self._record_event(
+                                    task.id,
+                                    "progress",
+                                    {
+                                        "type": "progress",
+                                        "step": "model_output",
+                                        "status": "running",
+                                        "text": "模型正在输出页面 HTML",
+                                        "output_tokens": 0,
+                                        "token_source": "estimated",
+                                    },
+                                )
+                            answer_parts.append(chunk.text)
+                            answer_text_length += len(chunk.text)
+                            estimated_output_tokens = _estimate_output_tokens(answer_text_length)
+                            if estimated_output_tokens >= next_token_report:
+                                reported_output_tokens = estimated_output_tokens
+                                next_token_report += 50
+                                yield await self._record_event(
+                                    task.id,
+                                    "progress",
+                                    {
+                                        "type": "progress",
+                                        "step": "model_output",
+                                        "status": "running",
+                                        "text": "模型正在输出页面 HTML",
+                                        "output_tokens": reported_output_tokens,
+                                        "token_source": "estimated",
+                                    },
+                                )
+
+                        if chunk.type == "done" and chunk.usage:
+                            usage = chunk.usage
+
+                    if answer_parts or llm_attempt >= llm_attempts:
+                        break
+
+                    usage = None
+                    answer_text_length = 0
+                    reported_output_tokens = 0
+                    next_token_report = 50
                     yield await self._record_event(
                         task.id,
-                        "reasoning_delta",
-                        {"type": "reasoning_delta", "text": chunk.reasoning_text},
+                        "status",
+                        {"type": "status", "text": f"模型未返回正文，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
                     )
+                    await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
+                except Exception:
+                    if answer_started or llm_attempt >= llm_attempts:
+                        raise
 
-                if chunk.type == "text_delta" and chunk.text:
-                    if not answer_started:
-                        answer_started = True
-                        yield await self._record_event(
-                            task.id,
-                            "progress",
-                            {
-                                "type": "progress",
-                                "step": "model_thinking",
-                                "status": "completed",
-                                "text": "模型思考完成",
-                            },
-                        )
-                        yield await self._record_event(task.id, "answer_started", {"type": "answer_started"})
-                        yield await self._record_event(
-                            task.id,
-                            "status",
-                            {"type": "status", "text": "页面创建中..."},
-                        )
-                        yield await self._record_event(
-                            task.id,
-                            "progress",
-                            {
-                                "type": "progress",
-                                "step": "model_output",
-                                "status": "running",
-                                "text": "模型正在输出页面 HTML",
-                                "output_tokens": 0,
-                                "token_source": "estimated",
-                            },
-                        )
-                    answer_parts.append(chunk.text)
-                    answer_text_length += len(chunk.text)
-                    estimated_output_tokens = _estimate_output_tokens(answer_text_length)
-                    if estimated_output_tokens >= next_token_report:
-                        reported_output_tokens = estimated_output_tokens
-                        next_token_report += 50
-                        yield await self._record_event(
-                            task.id,
-                            "progress",
-                            {
-                                "type": "progress",
-                                "step": "model_output",
-                                "status": "running",
-                                "text": "模型正在输出页面 HTML",
-                                "output_tokens": reported_output_tokens,
-                                "token_source": "estimated",
-                            },
-                        )
+                    answer_parts.clear()
+                    usage = None
+                    answer_text_length = 0
+                    reported_output_tokens = 0
+                    next_token_report = 50
+                    yield await self._record_event(
+                        task.id,
+                        "status",
+                        {"type": "status", "text": f"模型调用失败，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
+                    )
+                    await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
 
-                if chunk.type == "done" and chunk.usage:
-                    usage = chunk.usage
+            if not answer_parts:
+                raise ValueError("模型未返回 HTML 正文")
 
             output_tokens = usage.output_tokens if usage and usage.output_tokens is not None else _estimate_output_tokens(answer_text_length)
             yield await self._record_event(
@@ -220,7 +255,10 @@ class GenerationService:
                 },
             )
 
-            html_document = extract_html_document("".join(answer_parts))
+            model_output_text = "".join(answer_parts)
+            task.model_output_text = model_output_text or None
+
+            html_document = extract_html_document(model_output_text)
             safe_html = sanitize_html(html_document)
 
             yield await self._record_event(
@@ -276,6 +314,8 @@ class GenerationService:
             await self.session.commit()
             raise
         except Exception as exc:
+            if answer_parts and not task.model_output_text:
+                task.model_output_text = "".join(answer_parts)
             task.status = "failed"
             task.error_message = str(exc)[:2000]
             task.finished_at = datetime.now(UTC)
@@ -366,6 +406,14 @@ def _estimate_output_tokens(text_length: int) -> int:
     if text_length <= 0:
         return 0
     return max(1, round(text_length / 2))
+
+
+def _retry_delay_seconds(settings: Any, attempt: int) -> float:
+    delay_ms = min(
+        settings.llm_retry_max_delay_ms,
+        settings.llm_retry_initial_delay_ms * (2 ** max(0, attempt - 1)),
+    )
+    return delay_ms / 1000
 
 
 def _build_storage_debug_link(storage_key: str, bucket: str) -> str:

@@ -12,7 +12,9 @@ systemctl status star-page-backend.service
 systemctl status star-page-frontend.service
 ```
 
-更新代码后，前端需要先重新构建并复制 standalone 静态资源，再重启服务。
+更新代码后，前端需要先重新构建，再重启服务，由 `ExecStartPre` 复制 standalone 静态资源。
+
+注意：不要只执行 `npm run build` 而不重启 `star-page-frontend.service`。`next build` 会重建 `.next/standalone`，可能移除 `.next/standalone/.next/static`，导致首页 HTML 正常但 CSS/JS 静态资源 500，页面退化成裸 HTML。构建后应立即重启服务，并检查 `/_next/static/*.css` 返回 `200 text/css`。
 
 ## 安装或更新服务
 
