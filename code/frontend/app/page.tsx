@@ -24,7 +24,15 @@ type SsePayload = {
   token_source?: "actual" | "estimated";
 };
 
-type ProgressStepId = "model_output" | "database" | "upload";
+type ProgressStepId =
+  | "upload_file"
+  | "parse_file"
+  | "compress_document"
+  | "model_thinking"
+  | "model_output"
+  | "deploy"
+  | "database"
+  | "upload";
 type ProgressStepStatus = "pending" | "running" | "completed" | "failed";
 
 type ProgressStep = {
@@ -41,6 +49,7 @@ type StoredSession = {
   taskId?: string;
   pageId?: string;
   prompt: string;
+  fileNames: string[];
   status: GenerationStatus;
   reasoning: string;
   statusText: string;
@@ -55,34 +64,64 @@ type HistoryItem = {
   id: string;
   title: string;
   prompt: string;
+  fileNames: string[];
   pageUrl: string;
   status: GenerationStatus;
   createdAt: string;
   updatedAt: string;
 };
 
-function createInitialProgressSteps(): ProgressStep[] {
+const PROGRESS_STEP_META: Record<ProgressStepId, Pick<ProgressStep, "title" | "description">> = {
+  upload_file: {
+    title: "上传文件",
+    description: "正在上传文件到服务端",
+  },
+  parse_file: {
+    title: "解析文件",
+    description: "等待上传文件解析完成",
+  },
+  compress_document: {
+    title: "压缩文件内容",
+    description: "等待长文本压缩为页面生成简报",
+  },
+  model_thinking: {
+    title: "模型思考",
+    description: "等待模型开始思考",
+  },
+  model_output: {
+    title: "模型输出答案",
+    description: "等待模型开始输出 HTML",
+  },
+  deploy: {
+    title: "部署",
+    description: "等待 HTML 上传和数据库更新",
+  },
+  upload: {
+    title: "上传文件中",
+    description: "等待 HTML 文件生成完成",
+  },
+  database: {
+    title: "记录数据库",
+    description: "等待页面版本和任务状态写入",
+  },
+};
+
+function createProgressStep(id: ProgressStepId, status: ProgressStepStatus = "pending"): ProgressStep {
+  return {
+    id,
+    ...PROGRESS_STEP_META[id],
+    status,
+    outputTokens: id === "model_output" ? 0 : undefined,
+    tokenSource: id === "model_output" ? "estimated" : undefined,
+  };
+}
+
+function createInitialProgressSteps(hasFile = false): ProgressStep[] {
   return [
-    {
-      id: "model_output",
-      title: "模型输出答案",
-      description: "等待模型开始输出 HTML",
-      status: "pending",
-      outputTokens: 0,
-      tokenSource: "estimated",
-    },
-    {
-      id: "upload",
-      title: "上传文件中",
-      description: "等待 HTML 文件生成完成",
-      status: "pending",
-    },
-    {
-      id: "database",
-      title: "记录数据库",
-      description: "等待页面版本和任务状态写入",
-      status: "pending",
-    },
+    ...(hasFile ? [createProgressStep("upload_file", "running"), createProgressStep("parse_file"), createProgressStep("compress_document")] : []),
+    createProgressStep("model_thinking"),
+    createProgressStep("model_output"),
+    createProgressStep("deploy"),
   ];
 }
 
@@ -90,6 +129,10 @@ const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
 const HISTORY_KEY = "star-page-history";
+const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".txt", ".md", ".markdown", ".html", ".htm"];
+const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
+const MAX_FILE_COUNT = 1;
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 export default function HomePage() {
   const [prompt, setPrompt] = useState("");
@@ -97,6 +140,9 @@ export default function HomePage() {
   const [currentTaskId, setCurrentTaskId] = useState("");
   const [currentPageId, setCurrentPageId] = useState("");
   const [submittedPrompt, setSubmittedPrompt] = useState("");
+  const [submittedFileNames, setSubmittedFileNames] = useState<string[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState("");
   const [status, setStatus] = useState<GenerationStatus>("idle");
   const [reasoning, setReasoning] = useState("");
   const [statusText, setStatusText] = useState("描述你想创建的页面");
@@ -104,6 +150,7 @@ export default function HomePage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState("");
+  const [thinkingExpanded, setThinkingExpanded] = useState(true);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [previewMetrics, setPreviewMetrics] = useState({
@@ -113,6 +160,7 @@ export default function HomePage() {
   });
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>(createInitialProgressSteps);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewStageRef = useRef<HTMLDivElement | null>(null);
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
 
@@ -148,6 +196,7 @@ export default function HomePage() {
       taskId: currentTaskId || undefined,
       pageId: currentPageId || undefined,
       prompt: submittedPrompt,
+      fileNames: submittedFileNames,
       status,
       reasoning,
       statusText,
@@ -171,15 +220,22 @@ export default function HomePage() {
     reasoning,
     status,
     statusText,
+    submittedFileNames,
     submittedPrompt,
   ]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedPrompt = prompt.trim();
+    const validationError = validateFiles(selectedFiles);
 
     if (!trimmedPrompt) {
       setStatusText("先描述你想创建的页面");
+      return;
+    }
+
+    if (validationError) {
+      setFileError(validationError);
       return;
     }
 
@@ -187,6 +243,7 @@ export default function HomePage() {
       return;
     }
 
+    const fileNames = selectedFiles.map((file) => file.name);
     eventSourceRef.current?.close();
     const optimisticSessionId = createClientId();
     const now = new Date().toISOString();
@@ -194,8 +251,10 @@ export default function HomePage() {
     setCurrentTaskId("");
     setCurrentPageId("");
     setSubmittedPrompt(trimmedPrompt);
+    setSubmittedFileNames(fileNames);
     setStatus("thinking");
     setReasoning("");
+    setThinkingExpanded(true);
     setPageUrl("");
     setCopied(false);
     setCopyFeedback("");
@@ -205,37 +264,52 @@ export default function HomePage() {
       scale: 0.5,
     });
     setErrorMessage("");
-    setStatusText("正在提交你的需求...");
-    setProgressSteps(createInitialProgressSteps());
+    setFileError("");
+    setStatusText(selectedFiles.length ? "正在上传并解析文件..." : "正在提交你的需求...");
+    setProgressSteps(createInitialProgressSteps(fileNames.length > 0));
     setPrompt("");
     writeCurrentSession({
       id: optimisticSessionId,
       prompt: trimmedPrompt,
+      fileNames,
       status: "thinking",
       reasoning: "",
-      statusText: "正在提交你的需求...",
+      statusText: selectedFiles.length ? "正在上传并解析文件..." : "正在提交你的需求...",
       pageUrl: "",
       errorMessage: "",
-      progressSteps: createInitialProgressSteps(),
+      progressSteps: createInitialProgressSteps(fileNames.length > 0),
       createdAt: now,
       updatedAt: now,
     });
 
     try {
+      const formData = new FormData();
+      formData.append("prompt", trimmedPrompt);
+      selectedFiles.forEach((file) => formData.append("files", file));
+
       const response = await fetch("/api/generations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmedPrompt }),
+        body: formData,
       });
 
       if (!response.ok) {
-        throw new Error("创建生成任务失败");
+        throw new Error(await readErrorMessage(response));
       }
 
       const data = (await response.json()) as CreateGenerationResponse;
       setCurrentSessionId(data.task_id);
       setCurrentTaskId(data.task_id);
       setCurrentPageId(data.page_id);
+      if (fileNames.length > 0) {
+        setProgressSteps((current) => updateProgressSteps(current, {
+          type: "progress",
+          step: "upload_file",
+          status: "completed",
+          text: "文件已上传到服务端",
+        }));
+      }
+      setSelectedFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       connectToEvents(data.task_id);
     } catch (error) {
       setStatus("failed");
@@ -259,32 +333,31 @@ export default function HomePage() {
       if (payload.text) {
         setReasoning((current) => current + payload.text);
         setStatus("thinking");
+        setProgressSteps((current) => updateProgressSteps(current, {
+          type: "progress",
+          step: "model_thinking",
+          status: "running",
+          text: "模型正在展开思考",
+        }));
       }
     });
 
     source.addEventListener("answer_started", () => {
       setStatus("creating");
       setStatusText("页面创建中...");
+      setProgressSteps((current) => updateProgressSteps(current, {
+        type: "progress",
+        step: "model_thinking",
+        status: "completed",
+        text: "模型思考完成",
+      }));
     });
 
     source.addEventListener("progress", (event) => {
       const payload = parsePayload(event);
       if (!payload.step || !payload.status) return;
 
-      setProgressSteps((current) =>
-        current.map((step) =>
-          step.id === payload.step
-            ? {
-                ...step,
-                status: payload.status ?? step.status,
-                description: payload.text ?? step.description,
-                outputTokens:
-                  payload.output_tokens !== undefined ? payload.output_tokens : step.outputTokens,
-                tokenSource: payload.token_source ?? step.tokenSource,
-              }
-            : step,
-        ),
-      );
+      setProgressSteps((current) => updateProgressSteps(current, payload));
     });
 
     source.addEventListener("completed", (event) => {
@@ -331,8 +404,13 @@ export default function HomePage() {
     setCurrentPageId("");
     setPrompt("");
     setSubmittedPrompt("");
+    setSubmittedFileNames([]);
+    setSelectedFiles([]);
+    setFileError("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setStatus("idle");
     setReasoning("");
+    setThinkingExpanded(true);
     setStatusText("描述你想创建的页面");
     setPageUrl("");
     setErrorMessage("");
@@ -364,15 +442,38 @@ export default function HomePage() {
     setCurrentTaskId(session.taskId ?? "");
     setCurrentPageId(session.pageId ?? "");
     setSubmittedPrompt(session.prompt);
+    setSubmittedFileNames(session.fileNames ?? []);
     setPrompt("");
+    setSelectedFiles([]);
+    setFileError("");
     setStatus(session.status);
     setReasoning(session.reasoning);
+    setThinkingExpanded(true);
     setStatusText(session.statusText);
     setPageUrl(session.pageUrl);
     setErrorMessage(session.errorMessage);
-    setProgressSteps(session.progressSteps.length ? session.progressSteps : createInitialProgressSteps());
+    setProgressSteps(
+      session.progressSteps.length ? session.progressSteps : createInitialProgressSteps((session.fileNames ?? []).length > 0),
+    );
     setCopied(false);
     setCopyFeedback("");
+  }
+
+  function handleFileChange(files: FileList | null) {
+    const nextFiles = Array.from(files ?? []);
+    const validationError = validateFiles(nextFiles);
+
+    setSelectedFiles(validationError ? [] : nextFiles);
+    setFileError(validationError);
+    if (validationError && fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function clearSelectedFiles() {
+    setSelectedFiles([]);
+    setFileError("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function copyPageUrl() {
@@ -461,13 +562,40 @@ export default function HomePage() {
         <textarea
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
-          placeholder="例如：做一个面向独立开发者的 AI 工具产品介绍页，风格简洁、高级，带价格区块"
+          placeholder="例如：结合我上传的产品资料，做一个面向客户的介绍页，风格简洁、高级"
           rows={compact ? 2 : 3}
           disabled={isGenerating}
         />
+        <div className="prompt-file-row">
+          <label className="file-upload-button">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED_FILE_TYPES}
+              disabled={isGenerating}
+              onChange={(event) => handleFileChange(event.target.files)}
+            />
+            上传资料
+          </label>
+          {selectedFiles.length > 0 ? (
+            <div className="selected-files" aria-label="已选择文件">
+              {selectedFiles.map((file) => (
+                <span className="selected-file" key={`${file.name}-${file.size}`}>
+                  {file.name} · {formatFileSize(file.size)}
+                </span>
+              ))}
+              <button type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
+                清空
+              </button>
+            </div>
+          ) : (
+            <span className="file-hint">支持 docx、pptx、xlsx、xls、txt、md、html，仅 1 个文件，最大 50MB</span>
+          )}
+        </div>
+        {fileError && <p className="file-error">{fileError}</p>}
         <div className="prompt-actions">
           <span>{statusText}</span>
-          <button type="submit" disabled={isGenerating} aria-label="创建页面">
+          <button type="submit" disabled={isGenerating || Boolean(fileError)} aria-label="创建页面">
             {isGenerating ? "生成中" : "创建"}
           </button>
         </div>
@@ -520,17 +648,18 @@ export default function HomePage() {
             <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`}>
               <div className="user-message-meta">
                 <span>你的需求</span>
-                <span>{submittedPrompt.length} 字</span>
+                <span>
+                  {submittedPrompt.length} 字
+                  {submittedFileNames.length ? ` · ${submittedFileNames.length} 个文件` : ""}
+                </span>
               </div>
               <p>{submittedPrompt}</p>
-            </div>
-
-            <div className="chat-message assistant-message reasoning-message">
-              <div className="assistant-label">思考过程</div>
-              {reasoning ? (
-                <pre>{reasoning}</pre>
-              ) : (
-                <p className="muted inline-muted">模型开始思考后，会在这里展示 reasoning_content。</p>
+              {submittedFileNames.length > 0 && (
+                <div className="submitted-files">
+                  {submittedFileNames.map((name) => (
+                    <span key={name}>{name}</span>
+                  ))}
+                </div>
               )}
             </div>
 
@@ -543,6 +672,11 @@ export default function HomePage() {
                     <div>
                       <div className="progress-title-row">
                         <strong>{step.title}</strong>
+                        {step.id === "model_thinking" && (
+                          <button className="node-toggle" type="button" onClick={() => setThinkingExpanded((value) => !value)}>
+                            {thinkingExpanded ? "收起" : "展开"}
+                          </button>
+                        )}
                         {step.id === "model_output" && (
                           <span className="token-pill">
                             输出 {step.outputTokens ?? 0} tokens
@@ -551,6 +685,15 @@ export default function HomePage() {
                         )}
                       </div>
                       <p>{step.description}</p>
+                      {step.id === "model_thinking" && thinkingExpanded && (
+                        <div className="thinking-node-body">
+                          {reasoning ? (
+                            <pre>{reasoning}</pre>
+                          ) : (
+                            <p>模型开始思考后，会在这里展示 reasoning_content。</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -638,6 +781,7 @@ function upsertHistory(session: StoredSession): HistoryItem[] {
     id: session.id,
     title: buildHistoryTitle(session.prompt),
     prompt: session.prompt,
+    fileNames: session.fileNames ?? [],
     pageUrl: session.pageUrl,
     status: session.status,
     createdAt: session.createdAt,
@@ -683,6 +827,29 @@ function createClientId(): string {
   return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function updateProgressSteps(current: ProgressStep[], payload: SsePayload): ProgressStep[] {
+  if (!payload.step || !payload.status) return current;
+
+  const nextStep = (step: ProgressStep): ProgressStep => ({
+    ...step,
+    status: payload.status ?? step.status,
+    description: payload.text ?? step.description,
+    outputTokens: payload.output_tokens !== undefined ? payload.output_tokens : step.outputTokens,
+    tokenSource: payload.token_source ?? step.tokenSource,
+  });
+
+  if (current.some((step) => step.id === payload.step)) {
+    return current.map((step) => (step.id === payload.step ? nextStep(step) : step));
+  }
+
+  const insertedStep = nextStep(createProgressStep(payload.step));
+  const modelIndex = current.findIndex((step) => step.id === "model_output");
+  if (payload.step === "compress_document" && modelIndex >= 0) {
+    return [...current.slice(0, modelIndex), insertedStep, ...current.slice(modelIndex)];
+  }
+  return [insertedStep, ...current];
+}
+
 function parsePayload(event: Event): SsePayload {
   const message = event as MessageEvent<string>;
   return JSON.parse(message.data) as SsePayload;
@@ -693,6 +860,46 @@ function getProgressIcon(status: ProgressStepStatus): string {
   if (status === "running") return "•";
   if (status === "failed") return "!";
   return "";
+}
+
+function validateFiles(files: File[]): string {
+  if (files.length > MAX_FILE_COUNT) {
+    return "当前一次只允许上传 1 个文件";
+  }
+
+  for (const file of files) {
+    const extension = getFileExtension(file.name);
+    if (!ACCEPTED_FILE_EXTENSIONS.includes(extension)) {
+      return `${file.name} 的格式暂不支持`;
+    }
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      return `${file.name} 超过 50MB，请压缩或拆分后再上传`;
+    }
+  }
+
+  return "";
+}
+
+function getFileExtension(filename: string): string {
+  const dotIndex = filename.lastIndexOf(".");
+  return dotIndex >= 0 ? filename.slice(dotIndex).toLowerCase() : "";
+}
+
+function formatFileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as { detail?: unknown };
+    if (typeof payload.detail === "string") return payload.detail;
+  } catch {
+    return "创建生成任务失败";
+  }
+
+  return "创建生成任务失败";
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {

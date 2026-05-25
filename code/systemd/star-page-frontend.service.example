@@ -9,6 +9,7 @@ WorkingDirectory=/root/star-page/code/frontend
 Environment=HOSTNAME=127.0.0.1
 Environment=PORT=3000
 Environment=BACKEND_INTERNAL_URL=http://127.0.0.1:8000
+ExecStartPre=/bin/bash -lc 'mkdir -p .next/standalone/.next && rm -rf .next/standalone/.next/static .next/standalone/public && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/'
 ExecStart=/usr/local/bin/node .next/standalone/server.js
 Restart=always
 RestartSec=3

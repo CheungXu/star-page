@@ -27,9 +27,17 @@ class GenerationService:
         self.session = session
         self.settings = get_settings()
 
-    async def create_generation(self, prompt: str) -> tuple[GenerationTask, Page]:
+    async def create_generation(
+        self,
+        prompt: str,
+        title_prompt: str | None = None,
+        user_prompt: str | None = None,
+        input_file_names: list[str] | None = None,
+        extracted_file_text: str | None = None,
+        compression_prompt: str | None = None,
+    ) -> tuple[GenerationTask, Page]:
         user = await ensure_default_user(self.session)
-        title = _build_page_title(prompt)
+        title = _build_page_title(title_prompt or prompt)
 
         page = Page(
             owner_user_id=user.id,
@@ -44,6 +52,11 @@ class GenerationService:
             page_id=page.id,
             requested_by_user_id=user.id,
             prompt=prompt,
+            user_prompt=user_prompt or title_prompt or prompt,
+            input_file_names=input_file_names or [],
+            extracted_file_text=extracted_file_text or None,
+            compression_prompt=compression_prompt,
+            model_prompt=prompt,
             status="pending",
         )
         permission = PagePermission(page_id=page.id, user_id=user.id, role="owner")
@@ -77,7 +90,41 @@ class GenerationService:
         task.started_at = datetime.now(UTC)
         await self.session.commit()
 
+        if task.input_file_names:
+            yield await self._record_event(
+                task.id,
+                "progress",
+                {
+                    "type": "progress",
+                    "step": "parse_file",
+                    "status": "completed",
+                    "text": "文件内容已解析",
+                },
+            )
+
+            compress_text = "长文本已压缩为页面生成简报" if task.compression_prompt else "内容未超过阈值，无需压缩"
+            yield await self._record_event(
+                task.id,
+                "progress",
+                {
+                    "type": "progress",
+                    "step": "compress_document",
+                    "status": "completed",
+                    "text": compress_text,
+                },
+            )
+
         yield await self._record_event(task.id, "status", {"type": "status", "text": "正在理解你的页面需求..."})
+        yield await self._record_event(
+            task.id,
+            "progress",
+            {
+                "type": "progress",
+                "step": "model_thinking",
+                "status": "running",
+                "text": "模型正在理解需求和资料",
+            },
+        )
 
         answer_parts: list[str] = []
         answer_started = False
@@ -109,6 +156,16 @@ class GenerationService:
                 if chunk.type == "text_delta" and chunk.text:
                     if not answer_started:
                         answer_started = True
+                        yield await self._record_event(
+                            task.id,
+                            "progress",
+                            {
+                                "type": "progress",
+                                "step": "model_thinking",
+                                "status": "completed",
+                                "text": "模型思考完成",
+                            },
+                        )
                         yield await self._record_event(task.id, "answer_started", {"type": "answer_started"})
                         yield await self._record_event(
                             task.id,
@@ -171,33 +228,13 @@ class GenerationService:
                 "progress",
                 {
                     "type": "progress",
-                    "step": "upload",
+                    "step": "deploy",
                     "status": "running",
-                    "text": "正在上传 HTML 到 OSS",
+                    "text": "正在上传 HTML 并更新数据库",
                 },
             )
             version_id, storage_key = await self._upload_page_html(page, safe_html)
-            yield await self._record_event(
-                task.id,
-                "progress",
-                {
-                    "type": "progress",
-                    "step": "upload",
-                    "status": "completed",
-                    "text": "HTML 文件已上传",
-                },
-            )
-
-            yield await self._record_event(
-                task.id,
-                "progress",
-                {
-                    "type": "progress",
-                    "step": "database",
-                    "status": "running",
-                    "text": "正在写入页面版本和任务状态",
-                },
-            )
+            task.output_html_storage_key = _build_storage_debug_link(storage_key, self.settings.object_storage_bucket)
             version = await self._create_page_version(
                 page=page,
                 task=task,
@@ -218,9 +255,9 @@ class GenerationService:
                 "progress",
                 {
                     "type": "progress",
-                    "step": "database",
+                    "step": "deploy",
                     "status": "completed",
-                    "text": "数据库记录已更新",
+                    "text": "HTML 已上传，数据库记录已更新",
                 },
             )
 
@@ -329,3 +366,9 @@ def _estimate_output_tokens(text_length: int) -> int:
     if text_length <= 0:
         return 0
     return max(1, round(text_length / 2))
+
+
+def _build_storage_debug_link(storage_key: str, bucket: str) -> str:
+    if bucket:
+        return f"oss://{bucket}/{storage_key}"
+    return storage_key
