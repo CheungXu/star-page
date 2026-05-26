@@ -62,6 +62,8 @@ type StoredSession = {
 
 type HistoryItem = {
   id: string;
+  taskId?: string;
+  pageId?: string;
   title: string;
   prompt: string;
   fileNames: string[];
@@ -69,6 +71,19 @@ type HistoryItem = {
   status: GenerationStatus;
   createdAt: string;
   updatedAt: string;
+};
+
+type PageHistoryResponseItem = {
+  id: string;
+  task_id?: string | null;
+  title: string;
+  prompt: string;
+  file_names: string[];
+  page_url: string;
+  page_status: string;
+  generation_status?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 const PROGRESS_STEP_META: Record<ProgressStepId, Pick<ProgressStep, "title" | "description">> = {
@@ -128,7 +143,6 @@ function createInitialProgressSteps(hasFile = false): ProgressStep[] {
 const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
-const HISTORY_KEY = "star-page-history";
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 1;
@@ -174,8 +188,7 @@ export default function HomePage() {
   }, [pageUrl]);
 
   useEffect(() => {
-    const history = readHistory();
-    setHistoryItems(history);
+    void loadHistory();
 
     const session = readCurrentSession();
     if (session) {
@@ -209,7 +222,6 @@ export default function HomePage() {
     };
 
     writeCurrentSession(session);
-    setHistoryItems(upsertHistory(session));
   }, [
     currentSessionId,
     currentTaskId,
@@ -224,6 +236,19 @@ export default function HomePage() {
     submittedFileNames,
     submittedPrompt,
   ]);
+
+  async function loadHistory(): Promise<void> {
+    try {
+      const response = await fetch("/api/pages");
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+      const data = (await response.json()) as PageHistoryResponseItem[];
+      setHistoryItems(data.map(mapPageHistoryItem));
+    } catch {
+      setHistoryItems([]);
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -301,6 +326,7 @@ export default function HomePage() {
       setCurrentSessionId(data.task_id);
       setCurrentTaskId(data.task_id);
       setCurrentPageId(data.page_id);
+      void loadHistory();
       if (fileNames.length > 0) {
         setProgressSteps((current) => updateProgressSteps(current, {
           type: "progress",
@@ -367,6 +393,7 @@ export default function HomePage() {
       setStatusText("页面已创建完成");
       setPageUrl(payload.url ?? "");
       if (payload.page_id) setCurrentPageId(payload.page_id);
+      void loadHistory();
       setProgressSteps((current) =>
         current.map((step) => ({
           ...step,
@@ -384,6 +411,7 @@ export default function HomePage() {
       setProgressSteps((current) =>
         current.map((step) => (step.status === "running" ? { ...step, status: "failed" } : step)),
       );
+      void loadHistory();
       source.close();
     });
 
@@ -427,14 +455,24 @@ export default function HomePage() {
 
   function restoreHistoryItem(item: HistoryItem) {
     const stored = readStoredSession(item.id);
-    if (!stored) return;
-
     eventSourceRef.current?.close();
-    writeCurrentSession(stored);
-    applyStoredSession(stored);
 
-    if ((stored.status === "thinking" || stored.status === "creating") && stored.taskId) {
-      connectToEvents(stored.taskId);
+    if (stored) {
+      writeCurrentSession(stored);
+      applyStoredSession(stored);
+
+      if ((stored.status === "thinking" || stored.status === "creating") && stored.taskId) {
+        connectToEvents(stored.taskId);
+      }
+      return;
+    }
+
+    const session = buildSessionFromHistoryItem(item);
+    writeCurrentSession(session);
+    applyStoredSession(session);
+
+    if ((session.status === "thinking" || session.status === "creating") && session.taskId) {
+      connectToEvents(session.taskId);
     }
   }
 
@@ -805,28 +843,6 @@ function readStoredSession(id: string): StoredSession | null {
   return readJson<StoredSession>(`${CURRENT_SESSION_KEY}:${id}`);
 }
 
-function readHistory(): HistoryItem[] {
-  return readJson<HistoryItem[]>(HISTORY_KEY) ?? [];
-}
-
-function upsertHistory(session: StoredSession): HistoryItem[] {
-  const history = readHistory();
-  const item: HistoryItem = {
-    id: session.id,
-    title: buildHistoryTitle(session.prompt),
-    prompt: session.prompt,
-    fileNames: session.fileNames ?? [],
-    pageUrl: session.pageUrl,
-    status: session.status,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-  };
-
-  const nextHistory = [item, ...history.filter((entry) => entry.id !== session.id)].slice(0, 20);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(nextHistory));
-  return nextHistory;
-}
-
 function readJson<T>(key: string): T | null {
   try {
     const rawValue = localStorage.getItem(key);
@@ -839,6 +855,59 @@ function readJson<T>(key: string): T | null {
 function buildHistoryTitle(prompt: string): string {
   const normalized = prompt.replace(/\s+/g, " ").trim();
   return normalized.length > 22 ? `${normalized.slice(0, 22)}...` : normalized || "未命名页面";
+}
+
+function mapPageHistoryItem(item: PageHistoryResponseItem): HistoryItem {
+  const taskId = item.task_id ?? undefined;
+  const pageId = item.id;
+  return {
+    id: taskId ?? pageId,
+    taskId,
+    pageId,
+    title: item.title || buildHistoryTitle(item.prompt),
+    prompt: item.prompt,
+    fileNames: item.file_names ?? [],
+    pageUrl: item.page_url,
+    status: mapHistoryStatus(item.page_status, item.generation_status),
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+  };
+}
+
+function mapHistoryStatus(pageStatus: string, generationStatus?: string | null): GenerationStatus {
+  if (pageStatus === "ready" || generationStatus === "succeeded") return "completed";
+  if (pageStatus === "failed" || generationStatus === "failed" || generationStatus === "cancelled") return "failed";
+  if (pageStatus === "generating" || generationStatus === "pending" || generationStatus === "running") return "thinking";
+  return "idle";
+}
+
+function buildSessionFromHistoryItem(item: HistoryItem): StoredSession {
+  const statusText = getStoredStatusText(item.status);
+  return {
+    id: item.id,
+    taskId: item.taskId,
+    pageId: item.pageId,
+    prompt: item.prompt,
+    fileNames: item.fileNames,
+    status: item.status,
+    reasoning: "",
+    statusText,
+    pageUrl: item.status === "completed" ? item.pageUrl : "",
+    errorMessage: item.status === "failed" ? "页面生成失败，请重新创建。" : "",
+    progressSteps: createInitialProgressSteps(item.fileNames.length > 0).map((step) => ({
+      ...step,
+      status: item.status === "completed" ? "completed" : step.status,
+    })),
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
+
+function getStoredStatusText(status: GenerationStatus): string {
+  if (status === "completed") return "页面已创建完成";
+  if (status === "failed") return "生成失败";
+  if (status === "thinking" || status === "creating") return "正在恢复生成进度...";
+  return "描述你想创建的页面";
 }
 
 function formatHistoryTime(value: string): string {

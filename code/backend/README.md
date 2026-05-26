@@ -28,6 +28,7 @@ journalctl -u star-page-backend.service -f
 
 - `POST /api/generations`：创建页面生成任务。
 - `GET /api/generations/{task_id}/events`：通过 SSE 推送思考过程和完成状态。
+- `GET /api/pages`：查询当前默认测试用户可访问的页面历史列表，供左侧历史创建跨设备使用；后续接入真实登录后替换当前用户来源。
 - `GET /api/pages/{page_id}`：获取页面元数据。
 - `GET /p/{page_id}`：页面访问网关，从私有 OSS 读取 HTML 并返回。
 

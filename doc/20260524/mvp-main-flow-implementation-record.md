@@ -47,6 +47,7 @@
 - 排查到一次空白页问题：任务成功但 OSS 中 HTML 只有空壳 `<head>`、无 `<body>`。随后补充 `model_output_text` 调试字段，保存模型原始输出，便于区分模型输出问题和 HTML 提取/清洗问题。
 - 排查到一次上传资料生成失败：请求在创建任务前的长文压缩阶段返回 `422`，原因是 LLM 压缩调用没有拿到正式 content。随后补充 LLM 重试机制，资料压缩对空正文重试，页面生成在正式输出开始前失败或空输出时重试。
 - 再次确认 standalone 静态资源问题：`npm run build` 会重建 `.next/standalone`，可能移除 `.next/standalone/.next/static`。构建后必须重启 `star-page-frontend.service`，并检查 `/_next/static/*.css` 返回 `200 text/css`。
+- 历史记录从浏览器 `localStorage` 迁移到数据库查询：新增 `GET /api/pages`，当前使用默认测试用户查询其拥有或有权限访问的页面，并返回最近生成任务的 prompt、上传文件名、任务状态和页面链接。前端左侧历史创建改为读该接口，跨设备可看到同一测试账号历史；`localStorage` 仅保留当前设备的会话细节。
 
 ## 已解决问题
 
@@ -101,7 +102,7 @@ cp -r public .next/standalone/
 - 复制链接按钮不再向上弹出成功提示，点击后按钮本身变为绿色并显示“复制成功”。
 - 生成态增加左侧历史创建侧边栏，支持点击历史记录恢复会话。
 - 增加“新对话”按钮；刷新页面会恢复当前会话，只有点击新对话才回到初始首页。
-- 当前历史和会话状态保存在浏览器 `localStorage`，适合 demo；未来接入真实用户系统后，应改为后端页面列表和用户历史。
+- 历史列表已在 2026-05-26 迁移为后端数据库查询；`localStorage` 仅保留当前设备上的会话细节。
 - 已补充 `wiki/systemd-nextjs-fastapi-deployment.md`，记录 Next.js + FastAPI 早期 MVP 使用 systemd 常驻运行的通用要点。
 
 ## 后台队列升级提醒
