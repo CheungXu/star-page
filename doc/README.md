@@ -10,9 +10,10 @@
 - `20260524/cloud-resource-setup-record.md`：阿里云云资源与服务器运行环境配置记录。
 - `20260524/mvp-main-flow-plan.md`：Next.js 前端 + FastAPI 后端的 MVP 主流程实施计划。
 - `20260524/mvp-main-flow-implementation-record.md`：MVP 主流程实现记录，包含数据库迁移、LLM 生成、OSS 存储、上传资料处理、页面预览、历史会话、systemd 常驻运行等实施状态。
+- `20260527/frontend-homepage-ui-redesign.md`：首页 UI 重构记录，按设计反馈引入设计 token 体系、重构输入卡片、新增推荐场景 chips、优化侧边栏状态与对比度。
 
 ## 使用约定
 
 - `doc/` 记录本项目阶段性工作过程、实施状态和问题处理记录。
-- 可跨项目复用的通用经验沉淀到 `wiki/`，例如 systemd 常驻部署、生成页预览方案、LLM Provider 抽象原则。
+- 可跨项目复用的通用经验沉淀到 `wiki/`，例如 systemd 常驻部署、生成页预览方案、LLM Provider 抽象原则、设计 token 与输入卡片设计模式。
 

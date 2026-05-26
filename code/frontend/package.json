@@ -5,16 +5,22 @@
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "typescript": "latest"
+    "@types/node": "25.9.1",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "typescript": "6.0.3"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6"
+  },
+  "overrides": {
+    "typescript-eslint": "8.46.0"
+  }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, SyntheticEvent } from "react";
+import type { ChangeEvent, FormEvent, SyntheticEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
@@ -148,6 +148,71 @@ const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 1;
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
+const StarIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M14.4 3.5L17.3 11.25L25.55 11.65L19.1 16.8L21.25 24.8L14.4 20.25L7.55 24.8L9.7 16.8L3.25 11.65L11.5 11.25L14.4 3.5Z" fill="currentColor" />
+    <path d="M24.15 5.2L25.4 8.15L28.6 8.42L26.18 10.52L26.92 13.65L24.15 12L21.38 13.65L22.12 10.52L19.7 8.42L22.9 8.15L24.15 5.2Z" fill="currentColor" opacity="0.66" />
+    <path d="M8.35 21.45L9.2 23.45L11.38 23.64L9.74 25.08L10.22 27.2L8.35 26.08L6.48 27.2L6.96 25.08L5.32 23.64L7.5 23.45L8.35 21.45Z" fill="currentColor" opacity="0.52" />
+    <path d="M25.55 20.4L26.22 21.88L27.82 22.02L26.62 23.08L26.98 24.65L25.55 23.82L24.12 24.65L24.48 23.08L23.28 22.02L24.88 21.88L25.55 20.4Z" fill="currentColor" opacity="0.42" />
+  </svg>
+);
+
+const HistoryIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"></circle>
+    <polyline points="12 6 12 12 16 14"></polyline>
+  </svg>
+);
+
+const PlusIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="12" y1="5" x2="12" y2="19"></line>
+    <line x1="5" y1="12" x2="19" y2="12"></line>
+  </svg>
+);
+
+const AttachmentIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+  </svg>
+);
+
+const ArrowUpIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <line x1="12" y1="19" x2="12" y2="5" />
+    <polyline points="5 12 12 5 19 12" />
+  </svg>
+);
+
+type PromptPreset = { id: string; emoji: string; label: string; prompt: string };
+
+const PROMPT_PRESETS: PromptPreset[] = [
+  {
+    id: "product",
+    emoji: "🚀",
+    label: "产品介绍页",
+    prompt: "结合我上传的产品资料，做一个面向客户的介绍页，风格简洁、高级，包含核心卖点与适用场景。",
+  },
+  {
+    id: "report",
+    emoji: "📊",
+    label: "工作汇报",
+    prompt: "根据我的内容，做一份图文并茂的工作汇报页面，结构清晰，突出关键数据与下一步计划。",
+  },
+  {
+    id: "resume",
+    emoji: "👤",
+    label: "个人简历",
+    prompt: "帮我生成一个精致的个人作品集 / 简历单页，突出履历、项目和联系方式。",
+  },
+  {
+    id: "event",
+    emoji: "🎉",
+    label: "活动邀请",
+    prompt: "做一个活动邀请落地页，包含活动主题、时间地点、亮点议程和报名引导。",
+  },
+];
+
 export default function HomePage() {
   const [prompt, setPrompt] = useState("");
   const [currentSessionId, setCurrentSessionId] = useState("");
@@ -167,7 +232,6 @@ export default function HomePage() {
   const [thinkingExpanded, setThinkingExpanded] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
-  const [hasHydrated, setHasHydrated] = useState(false);
   const [previewMetrics, setPreviewMetrics] = useState({
     viewportWidth: PREVIEW_VIEWPORT_WIDTH,
     contentHeight: PREVIEW_DEFAULT_HEIGHT,
@@ -178,6 +242,7 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewStageRef = useRef<HTMLDivElement | null>(null);
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const hasHydratedRef = useRef(false);
 
   const absolutePageUrl = useMemo(() => {
     if (!pageUrl) return "";
@@ -198,11 +263,13 @@ export default function HomePage() {
       }
     }
 
-    setHasHydrated(true);
+    hasHydratedRef.current = true;
+    // 这里只在首屏恢复本地会话，避免重连逻辑随状态变化重复执行。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!hasHydrated || status === "idle" || !currentSessionId) return;
+    if (!hasHydratedRef.current || status === "idle" || !currentSessionId) return;
 
     const now = new Date().toISOString();
     const session: StoredSession = {
@@ -227,7 +294,6 @@ export default function HomePage() {
     currentTaskId,
     currentPageId,
     errorMessage,
-    hasHydrated,
     pageUrl,
     progressSteps,
     reasoning,
@@ -480,36 +546,34 @@ export default function HomePage() {
     return (
       <nav className={`history-sidebar ${isSidebarCollapsed ? "collapsed" : ""}`} aria-label="历史创建">
         <button
-          className="sidebar-icon-button sidebar-toggle-button"
+          className="sidebar-brand"
           type="button"
           onClick={() => setIsSidebarCollapsed((value) => !value)}
           title={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
           aria-label={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
           aria-expanded={!isSidebarCollapsed}
         >
-          ✦
+          <span className="brand-glyph" aria-hidden="true"><StarIcon /></span>
+          {!isSidebarCollapsed && <span className="brand-text">Star Page</span>}
         </button>
+
+        {!isSidebarCollapsed && <div className="sidebar-section-divider" aria-hidden="true" />}
+
         <button className="new-chat-button" type="button" onClick={startNewChat} title="新对话" aria-label="新对话">
-          +
+          <span className="sidebar-icon"><PlusIcon /></span>
+          {!isSidebarCollapsed && <span className="sidebar-label">新对话</span>}
         </button>
-        <button
-          className="sidebar-icon-button"
-          type="button"
-          onClick={() => setIsSidebarCollapsed(false)}
-          title="搜索历史"
-          aria-label="搜索历史"
-        >
-          ⌕
-        </button>
-        <button
-          className="sidebar-icon-button"
-          type="button"
-          onClick={() => setIsSidebarCollapsed(false)}
-          title="历史创建"
-          aria-label="历史创建"
-        >
-          ⠿
-        </button>
+        {isSidebarCollapsed && (
+          <button
+            className="sidebar-icon-button"
+            type="button"
+            onClick={() => setIsSidebarCollapsed(false)}
+            title="历史创建"
+            aria-label="历史创建"
+          >
+            <span className="sidebar-icon"><HistoryIcon /></span>
+          </button>
+        )}
 
         <div className="history-content" aria-hidden={isSidebarCollapsed}>
           <div className="history-title">历史创建</div>
@@ -572,6 +636,11 @@ export default function HomePage() {
     setSelectedFiles([]);
     setFileError("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    setPrompt(event.target.value);
+    resizePromptTextarea(event.currentTarget);
   }
 
   async function copyPageUrl() {
@@ -647,50 +716,89 @@ export default function HomePage() {
     }
   }
 
+  function handlePresetClick(preset: PromptPreset) {
+    if (isGenerating) return;
+    setPrompt(preset.prompt);
+  }
+
   function renderPromptForm(compact = false) {
     return (
-      <form className={`prompt-card ${compact ? "compact-prompt" : ""}`} onSubmit={handleSubmit}>
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          placeholder="例如：结合我上传的产品资料，做一个面向客户的介绍页，风格简洁、高级"
-          rows={compact ? 2 : 3}
-          disabled={isGenerating}
-        />
-        <div className="prompt-file-row">
-          <label className="file-upload-button">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={ACCEPTED_FILE_TYPES}
-              disabled={isGenerating}
-              onChange={(event) => handleFileChange(event.target.files)}
-            />
-            上传资料
-          </label>
-          {selectedFiles.length > 0 ? (
-            <div className="selected-files" aria-label="已选择文件">
-              {selectedFiles.map((file) => (
-                <span className="selected-file" key={`${file.name}-${file.size}`}>
-                  {file.name} · {formatFileSize(file.size)}
-                </span>
-              ))}
-              <button type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
-                清空
-              </button>
+      <div className={`prompt-form-wrap ${compact ? "compact-wrap" : "hero-wrap"}`}>
+        <form className={`prompt-card ${compact ? "compact-prompt" : "hero-prompt"}`} onSubmit={handleSubmit}>
+          <textarea
+            value={prompt}
+            onChange={handlePromptChange}
+            placeholder={compact ? "继续描述你想调整的方向…" : "说说你想做的页面，例如「面向客户的产品介绍页」"}
+            rows={compact ? 1 : 3}
+            disabled={isGenerating}
+          />
+          <div className="prompt-toolbar">
+            <div className="prompt-tool-group">
+              <label className="file-upload-button" title="上传文档作为生成参考">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ACCEPTED_FILE_TYPES}
+                  disabled={isGenerating}
+                  onChange={(event) => handleFileChange(event.target.files)}
+                />
+                <span className="button-icon" aria-hidden="true"><AttachmentIcon /></span>
+                上传资料
+              </label>
+              {selectedFiles.length > 0 ? (
+                <div className="selected-files" aria-label="已选择文件">
+                  {selectedFiles.map((file) => (
+                    <span className="selected-file" key={`${file.name}-${file.size}`}>
+                      {file.name} · {formatFileSize(file.size)}
+                    </span>
+                  ))}
+                  <button type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
+                    清空
+                  </button>
+                </div>
+              ) : (
+                <span className="prompt-status">{statusText}</span>
+              )}
             </div>
-          ) : (
-            <span className="file-hint">支持 docx、pptx、xlsx、xls、txt、md、html，仅 1 个文件，最大 50MB</span>
-          )}
+            <button
+              className="submit-button"
+              type="submit"
+              disabled={isGenerating || Boolean(fileError)}
+              aria-label="创建页面"
+            >
+              {isGenerating ? (
+                "生成中"
+              ) : (
+                <>
+                  创建
+                  <span className="button-icon" aria-hidden="true"><ArrowUpIcon /></span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+        {!compact && (
+          <div className="prompt-chip-row" role="list" aria-label="推荐场景">
+            {PROMPT_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                role="listitem"
+                className="prompt-chip"
+                onClick={() => handlePresetClick(preset)}
+                disabled={isGenerating}
+              >
+                <span className="chip-emoji" aria-hidden="true">{preset.emoji}</span>
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="prompt-meta-row">
+          <span className="file-hint">支持 docx、pptx、xlsx、xls、txt、md、html；最多 1 个文件，单文件 ≤ 50MB</span>
+          {fileError && <span className="file-error">{fileError}</span>}
         </div>
-        {fileError && <p className="file-error">{fileError}</p>}
-        <div className="prompt-actions">
-          <span>{statusText}</span>
-          <button type="submit" disabled={isGenerating || Boolean(fileError)} aria-label="创建页面">
-            {isGenerating ? "生成中" : "创建"}
-          </button>
-        </div>
-      </form>
+      </div>
     );
   }
 
@@ -700,7 +808,10 @@ export default function HomePage() {
         {renderHistorySidebar()}
         <section className="page-shell">
           <div className="hero">
-            <div className="brand-mark">✦</div>
+            <div className="brand-mark">
+              <span className="brand-icon" aria-hidden="true"><StarIcon /></span>
+              <span className="brand-name">Star Page</span>
+            </div>
             <h1>想做什么页面？</h1>
             <p className="subtitle">描述你的想法，我会生成一个可以分享的 HTML 页面。</p>
 
@@ -992,6 +1103,11 @@ function formatFileSize(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function resizePromptTextarea(textarea: HTMLTextAreaElement): void {
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
