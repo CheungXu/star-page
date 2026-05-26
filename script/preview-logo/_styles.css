@@ -1,0 +1,354 @@
+/* ==========================================================================
+   预览页公用样式
+   - 提取自 code/frontend/app/globals.css 中 idle 首屏所需的 hero / aurora /
+     prompt-card / chip / submit-button 等关键片段，保持视觉与生产页面一致
+   - 仅供 logo 三方案对比预览使用，独立挂载在 3001 / 3002 / 3003
+   ========================================================================== */
+:root {
+  --color-bg: #f7f8fa;
+  --color-bg-elevated: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f3f4f7;
+
+  --color-border: rgba(15, 23, 42, 0.08);
+  --color-border-strong: rgba(15, 23, 42, 0.14);
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #64748b;
+  --color-text-muted: #94a3b8;
+
+  --color-primary: #3563e9;
+  --color-primary-hover: #2849c8;
+  --color-primary-active: #1f3aab;
+  --color-primary-soft: #eaf0ff;
+  --color-primary-soft-strong: #d6e1ff;
+  --color-accent: #8b5cf6;
+
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 6px 16px -6px rgba(15, 23, 42, 0.1);
+  --shadow-lg:
+    0 2px 4px rgba(15, 23, 42, 0.04),
+    0 12px 32px -12px rgba(15, 23, 42, 0.14);
+  --shadow-focus: 0 0 0 4px rgba(53, 99, 233, 0.16);
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; margin: 0; }
+
+body {
+  position: relative;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* 极光背景：与生产首页同款 */
+.hero-aurora {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+.hero-aurora .aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.85;
+  will-change: transform;
+}
+.hero-aurora .aurora-blob-1 {
+  top: -160px;
+  left: 8%;
+  width: 560px;
+  height: 560px;
+  background: radial-gradient(circle at 30% 30%, rgba(53, 99, 233, 0.42), transparent 68%);
+  animation: aurora-float-a 18s ease-in-out infinite;
+}
+.hero-aurora .aurora-blob-2 {
+  top: 4%;
+  right: -180px;
+  width: 540px;
+  height: 540px;
+  background: radial-gradient(circle at 70% 30%, rgba(139, 92, 246, 0.34), transparent 68%);
+  animation: aurora-float-b 22s ease-in-out infinite;
+}
+.hero-aurora .aurora-blob-3 {
+  top: 28%;
+  left: 32%;
+  width: 720px;
+  height: 720px;
+  background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.22), transparent 68%);
+  animation: aurora-float-c 26s ease-in-out infinite;
+}
+.hero-aurora .aurora-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(closest-side at 50% 40%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(closest-side at 50% 40%, #000 55%, transparent 100%);
+}
+@keyframes aurora-float-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(40px, 30px, 0) scale(1.05); }
+}
+@keyframes aurora-float-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-50px, 24px, 0) scale(1.08); }
+}
+@keyframes aurora-float-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-30px, -36px, 0) scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-aurora .aurora-blob { animation: none; }
+}
+
+/* 顶部预览标签：标记当前查看的方案 */
+.variant-tag {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: var(--shadow-sm);
+}
+.variant-tag .variant-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
+/* 壳层：与 home-shell 视觉一致，但去掉左侧 sidebar，用居中 page-shell 直接展示 hero */
+.preview-shell {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 100vh;
+  padding: 20px;
+}
+.page-shell {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 74px 0 56px;
+}
+
+/* Hero 容器 */
+.hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-height: 60vh;
+  justify-content: center;
+}
+
+/* 标题与副标题 */
+h1 {
+  max-width: 760px;
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+.subtitle {
+  max-width: 620px;
+  margin: 14px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+/* Prompt Card */
+.prompt-form-wrap { width: min(760px, 100%); margin-top: 24px; }
+.prompt-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 18px 20px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow:
+    var(--shadow-lg),
+    0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+  min-height: 168px;
+}
+.prompt-card:focus-within {
+  border-color: var(--color-primary);
+  box-shadow:
+    var(--shadow-lg),
+    var(--shadow-focus);
+}
+.prompt-card textarea {
+  width: 100%;
+  min-height: 96px;
+  max-height: 220px;
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  outline: none;
+  /* 文字呼吸感：上 / 左 各加大约 6-8px */
+  padding: 12px 12px 10px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 15.5px;
+  line-height: 1.6;
+  font-family: inherit;
+}
+.prompt-card textarea::placeholder {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.prompt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  padding-top: 6px;
+}
+.prompt-tool-group {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.file-upload-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.file-upload-button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-soft);
+  color: var(--color-text-primary);
+}
+.file-upload-button .button-icon { display: inline-flex; font-size: 15px; }
+.file-hint {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.submit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 92px;
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.submit-button:hover { background: var(--color-primary-hover); box-shadow: var(--shadow-md); }
+.submit-button .button-icon { display: inline-flex; font-size: 14px; }
+
+/* 推荐场景 chips */
+.prompt-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+  justify-content: center;
+}
+.prompt-chip {
+  display: inline-flex;
+  align-items: center;
+  /* Emoji 与文字之间的呼吸感 */
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid rgba(53, 99, 233, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(247, 249, 255, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.prompt-chip:hover {
+  border-color: rgba(53, 99, 233, 0.35);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.prompt-chip .chip-emoji { font-size: 14px; }

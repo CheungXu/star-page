@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案三（氛围水印）</title>
+  <link rel="stylesheet" href="_styles.css" />
+  <style>
+    /* 方案三：原 logo 转化为氛围水印
+       - 保留原 stars-page-logo.png，但
+         · 缩放到适中尺寸（约 220px，不再喧宾夺主）
+         · 透明度降至 ~14%，整体淡入背景
+         · 用 hue-rotate / saturate 调和为更柔和的品牌蓝
+         · 通过 z-index 退到标题"后面"，作为图腾/水印
+       - 适合舍不得删 logo、又要让标题成为主角的场景 */
+    .hero {
+      position: relative;
+      justify-content: flex-start;
+      padding-top: 14vh;
+    }
+    .hero-watermark {
+      position: absolute;
+      top: -40px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 220px;
+      height: 220px;
+      opacity: 0.14;
+      filter:
+        saturate(0.75)
+        hue-rotate(-6deg)
+        drop-shadow(0 16px 40px rgba(53, 99, 233, 0.25));
+      pointer-events: none;
+      user-select: none;
+      z-index: 0;
+    }
+    .hero h1,
+    .hero .subtitle,
+    .hero .prompt-form-wrap {
+      position: relative;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <div class="variant-tag" aria-label="当前预览">
+    <span class="variant-dot"></span>
+    方案三 · 氛围水印（原 Logo 退到标题后面）
+  </div>
+
+  <main class="preview-shell">
+    <section class="page-shell">
+      <div class="hero">
+        <img src="stars-page-logo.png" alt="" class="hero-watermark" aria-hidden="true" />
+
+        <h1>想做什么页面？</h1>
+        <p class="subtitle">描述你的想法，我会生成一个可以分享的 HTML 页面。</p>
+
+        <div class="prompt-form-wrap">
+          <form class="prompt-card" onsubmit="event.preventDefault();">
+            <textarea rows="3" placeholder="说说你想做的页面，例如「面向客户的产品介绍页」"></textarea>
+            <div class="prompt-toolbar">
+              <div class="prompt-tool-group">
+                <label class="file-upload-button" title="上传文档作为生成参考">
+                  <input type="file" hidden />
+                  <span class="button-icon" aria-hidden="true">
+                    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </span>
+                  上传资料
+                </label>
+                <span class="file-hint">docx · pptx · xlsx · txt · md · html，单文件 ≤ 50MB</span>
+              </div>
+              <button class="submit-button" type="submit">
+                创建
+                <span class="button-icon" aria-hidden="true">
+                  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"/>
+                    <polyline points="5 12 12 5 19 12"/>
+                  </svg>
+                </span>
+              </button>
+            </div>
+          </form>
+          <div class="prompt-chip-row">
+            <button class="prompt-chip"><span class="chip-emoji">🚀</span>产品介绍页</button>
+            <button class="prompt-chip"><span class="chip-emoji">📊</span>工作汇报</button>
+            <button class="prompt-chip"><span class="chip-emoji">👤</span>个人简历</button>
+            <button class="prompt-chip"><span class="chip-emoji">🎉</span>活动邀请</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

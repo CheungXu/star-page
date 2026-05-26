@@ -198,9 +198,222 @@ Header / Hero 区域的品牌 logo 是首屏视觉重心，原则：
 - **呼吸感**：列表项 padding ≥ 10px 12px，相邻项之间 2-4px gap，行高 1.5+，时间戳与标题之间 4px。
 - 收起态下，必备入口：品牌（含切换）、新对话（主 CTA）、历史（点击即展开），不要再放第二个"展开"按钮。
 
-## 5. 适用范围
+## 5. 多层弥散阴影（精修版）
 
-适合 AI 输入类首页（ChatGPT 风、Claude 风、Gemini 风、Perplexity 风、各类内部 AI 工具）。对内容浏览类（资讯流、电商）不直接适用，但 token 体系 + Aurora 背景部分通用。
+第一版的 `--shadow-lg` 是"细投影 + 远散光"两层，但所有卡片都用同一个 token 时，主输入卡片仍会显得"硬"。AI 工具首页的核心输入卡建议**单独使用一组更柔和的弥散阴影**：
+
+```css
+.prompt-card {
+  box-shadow:
+    0 4px 6px -1px rgba(15, 23, 42, 0.05),    /* 近距：建立轮廓 */
+    0 10px 15px -3px rgba(15, 23, 42, 0.05),  /* 远距：营造悬浮 */
+    0 0 0 1px rgba(255, 255, 255, 0.5) inset; /* inset 高光：玻璃质感 */
+}
+
+.prompt-card:focus-within {
+  box-shadow:
+    0 4px 6px -1px rgba(15, 23, 42, 0.05),
+    0 10px 15px -3px rgba(15, 23, 42, 0.05),
+    var(--shadow-focus);  /* 替换 inset 高光为蓝光圈 */
+}
+```
+
+要点：
+- `-1px / -3px` 的负 spread：让阴影向内收，避免"溢出"卡片轮廓。
+- 三层阴影都用同一个低 alpha（0.05），靠多层叠加形成"近距清晰 + 远距弥散"的渐变。
+- `inset` 高光只在白底卡片上有效，深色卡片改为 `rgba(255, 255, 255, 0.08) inset`。
+
+对比 Tailwind UI / shadcn 的 `shadow` / `shadow-md` 组合，这套阴影最大优势是 `-3px` spread + 低 alpha，让远投影更"散"而不"脏"。
+
+## 6. Chip Hover 双层阴影 + active 反馈
+
+Chip 作为可点击卡片按钮，hover 反馈不能只用 `transform: -1px + var(--shadow-md)`，否则在已经有大量阴影的页面里会"被淹没"。
+
+```css
+.prompt-chip:hover {
+  border-color: rgba(53, 99, 233, 0.4);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  transform: translateY(-2px);
+  /* 双层 hover 阴影：近距品牌蓝（彩色阴影） + 远距中性黑（建立深度） */
+  box-shadow:
+    0 6px 14px -6px rgba(53, 99, 233, 0.35),
+    0 2px 4px -1px rgba(15, 23, 42, 0.06);
+}
+
+.prompt-chip:active {
+  /* active 反馈必须真实"按下感"：transform 收回 1px、阴影减半 */
+  transform: translateY(-1px);
+  box-shadow:
+    0 3px 8px -3px rgba(53, 99, 233, 0.3),
+    0 1px 2px -1px rgba(15, 23, 42, 0.06);
+}
+```
+
+要点：
+- **彩色阴影**：第一层用品牌色阴影 (`rgba(53, 99, 233, 0.35)`)，让 hover 与品牌色绑定，比纯灰阴影更有产品个性。
+- **transform 上浮 -2px**：精修后必须 ≥ 2px，否则在密集页面里反馈不明显。
+- **`:active` 必须有**：上浮回收 1px + 阴影减半，让按下感真实而不是"硬切"。
+
+## 7. 侧边栏 Logo 圆角底板（macOS App 图标式）
+
+侧边栏小尺寸 logo（28-32px）在白色 sidebar 底色上"浮不起来"，常见的做法是加白色底板 + 微投影：
+
+```css
+.sidebar-brand .brand-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;          /* 与同列 + 按钮、🕐 按钮严格一致 */
+  height: 40px;
+  border-radius: var(--radius-md);  /* 与同列按钮一致的圆角 */
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 2px 8px rgba(15, 23, 42, 0.06);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sidebar-brand .brand-glyph img {
+  width: 26px;          /* 内部 logo 留出 ~7px 边距，避免顶到边角 */
+  height: 26px;
+  object-fit: contain;
+}
+
+.sidebar-brand:hover .brand-glyph {
+  transform: scale(1.04);
+  /* hover 阴影染上品牌蓝，与 logo 颜色呼应 */
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 14px rgba(53, 99, 233, 0.12);
+}
+```
+
+**关键约束**（来自第三轮反馈）：
+- bounding box 必须严格 40×40、`border-radius` 必须等于同列其它按钮 → 展开/收起切换时无任何"跳跃感"。
+- 内部 img 留 padding 而不是让 img 撑满底板，否则 logo 会贴边显得"局促"。
+- hover 阴影从纯灰升级为品牌蓝，只在 logo 自身是蓝色时使用，否则会显得"染色错误"。
+
+## 8. 双语品牌文案双层结构
+
+中文产品做品牌标识时，常见处理"中文主名 + 英文副名"两段：
+
+```tsx
+<span className="brand-text">
+  <span className="brand-name-cn">星页</span>
+  <span className="brand-name-en">StarPage</span>
+</span>
+```
+
+```css
+.brand-text {
+  display: inline-flex;
+  align-items: center;   /* 关键：center 而不是 baseline */
+  gap: 6px;
+  line-height: 1;        /* 关键：1，避免行高放大造成偏移 */
+}
+
+.brand-name-cn {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;  /* 中文用负字距收紧 */
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.brand-name-en {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;   /* 英文用正字距放松，对比中文 */
+  color: var(--color-text-secondary);
+  line-height: 1;
+}
+```
+
+要点：
+- **垂直对齐用 `align-items: center` + `line-height: 1`**，不要用 `baseline`。中英文 baseline 差异会让整组文字相对图标偏上 1-2px，是"看着不太对"的真凶。
+- **字距对比**：中文负字距收紧、英文正字距放松，强化"中紧英松"的节奏感，让组合像 logo 字而不是普通正文。
+- **字重对比**：中文 800、英文 700，主名比副名重一档；色彩对比：中文 primary、英文 secondary，避免英文喧宾夺主。
+
+## 9. 副标题品牌词高亮
+
+长串副标题里嵌入品牌名时，单纯加粗（`font-weight: 700` + primary 色）反而像"视觉污渍"。更精致的做法是**主题色 + 中粗**：
+
+```css
+.subtitle .brand-inline {
+  font-weight: 600;             /* 中粗，不是 700 */
+  color: var(--color-primary);  /* 主题蓝，不是 primary 文本色 */
+  letter-spacing: 0.01em;
+}
+```
+
+```html
+<p class="subtitle">说说你的想法，<strong class="brand-inline">星页 StarPage</strong> 帮你生成一个可分享的精致网页。</p>
+```
+
+要点：
+- 颜色用品牌蓝形成"一眼锁定"的聚焦点，文字字重不必再加到 700（双重强调反而压过整句）。
+- 仅用于副标题、引导文案；不要在长段正文里这样做，会显得啰嗦。
+
+## 10. 视觉节奏 2:1 黄金分组
+
+侧边栏（或任何"品牌区 + 操作区"的纵向布局）做收起态时，让"品牌锚点"与"操作组"产生 2:1 节奏：
+
+```css
+.history-sidebar.collapsed {
+  align-items: center;
+  padding: 14px 10px;
+  gap: 6px;                /* 操作组内间距 */
+}
+
+.history-sidebar.collapsed .sidebar-brand {
+  margin-bottom: 12px;     /* 品牌区与操作组间距 */
+}
+```
+
+效果：`[logo] 12px [+] 6px [⌚]` —— 12 : 6 = 2 : 1 的视觉分组节奏。比所有间距相等的 6px 排列**显著更有秩序感**，符合视觉节奏的黄金分组原则。
+
+展开态需要拉得更开（约 24px），保留 `sidebar-section-divider` 作为视觉分隔，divider 自身不带 margin，所有间距由 `.sidebar-brand margin-bottom` 集中控制：
+
+```css
+.history-sidebar:not(.collapsed) .sidebar-brand {
+  margin-bottom: 16px;
+}
+.sidebar-section-divider {
+  height: 1px;
+  margin: 0 4px;           /* 不带上下 margin，避免双重 */
+  background: var(--color-border);
+}
+/* 实际间距 = 16px (margin) + 1px (divider) + 6px (flex gap) ≈ 23px */
+```
+
+## 11. 滚动条 hover 反馈
+
+第二轮已经做到"极细 + 圆角 + 半透明"，本轮在此基础上加 hover 反馈：
+
+```css
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.22);
+  border: 1px solid transparent;
+  background-clip: padding-box;     /* 让圆角更"漂浮" */
+  transition: background 0.15s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.42);  /* 悬停加深一倍 */
+}
+```
+
+要点：
+- `background-clip: padding-box` + `border: 1px solid transparent`：让滑块视觉上比 track 窄 2px，更"漂浮"。
+- hover 时 alpha `0.22 → 0.42`，明确"可拖拽"反馈。
+- 容器 `padding-right: 4px / margin-right: -2px`：让 thumb 不紧贴右边缘，又不增加 list 占位。
+
+## 12. 适用范围
+
+适合 AI 输入类首页（ChatGPT 风、Claude 风、Gemini 风、Perplexity 风、各类内部 AI 工具）。对内容浏览类（资讯流、电商）不直接适用，但 token 体系 + Aurora 背景 + 双语品牌文案 + 视觉节奏 2:1 部分通用。
 
 ## 6. 落地清单
 

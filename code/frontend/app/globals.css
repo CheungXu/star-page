@@ -204,27 +204,31 @@ button {
   justify-content: center;
 }
 
-/* Header Logo：透明背景的纯品牌徽标，用柔和投影建立空间感 */
+/* Header Logo：透明背景的纯品牌徽标，用柔和投影建立空间感
+   - 简化版 logo（去掉 JS/TS/CSS 三颗文字星，仅保留主星 + </> + 两颗点缀星）
+   - 尺寸 56px：相比上一版 44px 放大 ~1.27×，让 logo 在视觉上能"压住"
+     下方 48px 字号 + 700 字重的大标题，形成更稳的视觉重心
+   - margin-bottom 14px，让 logo 与标题在视觉上形成紧密的标题组 */
 .brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 24px;
+  margin-bottom: 14px;
 }
 
 .brand-mark .brand-logo {
   display: block;
-  width: 116px;
-  height: 116px;
+  width: 56px;
+  height: 56px;
   object-fit: contain;
   filter:
-    drop-shadow(0 6px 12px rgba(53, 99, 233, 0.22))
-    drop-shadow(0 20px 44px rgba(53, 99, 233, 0.2));
+    drop-shadow(0 4px 10px rgba(53, 99, 233, 0.22))
+    drop-shadow(0 12px 24px rgba(53, 99, 233, 0.12));
   transition: transform 0.3s ease;
 }
 
 .brand-mark .brand-logo:hover {
-  transform: translateY(-2px) scale(1.02);
+  transform: translateY(-1px) scale(1.04);
 }
 
 h1 {
@@ -243,6 +247,14 @@ h1 {
   color: var(--color-text-secondary);
   font-size: 16px;
   line-height: 1.65;
+}
+
+/* 副标题里的品牌名作为视觉聚焦点：主题蓝 + 中粗，
+   在长串灰色副标题里形成"一眼锁定"的品牌锚点，避免整句失焦 */
+.subtitle .brand-inline {
+  font-weight: 600;
+  color: var(--color-primary);
+  letter-spacing: 0.01em;
 }
 
 /* ==========================================================================
@@ -268,14 +280,18 @@ h1 {
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding: 18px 20px 12px;
+  /* 底部留白拉到 18px，让工具栏与卡片底边形成"呼吸感" */
+  padding: 18px 20px 18px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
+  /* 多层弥散阴影：近距投影建立轮廓 + 远距投影营造悬浮感
+     比单层硬阴影更轻盈、更现代 */
   box-shadow:
-    var(--shadow-lg),
+    0 4px 6px -1px rgba(15, 23, 42, 0.05),
+    0 10px 15px -3px rgba(15, 23, 42, 0.05),
     0 0 0 1px rgba(255, 255, 255, 0.5) inset;
   transition:
     border-color 0.2s ease,
@@ -286,7 +302,8 @@ h1 {
 .prompt-card:focus-within {
   border-color: var(--color-primary);
   box-shadow:
-    var(--shadow-lg),
+    0 4px 6px -1px rgba(15, 23, 42, 0.05),
+    0 10px 15px -3px rgba(15, 23, 42, 0.05),
     var(--shadow-focus);
 }
 
@@ -302,7 +319,9 @@ h1 {
   overflow-y: auto;
   border: 0;
   outline: none;
-  padding: 6px 4px 8px;
+  /* 文字呼吸感：上 / 左 各加大约 6-8px，让文字更稳当地坐在卡片里
+     而不是顶到边角 */
+  padding: 12px 12px 10px;
   background: transparent;
   color: var(--color-text-primary);
   font-size: 15.5px;
@@ -368,9 +387,10 @@ h1 {
   display: none;
 }
 
-/* 文件类型提示：紧贴上传按钮，作为补充说明 */
+/* 文件类型提示：紧贴上传按钮，作为补充说明
+   颜色从 tertiary 提到 secondary，保证强光环境下也清晰可读（无障碍） */
 .file-hint {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
@@ -453,8 +473,10 @@ h1 {
 .prompt-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 9px 14px;
+  /* Icon 与文字之间的呼吸感 */
+  gap: 8px;
+  /* 左右内边距 14→18，让文字更稳当地坐在胶囊里 */
+  padding: 9px 18px;
   border: 1px solid rgba(53, 99, 233, 0.12);
   border-radius: var(--radius-md);
   background: rgba(247, 249, 255, 0.85);
@@ -474,11 +496,21 @@ h1 {
 }
 
 .prompt-chip:hover {
-  border-color: rgba(53, 99, 233, 0.35);
+  border-color: rgba(53, 99, 233, 0.4);
   background: var(--color-primary-soft);
   color: var(--color-primary);
+  /* hover 上浮幅度加大到 -2px，阴影更强，反馈更明确 */
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 14px -6px rgba(53, 99, 233, 0.35),
+    0 2px 4px -1px rgba(15, 23, 42, 0.06);
+}
+
+.prompt-chip:active {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  box-shadow:
+    0 3px 8px -3px rgba(53, 99, 233, 0.3),
+    0 1px 2px -1px rgba(15, 23, 42, 0.06);
 }
 
 .prompt-chip:disabled {
@@ -487,8 +519,13 @@ h1 {
   transform: none;
 }
 
+/* Chip Emoji：保留 emoji 的彩色质感，给年轻白领与学生群体更活泼的视觉 */
 .prompt-chip .chip-emoji {
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
 }
 
 /* 主 CTA：使用品牌蓝替代纯黑，圆角与卡片体系对齐 */
@@ -603,15 +640,31 @@ h1 {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
+  /* 右侧多一层弥散阴影，让侧边栏与右侧渐变背景的空间层次更明确 */
+  box-shadow:
+    8px 0 16px -12px rgba(15, 23, 42, 0.08),
+    0 1px 2px rgba(15, 23, 42, 0.04);
   padding: 14px 12px;
-  transition:
-    padding 0.2s ease;
+  transition: padding 0.2s ease;
 }
 
+/* 收起状态：拉开 logo 与下方操作组的距离，让 [+ / 时钟] 形成一个紧凑操作组
+   - 操作组内 gap 6px（与 + 按钮间距）；品牌区 → 操作组 12px
+   - 12 : 6 的 2:1 节奏，符合视觉节奏的黄金分组原则
+   - bounding box 都是 40x40、border-radius 都是 12px，整列严格对齐 */
 .history-sidebar.collapsed {
   align-items: center;
   padding: 14px 10px;
+  gap: 6px;
+}
+
+.history-sidebar.collapsed .sidebar-brand {
+  margin-bottom: 12px;
+}
+
+/* 展开状态：品牌区与"+ 新对话"操作区拉开 ~24px，让 logo 独立呼吸 */
+.history-sidebar:not(.collapsed) .sidebar-brand {
+  margin-bottom: 16px;
 }
 
 .sidebar-brand {
@@ -639,7 +692,11 @@ h1 {
   padding: 0;
 }
 
-/* Sidebar 品牌区：logo 容器尺寸与 +/clock 等图标按钮（40x40）对齐 */
+/* Sidebar 品牌区：方案 A——圆角白底板 + 柔和微投影
+   - 外轮廓 40x40，与下方 [+ 新建 / 时钟 历史] 按钮的 bounding box 完全一致
+   - border-radius: var(--radius-md) (12px)，与 +/clock 按钮统一圆角
+   - 白底 + 极浅边框 + 弥散阴影，做出 macOS App 图标式的精致悬浮感
+   - 内部 logo 留出 7px 左右的内边距，避免顶到边角 */
 .sidebar-brand .brand-glyph {
   display: inline-flex;
   align-items: center;
@@ -647,31 +704,72 @@ h1 {
   width: 40px;
   height: 40px;
   flex-shrink: 0;
-  transition: transform 0.2s ease;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 2px 8px rgba(15, 23, 42, 0.06);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .sidebar-brand .brand-glyph img {
-  width: 100%;
-  height: 100%;
+  width: 26px;
+  height: 26px;
   object-fit: contain;
   object-position: center;
-  filter: drop-shadow(0 2px 4px rgba(53, 99, 233, 0.18));
+  filter: drop-shadow(0 1px 2px rgba(53, 99, 233, 0.2));
 }
 
 .sidebar-brand:hover .brand-glyph {
-  transform: scale(1.06);
+  transform: scale(1.04);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 14px rgba(53, 99, 233, 0.12);
 }
 
+/* 双层品牌文案：中文主名加粗作为视觉锚点，英文副名小灰字作为陪衬
+   - 中文 16px / 800 / -0.01em letter-spacing：在 14px 正文体系里
+     有明显的"标题字"质感，确立 logo 层级
+   - 英文 12px / 700 / +0.04em letter-spacing：保留品牌国际化标识，
+     用更松的字距 + secondary 色形成"主名/副名"的对比
+   - 用 align-items: center + line-height: 1 让中英文以几何中线对齐，
+     避免 baseline 对齐导致整组文字相对图标偏上 */
 .sidebar-brand .brand-text {
-  font-size: 14.5px;
-  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1;
+}
+
+.sidebar-brand .brand-name-cn {
+  font-size: 16px;
+  font-weight: 800;
   letter-spacing: -0.01em;
   color: var(--color-text-primary);
+  line-height: 1;
+  white-space: nowrap;
 }
 
+.sidebar-brand .brand-name-en {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 品牌区与操作区之间的极细分隔线
+   - 自身不带 margin，垂直节奏完全靠 sidebar-brand 的 margin-bottom 控制
+   - 与 sidebar-brand margin-bottom: 16px + flex gap: 6px 配合，
+     实现品牌区 → 操作区 ~23px 的呼吸感 */
 .sidebar-section-divider {
   height: 1px;
-  margin: 8px 4px;
+  margin: 0 4px;
   background: var(--color-border);
 }
 
@@ -805,18 +903,26 @@ h1 {
 
 .history-list {
   display: grid;
-  gap: 2px;
+  /* 列表项之间 4px 间距，避免上下太密 */
+  gap: 4px;
   overflow: auto;
-  padding-right: 2px;
+  /* 留出 4px 给滚动条避让，再用 -2px 把滚动条贴近右边界 */
+  padding-right: 4px;
+  margin-right: -2px;
 }
 
+/* 自定义滚动条：极细、圆角、半透明、悬停加深
+   - Firefox/Edge：scrollbar-width: thin + scrollbar-color
+   - WebKit：6px 宽，thumb 圆角 999，track 完全透明
+   - hover 状态下 thumb 颜色加深，提供"可拖拽"反馈
+   - 设计目标：在不滚动时几乎不可见，滚动时不喧宾夺主 */
 .history-list,
 .conversation-scroll,
 .prompt-card textarea,
 .user-message p,
 .thinking-node-body pre,
 .thinking-node-body p {
-  scrollbar-color: rgba(100, 116, 139, 0.28) transparent;
+  scrollbar-color: rgba(100, 116, 139, 0.22) transparent;
   scrollbar-width: thin;
 }
 
@@ -827,6 +933,7 @@ h1 {
 .thinking-node-body pre::-webkit-scrollbar,
 .thinking-node-body p::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 .history-list::-webkit-scrollbar-thumb,
@@ -836,7 +943,19 @@ h1 {
 .thinking-node-body pre::-webkit-scrollbar-thumb,
 .thinking-node-body p::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(100, 116, 139, 0.24);
+  background: rgba(100, 116, 139, 0.22);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.15s ease;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover,
+.conversation-scroll::-webkit-scrollbar-thumb:hover,
+.prompt-card textarea::-webkit-scrollbar-thumb:hover,
+.user-message p::-webkit-scrollbar-thumb:hover,
+.thinking-node-body pre::-webkit-scrollbar-thumb:hover,
+.thinking-node-body p::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.42);
 }
 
 .history-list::-webkit-scrollbar-track,
@@ -848,6 +967,7 @@ h1 {
   background: transparent;
 }
 
+
 .history-empty {
   margin: 8px 10px 0;
   color: var(--color-text-tertiary);
@@ -857,14 +977,16 @@ h1 {
 .history-item {
   position: relative;
   display: grid;
-  gap: 4px;
+  /* 标题与日期之间多留一点呼吸感 */
+  gap: 6px;
   width: 100%;
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-primary);
   cursor: pointer;
-  padding: 10px 12px;
+  /* 上下 padding 由 10 → 12，让每条记录更"独立"，扫视时更轻松 */
+  padding: 12px 14px;
   text-align: left;
   transition:
     background 0.15s ease,
@@ -895,15 +1017,20 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* 标题：略放大并保持中粗，让它在"标题/日期"双行结构里更主导 */
   font-size: 13.5px;
   font-weight: 600;
+  letter-spacing: -0.005em;
   color: inherit;
+  line-height: 1.35;
 }
 
 .history-item small {
-  color: var(--color-text-tertiary);
-  font-size: 11.5px;
+  /* 日期：缩小到 11px、用更浅的 muted 色，清晰拉开层级，扫视时不抢戏 */
+  color: var(--color-text-muted);
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1.3;
 }
 
 .history-item.active small {

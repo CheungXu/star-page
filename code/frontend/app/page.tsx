@@ -175,6 +175,7 @@ const ArrowUpIcon = () => (
   </svg>
 );
 
+/* Chip 用 emoji：面向年轻白领与学生群体，emoji 比单色线性图标更活泼亲切 */
 type PromptPreset = { id: string; emoji: string; label: string; prompt: string };
 
 const PROMPT_PRESETS: PromptPreset[] = [
@@ -546,9 +547,14 @@ export default function HomePage() {
           aria-expanded={!isSidebarCollapsed}
         >
           <span className="brand-glyph" aria-hidden="true">
-            <img src="/stars-page-logo.png" alt="" width={28} height={28} />
+            <img src="/stars-page-logo-simple.png" alt="" width={28} height={28} />
           </span>
-          {!isSidebarCollapsed && <span className="brand-text">Star Page</span>}
+          {!isSidebarCollapsed && (
+            <span className="brand-text">
+              <span className="brand-name-cn">星页</span>
+              <span className="brand-name-en">StarPage</span>
+            </span>
+          )}
         </button>
 
         {!isSidebarCollapsed && <div className="sidebar-section-divider" aria-hidden="true" />}
@@ -820,15 +826,17 @@ export default function HomePage() {
           <div className="hero">
             <div className="brand-mark">
               <img
-                src="/stars-page-logo.png"
-                alt="Star Page"
+                src="/stars-page-logo-simple.png"
+                alt="星页 StarPage"
                 className="brand-logo"
                 width={56}
                 height={56}
               />
             </div>
             <h1>想做什么页面？</h1>
-            <p className="subtitle">描述你的想法，我会生成一个可以分享的 HTML 页面。</p>
+            <p className="subtitle">
+              说说你的想法，<strong className="brand-inline">星页 StarPage</strong> 帮你生成一个可分享的精致网页。
+            </p>
 
             {renderPromptForm()}
           </div>

@@ -1,5 +1,5 @@
 [Unit]
-Description=Star Page FastAPI Backend
+Description=星页 StarPage · FastAPI Backend
 After=network-online.target
 Wants=network-online.target
 

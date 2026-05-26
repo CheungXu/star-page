@@ -1,5 +1,5 @@
 [Unit]
-Description=Star Page Next.js Frontend
+Description=星页 StarPage · Next.js Frontend
 After=network-online.target star-page-backend.service
 Wants=network-online.target
 

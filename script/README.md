@@ -34,6 +34,8 @@ GRANT USAGE, CREATE ON SCHEMA public TO stars_page_demo;
 
 ## Logo 透明化处理
 
+### 完整版（带扫描伪影清理）：`process_logo.py`
+
 `process_logo.py` 把 `image/stars-page-logo.png`（原始带白底）处理成透明背景 + 自动裁剪白边的版本，输出到：
 
 - `image/stars-page-logo-transparent.png`：仓库内归档版本
@@ -55,3 +57,44 @@ python3 script/process_logo.py
 执行后需要重新 `npm run build && systemctl restart star-page-frontend.service`，因为 systemd 服务用的是 `.next/standalone/public/` 中复制后的版本。
 
 ⚠️ 这是一次性的预处理脚本，源 PNG 一旦换新设计稿需要重新运行一次。如果将来获取到 SVG 矢量原图，建议直接用 SVG 替换 PNG，不再需要此脚本。
+
+### 轻量版（纯白底无伪影）：`preview-logo/process_simple_logo.py`
+
+针对**白底干净、无扫描伪影**的源图，约 30 行代码完成"透明化 + 自动裁剪"，无需 color-to-alpha：
+
+- 单参数亮度阈值法：lum ≥ 245 → alpha 0；lum ≤ 220 → alpha 255；中间线性过渡。
+- 基于 alpha 通道 `getbbox()` 自动裁剪 + 16px padding。
+
+输出 `script/preview-logo/stars-page-logo-simple.png`，作为生产首页中央 Hero logo（54px）+ 侧边栏底板内 logo（26px）使用。两个版本互不冲突。
+
+## 多端口 Logo 方案对比预览：`preview-logo/`
+
+`preview-logo/` 目录是一套独立的"前端方案 A/B/C 对比预览"基础设施：
+
+| 文件 | 用途 |
+|---|---|
+| `preview-a.html` | 方案一：简化并缩小（44px / 56px 单星） |
+| `preview-b.html` | 方案二：中央不放 Logo |
+| `preview-c.html` | 方案三：原 Logo 转化为氛围水印 |
+| `_styles.css` | 三方案公用的精简样式（从生产 globals.css 抽取首屏所需片段） |
+| `serve.py` | 多端口 Python `http.server`，同时绑定 3001 / 3002 / 3003 |
+| `process_simple_logo.py` | 简化版 logo 透明化脚本 |
+| `stars-page-logo-simple.png` | 处理后的简化版 logo |
+
+启动：
+
+```bash
+cd script/preview-logo
+python3 serve.py        # 同时占用 3001/3002/3003
+# 浏览器分别打开 http://localhost:3001/ /3002/ /3003/ 对比
+
+# 后台常驻
+nohup python3 serve.py > /tmp/preview-logo.log 2>&1 &
+
+# 停止
+pkill -f preview-logo/serve.py
+```
+
+⚠️ 仅作视觉对比用，无后端调用、无真实交互。方案选定后需要把"通用优化"（padding / 阴影 / 字号等非方案差异项）双向同步到生产 `globals.css` 与本目录的 `_styles.css`。
+
+跨项目可复用方法见 `wiki/multi-port-static-preview-for-design-variants.md`。

@@ -125,3 +125,154 @@
 - `wiki/frontend-design-tokens-and-prompt-card.md`：新增 "Hero Aurora 背景光晕"、"Header Logo 透明化优先"、"Active 状态可叠加柔光环 + 脉冲"三节。
 - 新增 `wiki/png-logo-transparent-and-trim.md`：跨项目可复用的 PNG logo 透明化 + 自动裁剪流程（color-to-alpha 算法 + 近白伪影清理 + alpha bbox 裁剪）。
 - `script/README.md` 与 `code/frontend/README.md` 同步登记本次产物。
+
+---
+
+# 第三轮迭代（2026-05-27 凌晨 — 方案对比、品牌强化、节奏精修）
+
+## 背景
+
+第二轮上线后用户给出"中央 logo 太大、喧宾夺主"的进一步反馈，并要求**同时实现三种处理方案、监听三个不同端口对比**：
+
+- 方案一：大幅简化并缩小 logo（删掉 JS / TS / CSS / `</>` 字符与 4 颗附属小星）
+- 方案二：直接去掉中央 logo，让标题与输入框成为唯一焦点
+- 方案三：原 logo 缩小 + 半透明，作为氛围水印退到标题之后
+
+随后在方案一选定后做了多轮精修，目标依次是：阴影/留白/对比度 → Chips 风格 → 侧边栏 logo 底板 → 中央 logo 尺寸演进 → 品牌强化 → 视觉节奏。
+
+## 1. 多端口方案对比预览（script/preview-logo/）
+
+为了让用户直接在浏览器对比"同一首页 + 不同 logo 处理"的视觉差异，建立了一套**轻量静态预览基础设施**，避免每个方案都跑一份完整 Next.js dev / build：
+
+- `script/preview-logo/_styles.css`：从生产 `globals.css` 中精简提取首屏需要的 hero / aurora / prompt-card / chips / submit-button 等片段，作为公用样式。
+- `preview-a.html / preview-b.html / preview-c.html`：三个 self-contained HTML，分别对应三个方案，顶部带"方案标签"胶囊明确身份。
+- `serve.py`：用 Python `http.server` + `ThreadingTCPServer` 同时绑定 3001 / 3002 / 3003 三个端口，每个端口默认入口指向对应预览 HTML，静态资源（CSS、PNG）按相对路径访问。
+- `process_simple_logo.py`：把用户提供的简化版 logo 做白底透明化 + 自动裁剪，输出 `stars-page-logo-simple.png`（318×306，64KB）。
+
+**与第二轮 `script/process_logo.py` 的区别**：第二轮用 GIMP 风格 `color-to-alpha` 处理带扫描伪影的设计稿；本轮源图是干净的白底渲染图，直接用**单参数亮度阈值法**（`LUM_HIGH=245 / LUM_LOW=220`）线性过渡 alpha + `getbbox()` 自动裁剪即可，约 30 行代码完成。两套脚本各有适用场景，互不替代。
+
+这套"多端口静态预览"模式独立沉淀到 `wiki/multi-port-static-preview-for-design-variants.md`，可跨项目复用。
+
+## 2. Logo 演进：116 → 44 → 56
+
+| 轮次 | 中央 hero logo | 侧边栏 logo | 触发反馈 |
+|---|---|---|---|
+| 第二轮 | 116×116（完整原图） | 28×28（同图） | 第三轮反馈"喧宾夺主" |
+| 第三轮 - A1 | 44×44（简化版） | 28×28（简化版） | 反馈"压不住 48px 大标题" |
+| 第三轮 - A2（最终） | **56×56**（简化版） | 28×28 在 40×40 圆角白底板内 | 视觉重心稳 |
+
+`page.tsx` 中央 hero `<img>` width/height 同步从 56 → 44 → 56。`globals.css` 中 `.brand-mark .brand-logo` 的 width/height 跟随。
+
+简化版 logo `stars-page-logo-simple.png` 与原图 `stars-page-logo.png` 同时保留在 `code/frontend/public/`，前端两处引用都改成 simple 版，原图作为后路。
+
+## 3. 中央输入卡精修
+
+| 维度 | 之前 | 现在 | 设计原理 |
+|---|---|---|---|
+| 卡片阴影 | `var(--shadow-lg)`（单层 12-32px 远投影） | `0 4px 6px -1px / 0 10px 15px -3px / inset 1px 高光` 三层叠加 | 多层弥散更现代轻盈，参考 Tailwind UI |
+| 卡片底部 padding | 12px | 18px | 工具栏与卡底 padding 统一 18px，呼吸感 |
+| `textarea` 内 padding | `6px 4px 8px` | `12px 12px 10px` | placeholder 距卡顶/卡左从 24px 推到 30/32px |
+| `.file-hint` 颜色 | `--color-text-tertiary` (#64748b) | `--color-text-secondary` (#475569) | 强光环境下也可读，达到 WCAG AA |
+| `.brand-mark margin-bottom` | 22px | 14px | logo 与 H1 形成更紧凑的"标题组" |
+
+## 4. Chips：emoji 改 SVG，又改回 emoji
+
+经历了两次互斥的反馈：
+
+1. 第一次反馈："图标风格不一致（emoji 各自风格）"→ 改为 4 个 Feather 风格 SVG（Layers / BarChart / User / Calendar）。
+2. 第二次反馈："面向年轻白领与学生，emoji 更活泼"→ 删除 4 个 SVG 组件，恢复 `🚀 / 📊 / 👤 / 🎉`。
+
+**保留下来的优化（emoji / SVG 都适用）**：
+- `padding: 9px 14px → 9px 18px`
+- `gap: 6px → 8px`
+- `transform: -1px → -2px`
+- 单层 `var(--shadow-md)` hover 阴影 → 双层 `0 6px 14px -6px rgba(53, 99, 233, 0.35), 0 2px 4px -1px rgba(15, 23, 42, 0.06)`，近距品牌蓝 + 远距中性色。
+- 新增 `:active` 反馈：上浮收回到 -1px、阴影减半，按下感更真实。
+
+**教训**：emoji vs 单色线性图标是一个目标用户画像问题，不是单纯的"统一风格"问题。AI 工具面向年轻群体时，emoji 的活泼性 > 风格一致性。
+
+## 5. 侧边栏 Logo 底板（macOS App 图标风）
+
+侧边栏 28px logo 在白色侧边栏底色上"浮不起来"。引入**圆角白底板 + 微投影**方案：
+
+- `brand-glyph` 容器 40×40、`border-radius: 12px`（与下方 `+` 按钮 / `🕐` 按钮**完全一致**），底色纯白 + 极浅边框 `1px solid rgba(15, 23, 42, 0.05)` + 双层阴影 `0 1px 2px / 0 2px 8px`。
+- 内部 logo 缩小到 26×26，留出 7px 内边距，避免顶到边角。
+- hover 时底板 scale 1.04、阴影染上品牌蓝 `rgba(53, 99, 233, 0.12)`，与 logo 颜色呼应。
+
+**关键约束**：bounding box 严格 40×40、border-radius 12px，与下方按钮一致 → 展开/收起切换时 logo 容器无任何"跳跃"。
+
+## 6. 滚动条 hover 反馈
+
+第二轮的滚动条已经做到"极细 + 圆角 + 半透明"。本轮在此基础上增加：
+- `::-webkit-scrollbar-thumb` 用 `padding-box` 圆角 + 1px 透明边框，让滑块视觉更"漂浮"。
+- 新增 `::-webkit-scrollbar-thumb:hover`：alpha 从 `0.22 → 0.42`，鼠标悬停时颜色加深，明确"可拖拽"反馈。
+- `.history-list` 增加 `padding-right: 4px / margin-right: -2px`，让 thumb 不紧贴右边缘，又不增加 list 占位。
+
+## 7. 历史列表层级
+
+- `.history-list gap: 2px → 4px`
+- `.history-item padding: 10px 12px → 12px 14px`，`gap: 4px → 6px`
+- `.history-item span`（标题）：保持 13.5px / 600，新增 `letter-spacing: -0.005em / line-height: 1.35`
+- `.history-item small`（日期）：`11.5px → 11px`，颜色从 `tertiary` 进一步降到 `muted` (#94a3b8)，`line-height: 1.3`
+
+效果：标题 vs 日期对比拉满，扫视时一眼锁定标题。
+
+## 8. 品牌强化（"星页 StarPage"）
+
+第三轮明确品牌主名为 **"星页 StarPage"**（中文主名 + 英文副名）。改造覆盖：
+
+| 触点 | 文案 |
+|---|---|
+| `<title>` | `星页 StarPage · 一句话生成可分享的网页` |
+| meta description | `星页 StarPage —— 用一句话或一份文档，把你的想法变成一个可分享的精致网页。` |
+| `applicationName` / `og:siteName` | `星页 StarPage` |
+| `keywords` | `星页 / StarPage / AI 网页生成 / 一句话生成网页 / HTML 落地页 / 可分享网页` |
+| 侧边栏品牌区 | 双层结构：`<span className="brand-name-cn">星页</span><span className="brand-name-en">StarPage</span>` |
+| Hero 副标题 | `说说你的想法，<strong className="brand-inline">星页 StarPage</strong> 帮你生成一个可分享的精致网页。` |
+| `<img alt>` | `星页 StarPage` |
+| systemd service | `Description=星页 StarPage · Next.js Frontend` / `· FastAPI Backend` |
+
+**双层品牌文案的视觉权重**：
+- 中文 `星页`：16px / 800 / `letter-spacing: -0.01em` / primary 色
+- 英文 `StarPage`：12px / 700 / `letter-spacing: 0.04em` / secondary 色
+- 容器 `display: inline-flex; align-items: center; line-height: 1`，**不用 baseline 对齐**——baseline 会让文字相对图标偏上 1-2px。强制几何中线居中后整组与图标完美对齐。
+
+**副标题品牌词高亮**：
+- `.subtitle .brand-inline`：从 `font-weight: 700; color: --color-text-primary` → `font-weight: 600; color: --color-primary` (#3563e9 主题蓝)。
+- 蓝色已经吸睛，weight 从 700 降到 600 反而更平衡，避免"双重加粗"压过整句。
+
+**保持简洁的部分**：placeholder、`statusText`、H1 大标题保留原样，避免品牌名在每个触点重复出现造成"啰嗦"。
+
+## 9. 侧边栏垂直节奏
+
+| 状态 | 节奏 | 数学 |
+|---|---|---|
+| 展开 | 品牌区 → 操作区 ≈ 23px | `sidebar-brand margin-bottom: 16px` + divider 1px + flex gap 6px = 23px |
+| 收起 | [logo] 12px [+] 6px [⌚] | `sidebar-brand margin-bottom: 12px` + flex gap 6px |
+
+收起状态形成 **12 : 6 = 2 : 1** 黄金分组节奏：品牌锚点独立呼吸，"新建 + 历史"绑定为紧凑操作组。
+
+`sidebar-section-divider` 的 `margin: 8px 4px → 0 4px`，所有上下间距由 `sidebar-brand margin-bottom` 集中控制，避免双重 margin 叠加。
+
+## 验收
+
+- 三个预览端口 3001 / 3002 / 3003 同时返回 200，HTML 中可见对应方案标签。
+- 生产 http://localhost:3000：HTML 中只引用 `stars-page-logo-simple.png`、中央 `width="56"` / 侧边栏 `width="28"`、`<title>` 与 `meta description` 含品牌主名、`brand-inline` 出现在副标题、`brand-name-cn / brand-name-en` 在侧边栏展开时渲染。
+- `next build` + TypeScript 全绿。
+- `star-page-frontend.service` 重启 active。
+
+## 实施中遇到的问题
+
+### React 19 + TS 6 下 `JSX.Element` 不再全局可见
+
+把 chip emoji 改为 SVG 时定义了 `Icon: () => JSX.Element`，`next build` 报 `Cannot find namespace 'JSX'`。原因：React 19 + TypeScript 6 下 `JSX` 命名空间不再自动全局暴露，必须从 `react` 显式导入。修法：`import type { ReactElement } from "react"`，类型改为 `() => ReactElement`。
+
+后续 emoji 恢复后这个 import 已被一并删除。
+
+## 沉淀去向
+
+- 本文档：第三轮迭代记录（即本节）。
+- `wiki/frontend-design-tokens-and-prompt-card.md`：追加"多层弥散阴影"、"Chip Hover 双层阴影"、"侧边栏 Logo 圆角底板"、"双语品牌文案双层结构（几何中线对齐）"、"副标题品牌词高亮"、"视觉节奏 2:1 黄金分组"、"滚动条 hover 反馈"七节。
+- 新增 `wiki/multi-port-static-preview-for-design-variants.md`：多端口静态预览对比模式（Python http.server + ThreadingTCPServer）。
+- `code/frontend/README.md`：同步最新首屏 UI 要点（56px logo / 双层品牌文案 / 副标题品牌词 / 节奏 2:1）。
+- `script/README.md`：登记 `preview-logo/` 目录的用途。

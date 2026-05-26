@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案二（中央不放 Logo）</title>
+  <link rel="stylesheet" href="_styles.css" />
+  <style>
+    /* 方案二：直接去掉中央 logo
+       - 假设侧边栏已有品牌徽标，避免"过度品牌化"
+       - 上方放一个极淡的小型品牌标记（顶部居中徽章），代替原 hero logo
+         这只是为了不让顶部完全空白；可按需删除该徽章
+       - 把视觉焦点完全交给「想做什么页面？」与输入框
+       - 参考：Google / Claude / Notion AI 输入页 */
+    .hero {
+      /* 中央 logo 缺位时，标题往上拉，让输入框成为视觉中心 */
+      justify-content: flex-start;
+      padding-top: 8vh;
+    }
+    .hero h1 {
+      /* 标题更"独当一面"，加大字号上限 */
+      font-size: clamp(34px, 4.4vw, 52px);
+    }
+    .hero .subtitle {
+      margin-top: 16px;
+    }
+    .top-mini-mark {
+      position: fixed;
+      top: 56px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px 6px 8px;
+      border: 1px solid rgba(53, 99, 233, 0.16);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(10px) saturate(140%);
+      -webkit-backdrop-filter: blur(10px) saturate(140%);
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      box-shadow: var(--shadow-sm);
+    }
+    .top-mini-mark svg { width: 16px; height: 16px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <div class="variant-tag" aria-label="当前预览">
+    <span class="variant-dot"></span>
+    方案二 · 中央不放 Logo（焦点交给标题与输入框）
+  </div>
+
+  <main class="preview-shell">
+    <section class="page-shell">
+      <div class="hero">
+        <h1>想做什么页面？</h1>
+        <p class="subtitle">描述你的想法，我会生成一个可以分享的 HTML 页面。</p>
+
+        <div class="prompt-form-wrap">
+          <form class="prompt-card" onsubmit="event.preventDefault();">
+            <textarea rows="3" placeholder="说说你想做的页面，例如「面向客户的产品介绍页」"></textarea>
+            <div class="prompt-toolbar">
+              <div class="prompt-tool-group">
+                <label class="file-upload-button" title="上传文档作为生成参考">
+                  <input type="file" hidden />
+                  <span class="button-icon" aria-hidden="true">
+                    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </span>
+                  上传资料
+                </label>
+                <span class="file-hint">docx · pptx · xlsx · txt · md · html，单文件 ≤ 50MB</span>
+              </div>
+              <button class="submit-button" type="submit">
+                创建
+                <span class="button-icon" aria-hidden="true">
+                  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"/>
+                    <polyline points="5 12 12 5 19 12"/>
+                  </svg>
+                </span>
+              </button>
+            </div>
+          </form>
+          <div class="prompt-chip-row">
+            <button class="prompt-chip"><span class="chip-emoji">🚀</span>产品介绍页</button>
+            <button class="prompt-chip"><span class="chip-emoji">📊</span>工作汇报</button>
+            <button class="prompt-chip"><span class="chip-emoji">👤</span>个人简历</button>
+            <button class="prompt-chip"><span class="chip-emoji">🎉</span>活动邀请</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
