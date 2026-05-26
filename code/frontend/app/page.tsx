@@ -148,15 +148,6 @@ const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 1;
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
-const StarIcon = () => (
-  <svg width="1em" height="1em" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path d="M14.4 3.5L17.3 11.25L25.55 11.65L19.1 16.8L21.25 24.8L14.4 20.25L7.55 24.8L9.7 16.8L3.25 11.65L11.5 11.25L14.4 3.5Z" fill="currentColor" />
-    <path d="M24.15 5.2L25.4 8.15L28.6 8.42L26.18 10.52L26.92 13.65L24.15 12L21.38 13.65L22.12 10.52L19.7 8.42L22.9 8.15L24.15 5.2Z" fill="currentColor" opacity="0.66" />
-    <path d="M8.35 21.45L9.2 23.45L11.38 23.64L9.74 25.08L10.22 27.2L8.35 26.08L6.48 27.2L6.96 25.08L5.32 23.64L7.5 23.45L8.35 21.45Z" fill="currentColor" opacity="0.52" />
-    <path d="M25.55 20.4L26.22 21.88L27.82 22.02L26.62 23.08L26.98 24.65L25.55 23.82L24.12 24.65L24.48 23.08L23.28 22.02L24.88 21.88L25.55 20.4Z" fill="currentColor" opacity="0.42" />
-  </svg>
-);
-
 const HistoryIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="10"></circle>
@@ -543,6 +534,7 @@ export default function HomePage() {
   }
 
   function renderHistorySidebar() {
+    const isOnNewChat = status === "idle" && !currentSessionId;
     return (
       <nav className={`history-sidebar ${isSidebarCollapsed ? "collapsed" : ""}`} aria-label="历史创建">
         <button
@@ -553,13 +545,22 @@ export default function HomePage() {
           aria-label={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
           aria-expanded={!isSidebarCollapsed}
         >
-          <span className="brand-glyph" aria-hidden="true"><StarIcon /></span>
+          <span className="brand-glyph" aria-hidden="true">
+            <img src="/stars-page-logo.png" alt="" width={28} height={28} />
+          </span>
           {!isSidebarCollapsed && <span className="brand-text">Star Page</span>}
         </button>
 
         {!isSidebarCollapsed && <div className="sidebar-section-divider" aria-hidden="true" />}
 
-        <button className="new-chat-button" type="button" onClick={startNewChat} title="新对话" aria-label="新对话">
+        <button
+          className={`new-chat-button ${isOnNewChat ? "is-active" : ""}`}
+          type="button"
+          onClick={startNewChat}
+          title="新对话"
+          aria-label="新对话"
+          aria-current={isOnNewChat ? "page" : undefined}
+        >
           <span className="sidebar-icon"><PlusIcon /></span>
           {!isSidebarCollapsed && <span className="sidebar-label">新对话</span>}
         </button>
@@ -587,6 +588,7 @@ export default function HomePage() {
                   key={item.id}
                   type="button"
                   onClick={() => restoreHistoryItem(item)}
+                  aria-current={item.id === currentSessionId ? "page" : undefined}
                 >
                   <span>{item.title}</span>
                   <small>{formatHistoryTime(item.updatedAt)}</small>
@@ -756,9 +758,9 @@ export default function HomePage() {
                     清空
                   </button>
                 </div>
-              ) : (
-                <span className="prompt-status">{statusText}</span>
-              )}
+              ) : !compact ? (
+                <span className="file-hint">docx · pptx · xlsx · txt · md · html，单文件 ≤ 50MB</span>
+              ) : null}
             </div>
             <button
               className="submit-button"
@@ -794,10 +796,12 @@ export default function HomePage() {
             ))}
           </div>
         )}
-        <div className="prompt-meta-row">
-          <span className="file-hint">支持 docx、pptx、xlsx、xls、txt、md、html；最多 1 个文件，单文件 ≤ 50MB</span>
-          {fileError && <span className="file-error">{fileError}</span>}
-        </div>
+        {(fileError || (compact && statusText)) && (
+          <div className="prompt-meta-row">
+            {compact && !fileError && <span className="prompt-status">{statusText}</span>}
+            {fileError && <span className="file-error">{fileError}</span>}
+          </div>
+        )}
       </div>
     );
   }
@@ -805,12 +809,23 @@ export default function HomePage() {
   if (status === "idle") {
     return (
       <main className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+        <div className="hero-aurora" aria-hidden="true">
+          <span className="aurora-blob aurora-blob-1" />
+          <span className="aurora-blob aurora-blob-2" />
+          <span className="aurora-blob aurora-blob-3" />
+          <span className="aurora-grid" />
+        </div>
         {renderHistorySidebar()}
         <section className="page-shell">
           <div className="hero">
             <div className="brand-mark">
-              <span className="brand-icon" aria-hidden="true"><StarIcon /></span>
-              <span className="brand-name">Star Page</span>
+              <img
+                src="/stars-page-logo.png"
+                alt="Star Page"
+                className="brand-logo"
+                width={56}
+                height={56}
+              />
             </div>
             <h1>想做什么页面？</h1>
             <p className="subtitle">描述你的想法，我会生成一个可以分享的 HTML 页面。</p>

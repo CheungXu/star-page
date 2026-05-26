@@ -56,19 +56,61 @@
 - secondary 是 hint 文字的下限，再淡就过不了 WCAG AA。
 - 时间戳、标签等"次要但要看清"的字使用 tertiary。
 
-### 背景
+### 背景：氛围光晕（Hero Aurora）
+
+针对 AI 首页这类"内容稀少 + 强调氛围"的场景，纯白底会显得空，密集渐变又会"屏幕脏了"。一个折中且专业的方案是**多色 Aurora 光晕 + 焦点向外淡出的网格**，独立成一个 `.hero-aurora` 固定层。
 
 ```css
-background-image:
-  radial-gradient(60% 50% at 50% -10%, rgba(53, 99, 233, 0.06), transparent 70%),
-  radial-gradient(circle, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
-background-size: auto, 24px 24px;
+.hero-aurora {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.hero-aurora .aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.85;
+}
+
+/* 3 个色块：品牌色 + 邻近色 + 互补色，错开位置 */
+.hero-aurora .aurora-blob-1 { /* 品牌蓝，左上 */ }
+.hero-aurora .aurora-blob-2 { /* 紫罗兰，右上 */ }
+.hero-aurora .aurora-blob-3 { /* 天蓝，中下 */ }
+
+/* 网格只在中央焦点附近显示，向外淡出 */
+.hero-aurora .aurora-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(closest-side at 50% 40%, #000 55%, transparent 100%);
+}
+
+/* 缓慢飘动动画，整体增加生命感但不分散注意力 */
+@keyframes aurora-float-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(40px, 30px, 0) scale(1.05); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-aurora .aurora-blob { animation: none; }
+}
 ```
 
 原则：
 
-- 微弱的 radial-gradient 居中放在屏幕**外**（百分比为负），让光晕只露出顶部 1/3，避免居中"屏幕脏了"感。
-- 配合 24px 网格点阵营造质感，比纯渐变更克制。
+- 3 个色块即可，少于 2 个不够丰富，多于 4 个画面会乱。
+- `blur(80~100px)` + `opacity ≤ 0.9`，必须用 `filter: blur`，CSS 渐变本身的过渡远远不够柔和。
+- 网格必须用 `mask-image` 焦点向外淡出，否则填满全屏会显得"教练场"，破坏氛围。
+- 动画周期 18~26s，三个色块用不同周期避免同步导致的"齐步走"。
+- 必须遵循 `prefers-reduced-motion`，否则会被无障碍审查扣分。
+- 内容层（`.hero` / `.home-shell`）记得 `position: relative; z-index: 1;`，否则会被 aurora 盖掉。
 
 ## 2. 对话式输入卡片（Prompt Card）设计原则
 
@@ -106,19 +148,61 @@ const PROMPT_PRESETS = [
 - chip 视觉权重低于卡片（描边 + 浅色），不抢戏。
 - 数量控制在 3-5 个，多了会显得拥挤。
 
-## 3. 侧边栏（History Sidebar）
+## 3. Header Logo
+
+Header / Hero 区域的品牌 logo 是首屏视觉重心，原则：
+
+- **优先使用透明 PNG 或 SVG**：白底 PNG 直接贴上去一定会有可见白色矩形，与背景光晕格格不入。若只有白底 PNG，先用一次性脚本透明化处理（参见 `png-logo-transparent-and-trim.md`）。
+- **空间感用 `filter: drop-shadow` 双层叠加，不要用容器 `box-shadow`**：drop-shadow 跟随 alpha 形状走，五角星会有星形阴影；box-shadow 是矩形的，会暴露图像边界。
+
+  ```css
+  .brand-logo {
+    filter:
+      drop-shadow(0 6px 12px rgba(53, 99, 233, 0.22))    /* 近距离定位 */
+      drop-shadow(0 20px 44px rgba(53, 99, 233, 0.2));   /* 远距离散光 */
+  }
+  ```
+
+- **禁止用胶囊（`border-radius: 999px`）包裹小 logo 当作品牌标**：胶囊是状态/次要操作的视觉语言，做品牌标会显得单薄。Hero logo 用 96~128px 单图标即可。
+- **侧边栏 / 工具栏的小 logo 容器，尺寸必须与同列图标按钮严格对齐**（如统一 40×40），避免视觉断裂。
+
+## 4. 侧边栏（History Sidebar）
 
 - **顶部禁止孤立 logo**：必须配合品牌文字或承担明确功能（如收起切换三合一）。收起态下让 logo 更克制（透明背景），避免与 CTA 抢戏。
-- **列表 Active 状态必须明确**：浅蓝背景 + 左侧 3px 蓝色竖条 + 文字变品牌色，三者组合才能在低对比浅色 UI 中显眼。
+- **当前会话/空态 Active 必须明确**：
+  - 历史列表项 active：浅蓝背景 + 左侧 3px 蓝色竖条 + 文字变品牌色，三者组合才能在低对比浅色 UI 中显眼。
+  - "新对话"按钮处于当前态：保留实心填充作为 CTA，叠加一圈柔光环 + 缓慢脉冲动画作为"你在这里"的提示，避免 CTA 性丢失：
+
+    ```css
+    .new-chat-button.is-active {
+      box-shadow:
+        0 4px 14px -4px rgba(53, 99, 233, 0.55),
+        0 0 0 3px rgba(53, 99, 233, 0.18);
+    }
+    .new-chat-button.is-active::after {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: inherit;
+      border: 1px solid rgba(53, 99, 233, 0.35);
+      animation: new-chat-pulse 2.4s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .new-chat-button.is-active::after { animation: none; }
+    }
+    ```
+
+  - 同时配上 `aria-current="page"`，让屏幕阅读器也能识别"当前位置"。
 - **列表 hover 必须不同于 active**：hover 用 `--color-surface-soft` 浅灰即可。
 - **呼吸感**：列表项 padding ≥ 10px 12px，相邻项之间 2-4px gap，行高 1.5+，时间戳与标题之间 4px。
 - 收起态下，必备入口：品牌（含切换）、新对话（主 CTA）、历史（点击即展开），不要再放第二个"展开"按钮。
 
-## 4. 适用范围
+## 5. 适用范围
 
-适合 AI 输入类首页（ChatGPT 风、Claude 风、Gemini 风、Perplexity 风、各类内部 AI 工具）。对内容浏览类（资讯流、电商）不直接适用，但 token 体系部分通用。
+适合 AI 输入类首页（ChatGPT 风、Claude 风、Gemini 风、Perplexity 风、各类内部 AI 工具）。对内容浏览类（资讯流、电商）不直接适用，但 token 体系 + Aurora 背景部分通用。
 
-## 5. 落地清单
+## 6. 落地清单
 
 在新项目中应用这套设计 token 时：
 
@@ -128,3 +212,7 @@ const PROMPT_PRESETS = [
 4. 检查所有 placeholder：颜色是否为 muted？文案是否过长？
 5. 检查所有"卡片"：内部是否有分割线？工具栏是否在卡片底部内嵌？
 6. 检查所有列表：active 状态是否有三重视觉信号（背景 + 竖条 + 文字色）？
+7. 检查所有 CTA：是否品牌色实心填充？是否带方向性图标（箭头）？
+8. 检查 Hero 区域：是否有 Aurora 光晕层？背景内容是否记得 `position: relative; z-index: 1;` 避免被光晕盖住？
+9. 检查 Header Logo：是否透明 PNG / SVG？是否用 `drop-shadow` 而非 `box-shadow`？侧边栏小 logo 是否与同列图标按钮尺寸对齐？
+10. 检查当前会话状态：用户是否能在 1 秒内识别"我现在在哪个会话"？（CTA 是否有 active 态叠加？）

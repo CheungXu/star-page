@@ -23,6 +23,7 @@
   --color-primary-active: #1f3aab;
   --color-primary-soft: #eaf0ff;
   --color-primary-soft-strong: #d6e1ff;
+  --color-accent: #8b5cf6;
 
   --color-success: #16a34a;
   --color-danger: #b42318;
@@ -54,23 +55,95 @@ body {
 }
 
 body {
-  /* 极淡的氛围色 + 网格点阵，避免之前的"屏幕污渍"感 */
+  position: relative;
   background-color: var(--color-bg);
-  background-image:
-    radial-gradient(60% 50% at 50% -10%, rgba(53, 99, 233, 0.06), transparent 70%),
-    radial-gradient(circle, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
-  background-size:
-    auto,
-    24px 24px;
-  background-position:
-    center top,
-    0 0;
-  background-attachment: fixed;
   color: var(--color-text-primary);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* ==========================================================================
+   Hero 背景光晕（Aurora）
+   - 用多层 radial-gradient 模拟极淡的色彩极光，营造空间感
+   - 叠一层细网格作为锚定，避免画面"飘"
+   - 仅在 idle 首屏渲染（避免在工作区抢戏）
+   ========================================================================== */
+.hero-aurora {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.hero-aurora .aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.85;
+  will-change: transform;
+}
+
+.hero-aurora .aurora-blob-1 {
+  top: -160px;
+  left: 8%;
+  width: 560px;
+  height: 560px;
+  background: radial-gradient(circle at 30% 30%, rgba(53, 99, 233, 0.42), transparent 68%);
+  animation: aurora-float-a 18s ease-in-out infinite;
+}
+
+.hero-aurora .aurora-blob-2 {
+  top: 4%;
+  right: -180px;
+  width: 540px;
+  height: 540px;
+  background: radial-gradient(circle at 70% 30%, rgba(139, 92, 246, 0.34), transparent 68%);
+  animation: aurora-float-b 22s ease-in-out infinite;
+}
+
+.hero-aurora .aurora-blob-3 {
+  top: 28%;
+  left: 32%;
+  width: 720px;
+  height: 720px;
+  background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.22), transparent 68%);
+  animation: aurora-float-c 26s ease-in-out infinite;
+}
+
+.hero-aurora .aurora-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(closest-side at 50% 40%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(closest-side at 50% 40%, #000 55%, transparent 100%);
+}
+
+@keyframes aurora-float-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(40px, 30px, 0) scale(1.05); }
+}
+
+@keyframes aurora-float-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-50px, 24px, 0) scale(1.08); }
+}
+
+@keyframes aurora-float-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-30px, -36px, 0) scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-aurora .aurora-blob {
+    animation: none;
+  }
 }
 
 button,
@@ -93,6 +166,8 @@ button {
 }
 
 .home-shell {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 20px;
@@ -129,36 +204,27 @@ button {
   justify-content: center;
 }
 
+/* Header Logo：透明背景的纯品牌徽标，用柔和投影建立空间感 */
 .brand-mark {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 20px;
-  padding: 6px 12px 6px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-primary);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  box-shadow: var(--shadow-sm);
-}
-
-.brand-mark .brand-icon {
-  display: inline-flex;
-  align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--color-primary-soft);
-  font-size: 13px;
-  color: var(--color-primary);
+  margin-bottom: 24px;
 }
 
-.brand-mark .brand-name {
-  color: var(--color-text-primary);
+.brand-mark .brand-logo {
+  display: block;
+  width: 116px;
+  height: 116px;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 6px 12px rgba(53, 99, 233, 0.22))
+    drop-shadow(0 20px 44px rgba(53, 99, 233, 0.2));
+  transition: transform 0.3s ease;
+}
+
+.brand-mark .brand-logo:hover {
+  transform: translateY(-2px) scale(1.02);
 }
 
 h1 {
@@ -198,23 +264,29 @@ h1 {
 }
 
 .prompt-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding: 14px 14px 10px;
+  padding: 18px 20px 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-md);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow:
+    var(--shadow-lg),
+    0 0 0 1px rgba(255, 255, 255, 0.5) inset;
   transition:
     border-color 0.2s ease,
-    box-shadow 0.2s ease;
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .prompt-card:focus-within {
   border-color: var(--color-primary);
   box-shadow:
-    var(--shadow-md),
+    var(--shadow-lg),
     var(--shadow-focus);
 }
 
@@ -230,7 +302,7 @@ h1 {
   overflow-y: auto;
   border: 0;
   outline: none;
-  padding: 4px 6px;
+  padding: 6px 4px 8px;
   background: transparent;
   color: var(--color-text-primary);
   font-size: 15.5px;
@@ -296,19 +368,24 @@ h1 {
   display: none;
 }
 
+/* 文件类型提示：紧贴上传按钮，作为补充说明 */
 .file-hint {
-  color: var(--color-text-secondary);
-  font-size: 12.5px;
-  line-height: 1.6;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .prompt-meta-row {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   gap: 12px;
-  margin-top: 14px;
+  margin-top: 10px;
   padding: 0 4px;
   text-align: left;
 }
@@ -364,12 +441,12 @@ h1 {
   font-weight: 600;
 }
 
-/* 预设场景 Chips：把"长串示例"从卡片里拿出来，作为推荐 */
+/* 预设场景 Chips：作为可点击的卡片按钮，带微弱蓝灰色背景与卡片提升 */
 .prompt-chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 22px;
   justify-content: center;
 }
 
@@ -377,26 +454,31 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
+  padding: 9px 14px;
+  border: 1px solid rgba(53, 99, 233, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(247, 249, 255, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
   transition:
     border-color 0.15s ease,
     background 0.15s ease,
     color 0.15s ease,
-    transform 0.15s ease;
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .prompt-chip:hover {
-  border-color: var(--color-primary);
+  border-color: rgba(53, 99, 233, 0.35);
   background: var(--color-primary-soft);
   color: var(--color-primary);
   transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .prompt-chip:disabled {
@@ -482,9 +564,12 @@ h1 {
   font-size: 13px;
 }
 
-.compact-wrap .prompt-meta-row,
 .compact-wrap .prompt-chip-row {
   display: none;
+}
+
+.compact-wrap .prompt-meta-row {
+  margin-top: 6px;
 }
 
 /* ==========================================================================
@@ -534,7 +619,8 @@ h1 {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 6px 8px 6px 10px;
+  height: 40px;
+  padding: 0 10px;
   border: 0;
   background: transparent;
   color: var(--color-text-primary);
@@ -548,38 +634,32 @@ h1 {
 }
 
 .history-sidebar.collapsed .sidebar-brand {
+  width: 40px;
   justify-content: center;
-  padding: 6px;
+  padding: 0;
 }
 
+/* Sidebar 品牌区：logo 容器尺寸与 +/clock 等图标按钮（40x40）对齐 */
 .sidebar-brand .brand-glyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  font-size: 14px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
+  transition: transform 0.2s ease;
+}
+
+.sidebar-brand .brand-glyph img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  filter: drop-shadow(0 2px 4px rgba(53, 99, 233, 0.18));
 }
 
 .sidebar-brand:hover .brand-glyph {
-  background: var(--color-primary-soft-strong);
-}
-
-/* 收起态下，把 brand-glyph 视觉更淡一些，避免与"新对话"主 CTA 抢戏 */
-.history-sidebar.collapsed .sidebar-brand .brand-glyph {
-  background: transparent;
-  color: var(--color-primary);
-}
-
-.history-sidebar.collapsed .sidebar-brand:hover .brand-glyph {
-  background: var(--color-primary-soft);
+  transform: scale(1.06);
 }
 
 .sidebar-brand .brand-text {
@@ -648,6 +728,7 @@ h1 {
   background: var(--color-primary);
   color: #fff;
   box-shadow: 0 4px 10px -4px rgba(53, 99, 233, 0.5);
+  position: relative;
 }
 
 .new-chat-button:hover {
@@ -657,6 +738,41 @@ h1 {
 .new-chat-button .sidebar-icon,
 .new-chat-button .sidebar-label {
   color: #fff;
+}
+
+/* 处于"新对话"状态时，在按钮上加一圈柔和的高亮环 + 微妙脉冲，
+   既保留 CTA 的实心填充，又明确表达"你正在这里" */
+.new-chat-button.is-active {
+  box-shadow:
+    0 4px 14px -4px rgba(53, 99, 233, 0.55),
+    0 0 0 3px rgba(53, 99, 233, 0.18);
+}
+
+.new-chat-button.is-active::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 1px solid rgba(53, 99, 233, 0.35);
+  pointer-events: none;
+  animation: new-chat-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes new-chat-pulse {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.02);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-chat-button.is-active::after {
+    animation: none;
+  }
 }
 
 .sidebar-icon-button:hover {

@@ -19,6 +19,15 @@
 
 上传资料当前限制为 1 个文件、最大 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`txt`、`md`、`html`。
 
+## 首屏 UI 设计要点
+
+- **品牌徽标**：使用 `public/stars-page-logo.png`（透明背景版，由 `script/process_logo.py` 处理）作为 Hero 区域的真正 Header Logo，116×116 直接浮在背景光晕之上，仅用双层 `drop-shadow` 建立空间感，不再使用之前的胶囊小标签或白色卡片，让首屏有镇场的主干感。侧边栏顶部 Logo 容器统一到 40×40，与下方"新对话""历史"按钮严格对齐到同一垂直中线。
+- **背景光晕（Hero Aurora）**：固定层叠 3 个 `radial-gradient` 色块（品牌蓝/紫罗兰/天蓝）+ 极淡网格 `mask-image`，搭配缓慢的 `aurora-float-*` 动画，营造专业的空间感；网格通过 `mask-image` 在视觉焦点向外淡出，避免画面"飘"。受 `prefers-reduced-motion` 控制。
+- **Prompt Card**：使用半透明白底 + `backdrop-filter: blur(14px) saturate(140%)` 形成玻璃质感浮在光晕之上；底部工具栏只保留"上传资料"按钮和文件类型提示 + 右侧"创建"主 CTA，没有任何冗余 statusText。
+- **Prompt Chips**：作为浅蓝白底圆角卡片按钮（轻量阴影 + 微弱品牌色边框），与下方推荐场景的"可点击卡片"语义对齐。
+- **侧边栏 Active 状态**：当用户处于"新对话"空态时，`.new-chat-button.is-active` 在原本实心蓝色 CTA 之上叠加一圈柔和发光环和脉冲动画 `new-chat-pulse`，明确告诉用户"你在这里"；历史项 active 使用浅品牌色背景 + 左侧 3px 竖条强化定位。
+- **文件类型提示**：从输入框下方独立行，移到上传按钮右侧作为补充说明，字号 12px / `--color-text-tertiary`，避免占用额外视觉空间。
+
 右侧预览采用固定 `1200px` 桌面视口宽度渲染 iframe，再整体缩放到预览区域。iframe 高度按预览区域可用高度反算，避免读取生成页整页 `scrollHeight` 导致页面内 `100vh` 被撑大，同时尽量铺满预览卡片。
 
 复制链接在 HTTP 环境下使用降级复制方案，点击后只显示单一反馈文案。

@@ -70,3 +70,58 @@
 
 - 通用知识沉淀到 `wiki/frontend-design-tokens-and-prompt-card.md`：设计 token 体系与对话式输入卡片设计模式。
 - standalone CSS 500 教训不重复记录，已在 `wiki/systemd-nextjs-fastapi-deployment.md` 和 `code/frontend/README.md` 中存在。
+
+---
+
+# 第二轮迭代（2026-05-27 凌晨）
+
+## 背景
+
+第一轮重构上线后收到第二份"锐评"，集中在 6 个细节硬伤：
+
+1. **输入框底部仍有"描述你想创建的页面"残留**：占位符已经在顶部，底部再放一句小灰字像是没删干净的代码。
+2. **Hero Logo 是胶囊小标签**：胶囊样式在 UI 规范里用于"状态/次要"，作为页面核心品牌过于单薄。
+3. **侧边栏当前状态不明**：用户处于"新对话"空态时，没有任何视觉提示告诉他"你在这里"。
+4. **Chips 像纯文本而非按钮**：白底无背景、缺少卡片感。
+5. **文件类型提示孤立成行**：占用一整行视觉空间，应该作为上传按钮的补充说明。
+6. **背景过于干净，缺少空间感与品牌氛围**：第一轮把光晕"擦"得太干净。
+
+另外还有一个延伸需求：把原始 logo PNG 的白底处理掉（裁剪 + 透明），让 logo 真正能融入任何背景。
+
+## 实施
+
+| 问题 | 处理方式 |
+|---|---|
+| 输入框底部残留 | `renderPromptForm` 删除 `<span className="prompt-status">{statusText}</span>` 的渲染；hero 状态下底部只有"上传资料 + 文件类型提示 → 创建" |
+| Hero Logo 单薄 | 删除胶囊样式；先尝试白底卡片（drop-shadow + 圆角），最终用透明 PNG + 双层 drop-shadow 直接浮在背景光晕上，116×116 |
+| 侧边栏 active 不明 | 新增 `isOnNewChat = status === "idle" && !currentSessionId` 判断，给 `.new-chat-button.is-active` 加柔光环 `box-shadow: 0 0 0 3px rgba(53,99,233,0.18)` + `new-chat-pulse` 缓慢脉冲动画 + `aria-current="page"`，遵循 `prefers-reduced-motion` |
+| Chips 像纯文本 | 改为 `rgba(247,249,255,0.85)` 浅蓝白底 + `backdrop-blur(8px)` + `--radius-md` 圆角 + `--shadow-sm`，hover 上浮一格 |
+| 文件提示孤立 | 从下方独立行移到上传按钮右侧；文案精简为 `docx · pptx · xlsx · txt · md · html，单文件 ≤ 50MB`；字号 12px / `--color-text-tertiary` |
+| 背景光晕单薄 | 新增 `.hero-aurora` 固定层：3 个 radial-gradient 色块（品牌蓝 / 紫罗兰 / 天蓝）+ `blur(90px)` + 缓慢飘动动画 `aurora-float-*`，叠加极淡网格 + `mask-image` 焦点向外淡出 |
+| Logo 处理 | 新增 `script/process_logo.py`：清理近白色伪影 → GIMP 风格 color-to-alpha → 按 alpha bbox 裁剪。原 1400×752 → 614×577，写入 `image/stars-page-logo-transparent.png` 和 `code/frontend/public/stars-page-logo.png` |
+| Prompt Card 玻璃质感 | `background: rgba(255,255,255,0.92)` + `backdrop-filter: blur(14px) saturate(140%)`，让卡片像玻璃浮在光晕之上 |
+| 侧边栏 logo 与按钮对齐 | `.sidebar-brand` 和 `.brand-glyph` 都统一到 40×40，与下方 `.new-chat-button` / `.sidebar-icon-button` 严格在同一垂直中线 |
+
+## 实施中遇到的问题
+
+### Logo 自动裁剪只裁了右边
+
+第一次跑 `process_logo.py` 输出 1003×752（只裁了右边 397px），左边没动。排查发现原图最右侧有一列 RGB≈228 的浅灰色扫描伪影线，color-to-alpha 给了它约 28 的 alpha，超过裁剪阈值 8，导致这一列被视为"有内容"。
+
+解决：在 color-to-alpha 之前加 `clean_near_white(threshold=235)` 预处理，把 R/G/B 三通道最小值都 ≥ 235 的像素一律置为纯白；并把裁剪阈值从 8 提升到 32。处理后输出 614×577，正方形紧贴星形组合。
+
+### Logo 容器宽高比与 logo 不匹配
+
+第一版 CSS 用 `aspect-ratio: 1400 / 752` 给 brand-mark 加白底卡片样式，但 logo 透明化后实际是 614×577（接近 1:1），原来的 1400/752 比例不再合适。改为 `width: 116px; height: 116px;` 正方形容器，object-fit: contain，并去掉白底卡片背景（透明 logo 直接浮在背景上）。
+
+## 验收
+
+- 主区域：116px 透明 logo 浮在三色 aurora 光晕之上，柔和投影建立空间感；输入框玻璃质感，底部干净；4 个 chips 像可点击卡片。
+- 侧边栏：logo / + / 时钟三个 40×40 图标按钮严格对齐；"新对话"按钮处于 active 时有柔光环 + 缓慢脉冲。
+- `next build` 0 错误 0 警告，lint 0 问题。
+
+## 沉淀去向
+
+- `wiki/frontend-design-tokens-and-prompt-card.md`：新增 "Hero Aurora 背景光晕"、"Header Logo 透明化优先"、"Active 状态可叠加柔光环 + 脉冲"三节。
+- 新增 `wiki/png-logo-transparent-and-trim.md`：跨项目可复用的 PNG logo 透明化 + 自动裁剪流程（color-to-alpha 算法 + 近白伪影清理 + alpha bbox 裁剪）。
+- `script/README.md` 与 `code/frontend/README.md` 同步登记本次产物。
