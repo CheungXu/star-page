@@ -2,6 +2,7 @@
 
 import type { ChangeEvent, FormEvent, ReactNode, SyntheticEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
 
@@ -236,6 +237,227 @@ const PROMPT_PRESETS: PromptPreset[] = [
   },
 ];
 
+/* ==========================================================================
+   首页 ↔ 生成页 衔接过渡（三级降级链）
+   ------------------------------------------------------------------------
+   主方案：motion 库（FLIP 输入卡飞行 + 文字上浮成气泡 + 内容 stagger 入场）。
+   降级一：依赖加载失败等情况 → 原生 View Transitions API 共享元素 morph。
+   降级二：浏览器不支持 View Transitions → 纯 CSS 交叉过渡。
+   兜底：prefers-reduced-motion → 直接切换，无动画。
+   选型与降级链决策见 wiki/frontend-home-workspace-transition.md。
+   ========================================================================== */
+type MotionLib = {
+  animate: (
+    target: Element | Element[],
+    keyframes: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ) => { finished: Promise<unknown> };
+};
+
+type DocumentWithViewTransition = Document & {
+  startViewTransition?: (callback: () => void) => { finished: Promise<unknown> };
+};
+
+const TRANSITION_EASE = [0.22, 1, 0.36, 1] as const;
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+/* 旧视图快照：克隆当前 <main> 覆盖全屏用于离场淡出（motion / 纯 CSS 路径共用） */
+function createTransitionOverlay(oldMain: HTMLElement): HTMLElement {
+  const overlay = oldMain.cloneNode(true) as HTMLElement;
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.zIndex = "40";
+  overlay.style.pointerEvents = "none";
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+/* 过渡总入口：mutate 内是会切换 status 的一批 setState，
+   用 flushSync 同步提交，以便在切换前后测量 / 让浏览器捕获到新 DOM。 */
+function runStageTransition(
+  stage: HTMLElement | null,
+  motionLib: MotionLib | null,
+  mutate: () => void,
+): void {
+  if (!stage || prefersReducedMotion()) {
+    mutate();
+    return;
+  }
+
+  const doc = typeof document !== "undefined" ? (document as DocumentWithViewTransition) : null;
+
+  if (motionLib) {
+    motionStageTransition(stage, motionLib, mutate);
+  } else if (doc && typeof doc.startViewTransition === "function") {
+    viewTransitionsStageTransition(doc, mutate);
+  } else {
+    cssStageTransition(stage, mutate);
+  }
+}
+
+/* 主方案：motion 库命令式 FLIP / 编排 */
+function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate: () => void): void {
+  const { animate } = motionLib;
+  const oldMain = stage.firstElementChild as HTMLElement | null;
+  const oldCard = oldMain?.querySelector(".prompt-card") as HTMLElement | null;
+  const firstCard = oldCard?.getBoundingClientRect() ?? null;
+  const oldTextarea = oldMain?.querySelector(".prompt-card textarea") as HTMLTextAreaElement | null;
+  const floatText = oldTextarea?.value ?? "";
+  const firstText = oldTextarea?.getBoundingClientRect() ?? null;
+  const fromIdle = oldMain?.classList.contains("home-shell") ?? false;
+  const overlay = oldMain ? createTransitionOverlay(oldMain) : null;
+
+  flushSync(mutate);
+
+  const newMain = stage.firstElementChild as HTMLElement | null;
+  if (!newMain) {
+    overlay?.remove();
+    return;
+  }
+  const newCard = newMain.querySelector(".prompt-card") as HTMLElement | null;
+  const lastCard = newCard?.getBoundingClientRect() ?? null;
+  const bubble = newMain.querySelector(".user-message p") as HTMLElement | null;
+
+  // 旧视图淡出上移
+  if (overlay) {
+    const removeOverlay = () => overlay.remove();
+    animate(
+      overlay,
+      { opacity: [1, 0], transform: ["translateY(0px)", "translateY(-10px)"] },
+      { duration: 0.28, ease: [0.4, 0, 0.2, 1] },
+    ).finished.then(removeOverlay, removeOverlay);
+  }
+
+  // 新视图整体淡入
+  animate(newMain, { opacity: [0, 1] }, { duration: 0.36, delay: 0.05 });
+
+  // 输入卡 FLIP：从旧位置飞到新位置
+  if (firstCard && newCard && lastCard) {
+    const dx = firstCard.left - lastCard.left;
+    const dy = firstCard.top - lastCard.top;
+    const sx = lastCard.width ? firstCard.width / lastCard.width : 1;
+    const sy = lastCard.height ? firstCard.height / lastCard.height : 1;
+    newCard.style.transformOrigin = "top left";
+    const clearOrigin = () => {
+      newCard.style.transformOrigin = "";
+    };
+    animate(
+      newCard,
+      {
+        transform: [
+          `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`,
+          "translate(0px, 0px) scale(1, 1)",
+        ],
+      },
+      { duration: 0.52, ease: TRANSITION_EASE },
+    ).finished.then(clearOrigin, clearOrigin);
+  }
+
+  // 输入文字上浮“变成”需求气泡（仅 首页 → 生成 方向）
+  if (fromIdle && floatText && firstText && bubble) {
+    const lastText = bubble.getBoundingClientRect();
+    const clone = document.createElement("div");
+    clone.textContent = floatText;
+    Object.assign(clone.style, {
+      position: "fixed",
+      left: `${firstText.left}px`,
+      top: `${firstText.top}px`,
+      width: `${firstText.width}px`,
+      margin: "0",
+      zIndex: "41",
+      pointerEvents: "none",
+      whiteSpace: "pre-wrap",
+      color: "var(--color-text-primary)",
+      fontSize: "14px",
+      lineHeight: "1.7",
+    } as Partial<CSSStyleDeclaration>);
+    document.body.appendChild(clone);
+    bubble.style.opacity = "0";
+    const tdx = lastText.left - firstText.left;
+    const tdy = lastText.top - firstText.top;
+    const cleanupClone = () => {
+      clone.remove();
+      bubble.style.opacity = "";
+    };
+    animate(
+      clone,
+      { transform: ["translate(0px, 0px)", `translate(${tdx}px, ${tdy}px)`], opacity: [0.95, 0] },
+      { duration: 0.5, ease: TRANSITION_EASE },
+    ).finished.then(cleanupClone, cleanupClone);
+  }
+
+  // 新内容逐项 stagger 入场
+  const items = Array.from(newMain.querySelectorAll<HTMLElement>("[data-anim-stagger]"));
+  items.forEach((element, index) => {
+    animate(
+      element,
+      { opacity: [0, 1], transform: ["translateY(14px)", "translateY(0px)"] },
+      { duration: 0.42, delay: 0.12 + index * 0.05, ease: TRANSITION_EASE },
+    );
+  });
+}
+
+/* 降级一：原生 View Transitions API */
+function viewTransitionsStageTransition(doc: DocumentWithViewTransition, mutate: () => void): void {
+  const root = document.documentElement;
+  root.classList.add("vt-switching");
+  const cleanup = () => root.classList.remove("vt-switching");
+  const transition = doc.startViewTransition!(() => {
+    flushSync(mutate);
+  });
+  transition.finished.then(cleanup, cleanup);
+}
+
+/* 降级二：纯 CSS 交叉过渡（旧层淡出上移收缩，新层淡入上浮） */
+function cssStageTransition(stage: HTMLElement, mutate: () => void): void {
+  const oldMain = stage.firstElementChild as HTMLElement | null;
+  const overlay = oldMain ? createTransitionOverlay(oldMain) : null;
+  if (overlay) {
+    overlay.style.transition =
+      "opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
+  }
+
+  flushSync(mutate);
+
+  const newMain = stage.firstElementChild as HTMLElement | null;
+  if (newMain) {
+    newMain.style.opacity = "0";
+    newMain.style.transform = "translateY(16px)";
+  }
+
+  requestAnimationFrame(() => {
+    if (overlay) {
+      overlay.style.opacity = "0";
+      overlay.style.transform = "translateY(-12px) scale(0.99)";
+    }
+    if (newMain) {
+      newMain.style.transition =
+        "opacity 0.34s cubic-bezier(0.22, 1, 0.36, 1), transform 0.34s cubic-bezier(0.22, 1, 0.36, 1)";
+      requestAnimationFrame(() => {
+        newMain.style.opacity = "1";
+        newMain.style.transform = "none";
+      });
+    }
+  });
+
+  window.setTimeout(() => {
+    overlay?.remove();
+    if (newMain) {
+      newMain.style.transition = "";
+      newMain.style.opacity = "";
+      newMain.style.transform = "";
+    }
+  }, 440);
+}
+
 export default function HomePage() {
   const [prompt, setPrompt] = useState("");
   const [currentSessionId, setCurrentSessionId] = useState("");
@@ -266,6 +488,8 @@ export default function HomePage() {
   const previewStageRef = useRef<HTMLDivElement | null>(null);
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const hasHydratedRef = useRef(false);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const motionRef = useRef<MotionLib | null>(null);
 
   const absolutePageUrl = useMemo(() => {
     if (!pageUrl) return "";
@@ -290,6 +514,28 @@ export default function HomePage() {
     // 这里只在首屏恢复本地会话，避免重连逻辑随状态变化重复执行。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 动态加载 motion（主过渡方案）；失败则保持为空，过渡时自动降级到 View Transitions / 纯 CSS
+  useEffect(() => {
+    let cancelled = false;
+    import("motion")
+      .then((mod) => {
+        if (!cancelled && typeof mod.animate === "function") {
+          motionRef.current = { animate: mod.animate as MotionLib["animate"] };
+        }
+      })
+      .catch(() => {
+        motionRef.current = null;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 三处状态切换统一经此入口，套用「motion → View Transitions → 纯 CSS → 直接切换」降级链
+  const playTransition = (mutate: () => void) => {
+    runStageTransition(stageRef.current, motionRef.current, mutate);
+  };
 
   useEffect(() => {
     if (!hasHydratedRef.current || status === "idle" || !currentSessionId) return;
@@ -362,27 +608,29 @@ export default function HomePage() {
     eventSourceRef.current?.close();
     const optimisticSessionId = createClientId();
     const now = new Date().toISOString();
-    setCurrentSessionId(optimisticSessionId);
-    setCurrentTaskId("");
-    setCurrentPageId("");
-    setSubmittedPrompt(trimmedPrompt);
-    setSubmittedFileNames(fileNames);
-    setStatus("thinking");
-    setReasoning("");
-    setThinkingExpanded(true);
-    setPageUrl("");
-    setCopied(false);
-    setCopyFeedback("");
-    setPreviewMetrics({
-      viewportWidth: PREVIEW_VIEWPORT_WIDTH,
-      contentHeight: PREVIEW_DEFAULT_HEIGHT,
-      scale: 0.5,
+    playTransition(() => {
+      setCurrentSessionId(optimisticSessionId);
+      setCurrentTaskId("");
+      setCurrentPageId("");
+      setSubmittedPrompt(trimmedPrompt);
+      setSubmittedFileNames(fileNames);
+      setStatus("thinking");
+      setReasoning("");
+      setThinkingExpanded(true);
+      setPageUrl("");
+      setCopied(false);
+      setCopyFeedback("");
+      setPreviewMetrics({
+        viewportWidth: PREVIEW_VIEWPORT_WIDTH,
+        contentHeight: PREVIEW_DEFAULT_HEIGHT,
+        scale: 0.5,
+      });
+      setErrorMessage("");
+      setFileError("");
+      setStatusText(selectedFiles.length ? "正在上传并解析文件..." : "正在提交你的需求...");
+      setProgressSteps(createInitialProgressSteps(fileNames.length > 0));
+      setPrompt("");
     });
-    setErrorMessage("");
-    setFileError("");
-    setStatusText(selectedFiles.length ? "正在上传并解析文件..." : "正在提交你的需求...");
-    setProgressSteps(createInitialProgressSteps(fileNames.length > 0));
-    setPrompt("");
     writeCurrentSession({
       id: optimisticSessionId,
       prompt: trimmedPrompt,
@@ -517,28 +765,30 @@ export default function HomePage() {
   function startNewChat() {
     eventSourceRef.current?.close();
     localStorage.removeItem(CURRENT_SESSION_KEY);
-    setCurrentSessionId("");
-    setCurrentTaskId("");
-    setCurrentPageId("");
-    setPrompt("");
-    setSubmittedPrompt("");
-    setSubmittedFileNames([]);
-    setSelectedFiles([]);
-    setFileError("");
     if (fileInputRef.current) fileInputRef.current.value = "";
-    setStatus("idle");
-    setReasoning("");
-    setThinkingExpanded(true);
-    setStatusText("描述你想创建的页面");
-    setPageUrl("");
-    setErrorMessage("");
-    setCopied(false);
-    setCopyFeedback("");
-    setProgressSteps(createInitialProgressSteps());
-    setPreviewMetrics({
-      viewportWidth: PREVIEW_VIEWPORT_WIDTH,
-      contentHeight: PREVIEW_DEFAULT_HEIGHT,
-      scale: 0.5,
+    playTransition(() => {
+      setCurrentSessionId("");
+      setCurrentTaskId("");
+      setCurrentPageId("");
+      setPrompt("");
+      setSubmittedPrompt("");
+      setSubmittedFileNames([]);
+      setSelectedFiles([]);
+      setFileError("");
+      setStatus("idle");
+      setReasoning("");
+      setThinkingExpanded(true);
+      setStatusText("描述你想创建的页面");
+      setPageUrl("");
+      setErrorMessage("");
+      setCopied(false);
+      setCopyFeedback("");
+      setProgressSteps(createInitialProgressSteps());
+      setPreviewMetrics({
+        viewportWidth: PREVIEW_VIEWPORT_WIDTH,
+        contentHeight: PREVIEW_DEFAULT_HEIGHT,
+        scale: 0.5,
+      });
     });
   }
 
@@ -548,7 +798,7 @@ export default function HomePage() {
 
     if (stored) {
       writeCurrentSession(stored);
-      applyStoredSession(stored);
+      playTransition(() => applyStoredSession(stored));
 
       if ((stored.status === "thinking" || stored.status === "creating") && stored.taskId) {
         connectToEvents(stored.taskId);
@@ -558,7 +808,7 @@ export default function HomePage() {
 
     const session = buildSessionFromHistoryItem(item);
     writeCurrentSession(session);
-    applyStoredSession(session);
+    playTransition(() => applyStoredSession(session));
 
     if ((session.status === "thinking" || session.status === "creating") && session.taskId) {
       connectToEvents(session.taskId);
@@ -827,7 +1077,7 @@ export default function HomePage() {
           </div>
         </form>
         {!compact && (
-          <div className="prompt-chip-row" role="list" aria-label="推荐场景">
+          <div className="prompt-chip-row" role="list" aria-label="推荐场景" data-anim-stagger>
             {PROMPT_PRESETS.map((preset) => (
               <button
                 key={preset.id}
@@ -852,9 +1102,10 @@ export default function HomePage() {
     );
   }
 
-  if (status === "idle") {
-    return (
-      <main className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+  return (
+    <div className="app-stage" ref={stageRef}>
+      {status === "idle" ? (
+      <main key="hero" className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
         <div className="hero-aurora" aria-hidden="true">
           <span className="aurora-blob aurora-blob-1" />
           <span className="aurora-blob aurora-blob-2" />
@@ -864,7 +1115,7 @@ export default function HomePage() {
         {renderHistorySidebar()}
         <section className="page-shell">
           <div className="hero">
-            <div className="brand-mark">
+            <div className="brand-mark" data-anim-stagger>
               <img
                 src="/stars-page-logo-simple.png"
                 alt="星页 StarPage"
@@ -873,8 +1124,8 @@ export default function HomePage() {
                 height={56}
               />
             </div>
-            <h1>想做什么页面？</h1>
-            <p className="subtitle">
+            <h1 data-anim-stagger>想做什么页面？</h1>
+            <p className="subtitle" data-anim-stagger>
               说说你的想法，<strong className="brand-inline">星页 StarPage</strong> 帮你生成一个可分享的精致网页。
             </p>
 
@@ -882,16 +1133,13 @@ export default function HomePage() {
           </div>
         </section>
       </main>
-    );
-  }
-
-  return (
-    <main className="workspace-shell">
+      ) : (
+      <main key="workspace" className="workspace-shell">
       <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
         {renderHistorySidebar()}
         <aside className="conversation-pane">
           <div className="conversation-scroll">
-            <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`}>
+            <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`} data-anim-stagger>
               <div className="user-message-meta">
                 <span>你的需求</span>
                 <span>
@@ -909,7 +1157,7 @@ export default function HomePage() {
               )}
             </div>
 
-            <div className="chat-message assistant-message progress-message">
+            <div className="chat-message assistant-message progress-message" data-anim-stagger>
               <div className="assistant-label">创建节点</div>
               <div className="progress-list">
                 {progressSteps.map((step, index) => (
@@ -962,7 +1210,7 @@ export default function HomePage() {
         </aside>
 
         <section className="preview-pane">
-          <article className="panel preview-panel workspace-preview">
+          <article className="panel preview-panel workspace-preview" data-anim-stagger>
             <div className="panel-heading">
               <span
                 className={`dot ${status === "completed" ? "ready" : status === "failed" ? "failed" : "loading"}`}
@@ -1037,6 +1285,8 @@ export default function HomePage() {
         </section>
       </section>
     </main>
+      )}
+    </div>
   );
 }
 

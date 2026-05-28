@@ -1,0 +1,236 @@
+/*
+ * 原型专用样式：导演控制条 + 舞台/视图容器 + 三套方案各自的过渡定义
+ * 全部以 sp- 前缀命名空间，避免与生产 globals.css 冲突。仅用于选型对比，不进生产。
+ */
+:root {
+  --sp-bar-h: 56px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+#sp-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---------- 导演控制条（临时调试 UI，不进生产） ---------- */
+.sp-director {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: var(--sp-bar-h);
+  padding: 0 18px;
+  background: #0f172a;
+  color: #e2e8f0;
+  z-index: 50;
+  box-shadow:
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 24px -16px rgba(0, 0, 0, 0.6);
+}
+
+.sp-director-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.sp-director-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
+}
+
+.sp-director-variant {
+  color: #94a3b8;
+  font-size: 12.5px;
+  padding: 2px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+.sp-director-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sp-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  cursor: pointer;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.sp-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.sp-btn:active {
+  transform: translateY(1px);
+}
+
+.sp-reduce {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sp-state-tag {
+  font-size: 12.5px;
+  color: #cbd5e1;
+  padding: 4px 11px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ---------- 舞台 / 视图 ---------- */
+.sp-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.sp-view {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+}
+
+/* 把生产里基于 100vh 的高度收敛到舞台高度（舞台已扣掉导演条） */
+.sp-view .home-shell {
+  min-height: 100%;
+}
+
+.sp-view .workspace-layout {
+  height: calc(100% - 40px);
+}
+
+.sp-view .history-sidebar,
+.sp-view .conversation-pane,
+.sp-view .workspace-preview {
+  height: 100%;
+}
+
+/* ==========================================================================
+   方案一（3001）· 纯 CSS 交叉过渡
+   旧视图淡出 + 轻微上移收缩，新视图淡入 + 自下而上浮起，二者叠放交叉
+   ========================================================================== */
+.sp-cross .sp-view {
+  transition:
+    opacity 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.sp-cross .sp-view.sp-leaving.sp-active {
+  opacity: 0;
+  transform: translateY(-14px) scale(0.985);
+}
+
+.sp-cross .sp-view.sp-entering {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.sp-cross .sp-view.sp-entering.sp-active {
+  opacity: 1;
+  transform: none;
+}
+
+/* ==========================================================================
+   方案二（3002）· 原生 View Transitions API 共享元素飞行
+   仅在 .sp-vt 页面给共享元素命名，避免影响其它方案
+   ========================================================================== */
+.sp-vt [data-vt="prompt"] {
+  view-transition-name: vt-prompt;
+}
+
+.sp-vt [data-vt="sidebar"] {
+  view-transition-name: vt-sidebar;
+}
+
+.sp-vt [data-vt="logo"] {
+  view-transition-name: vt-logo;
+}
+
+::view-transition-group(vt-prompt),
+::view-transition-group(vt-sidebar),
+::view-transition-group(vt-logo) {
+  animation-duration: 0.46s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(root) {
+  animation: sp-vt-old 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+::view-transition-new(root) {
+  animation: sp-vt-new 0.46s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sp-vt-old {
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes sp-vt-new {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+/* ==========================================================================
+   方案三（3003）· motion 库精细编排
+   过渡主要由 JS 命令式驱动，这里只做 will-change 与文字气泡克隆层的定位
+   ========================================================================== */
+.sp-motion .sp-view {
+  will-change: opacity, transform;
+}
+
+.sp-float-clone {
+  position: fixed;
+  margin: 0;
+  z-index: 40;
+  pointer-events: none;
+  white-space: pre-wrap;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* reduced-motion：彻底关掉舞台过渡（各方案 JS 也会走直切分支） */
+@media (prefers-reduced-motion: reduce) {
+  .sp-cross .sp-view {
+    transition: none;
+  }
+}
