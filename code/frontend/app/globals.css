@@ -410,12 +410,6 @@ h1 {
   text-align: left;
 }
 
-.prompt-status {
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
 .selected-files,
 .submitted-files {
   display: flex;
@@ -438,20 +432,34 @@ h1 {
   font-weight: 600;
 }
 
+/* 清空：从纯文本升级为带关闭图标的次级按钮，更精致、可点性更明确 */
 .selected-files button {
-  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 4px 9px;
   font-size: 12px;
   font-weight: 600;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.selected-files button .button-icon {
+  display: inline-flex;
+  font-size: 13px;
 }
 
 .selected-files button:hover {
   background: var(--color-surface-soft);
-  color: var(--color-text-primary);
+  border-color: var(--color-border);
+  color: var(--color-danger);
 }
 
 .file-error {
@@ -569,9 +577,42 @@ h1 {
   box-shadow: none;
 }
 
+/* 次级"发送"按钮：工作区底部是"迭代修改"入口，降级为次级样式
+   （浅蓝底 + 主题色文字），把全局唯一的主 CTA 让给右侧"打开页面" */
+.submit-button.is-secondary {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  box-shadow: none;
+}
+
+.submit-button.is-secondary:hover:not(:disabled) {
+  background: var(--color-primary-soft-strong);
+  box-shadow: none;
+}
+
+.submit-button.is-secondary:active:not(:disabled) {
+  background: var(--color-primary-soft-strong);
+}
+
+/* 生成中（加载态）：从高亮蓝实心 CTA 降级为柔和的"处理中"样式
+   - 浅蓝底 + 主题色文字 + 转圈 spinner，明确表达"正在处理"而非"可点击"
+   - cursor: progress 进一步强化"系统忙"的语义 */
+.submit-button.is-loading,
+.submit-button.is-loading:disabled {
+  cursor: progress;
+  opacity: 1;
+  background: var(--color-primary-soft-strong);
+  color: var(--color-primary);
+  box-shadow: none;
+}
+
 .submit-button .button-icon {
   display: inline-flex;
   font-size: 14px;
+}
+
+.submit-button .spinner-icon {
+  animation: spin 0.7s linear infinite;
 }
 
 /* compact 形态（生成过程中底部 composer） */
@@ -868,7 +909,14 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .new-chat-button.is-active::after {
+  .new-chat-button.is-active::after,
+  .progress-item.running:not(.is-last)::after,
+  .progress-spinner,
+  .submit-button .spinner-icon,
+  .dot.loading,
+  .skeleton-chip,
+  .skeleton-line,
+  .skeleton-card {
     animation: none;
   }
 }
@@ -920,9 +968,10 @@ h1 {
 .conversation-scroll,
 .prompt-card textarea,
 .user-message p,
+.thinking-node-body,
 .thinking-node-body pre,
 .thinking-node-body p {
-  scrollbar-color: rgba(100, 116, 139, 0.22) transparent;
+  scrollbar-color: rgba(100, 116, 139, 0.18) transparent;
   scrollbar-width: thin;
 }
 
@@ -930,20 +979,23 @@ h1 {
 .conversation-scroll::-webkit-scrollbar,
 .prompt-card textarea::-webkit-scrollbar,
 .user-message p::-webkit-scrollbar,
+.thinking-node-body::-webkit-scrollbar,
 .thinking-node-body pre::-webkit-scrollbar,
 .thinking-node-body p::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 .history-list::-webkit-scrollbar-thumb,
 .conversation-scroll::-webkit-scrollbar-thumb,
 .prompt-card textarea::-webkit-scrollbar-thumb,
 .user-message p::-webkit-scrollbar-thumb,
+.thinking-node-body::-webkit-scrollbar-thumb,
 .thinking-node-body pre::-webkit-scrollbar-thumb,
 .thinking-node-body p::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(100, 116, 139, 0.22);
+  /* 静止时几乎隐形，仅留极淡的痕迹，悬停才加深，做到"隐形且优雅" */
+  background: rgba(100, 116, 139, 0.16);
   border: 1px solid transparent;
   background-clip: padding-box;
   transition: background 0.15s ease;
@@ -953,15 +1005,17 @@ h1 {
 .conversation-scroll::-webkit-scrollbar-thumb:hover,
 .prompt-card textarea::-webkit-scrollbar-thumb:hover,
 .user-message p::-webkit-scrollbar-thumb:hover,
+.thinking-node-body::-webkit-scrollbar-thumb:hover,
 .thinking-node-body pre::-webkit-scrollbar-thumb:hover,
 .thinking-node-body p::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.42);
+  background: rgba(100, 116, 139, 0.4);
 }
 
 .history-list::-webkit-scrollbar-track,
 .conversation-scroll::-webkit-scrollbar-track,
 .prompt-card textarea::-webkit-scrollbar-track,
 .user-message p::-webkit-scrollbar-track,
+.thinking-node-body::-webkit-scrollbar-track,
 .thinking-node-body pre::-webkit-scrollbar-track,
 .thinking-node-body p::-webkit-scrollbar-track {
   background: transparent;
@@ -1017,12 +1071,17 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* 标题：略放大并保持中粗，让它在"标题/日期"双行结构里更主导 */
+  /* 标题：未选中用 500 字重，选中项加粗到 700，
+     通过字重对比进一步强化"当前位置"的感知 */
   font-size: 13.5px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.005em;
   color: inherit;
   line-height: 1.35;
+}
+
+.history-item.active span {
+  font-weight: 700;
 }
 
 .history-item small {
@@ -1067,18 +1126,27 @@ h1 {
   max-width: 92%;
 }
 
+/* 用户需求气泡：更明确的"输入源"对话气泡
+   - 浅蓝底 + 同色系描边强化轮廓，与卡片背景拉开区分度
+   - 增加微阴影营造"浮起"的输入气泡感
+   - 右下尖角（border-radius 收一个角）暗示这是用户侧发出的消息 */
 .user-message {
   align-self: flex-end;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-lg) var(--radius-lg) 6px var(--radius-lg);
+  border: 1px solid var(--color-primary-soft-strong);
   background: var(--color-primary-soft);
   color: var(--color-text-primary);
   padding: 14px 18px 16px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 20px -12px rgba(53, 99, 233, 0.28);
 }
 
 .user-message.long-message {
   max-width: 84%;
-  border: 1px solid var(--color-border);
+  border-color: var(--color-border);
   background: var(--color-surface-soft);
+  box-shadow: var(--shadow-md);
 }
 
 .user-message-meta {
@@ -1087,9 +1155,15 @@ h1 {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 600;
+}
+
+/* "你的需求"标签：作为发送方标识，用主题色点明这是用户输入源 */
+.user-message-meta > span:first-child {
+  color: var(--color-primary);
+  font-weight: 700;
 }
 
 .user-message p {
@@ -1112,13 +1186,25 @@ h1 {
   color: var(--color-text-primary);
 }
 
+/* 区域标题：作为核心流程的标题，放大字号 + 加粗 + 主文本色，
+   左侧加一道品牌色短竖条强化"区域划分"，避免标题被弱化淹没 */
 .assistant-label {
-  margin-bottom: 8px;
-  color: var(--color-text-tertiary);
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--color-text-primary);
+  font-size: 14.5px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+
+.assistant-label::before {
+  content: "";
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--color-primary);
 }
 
 .progress-message .progress-list {
@@ -1196,8 +1282,40 @@ h1 {
   background: var(--color-primary);
 }
 
-.dot.accent {
+.dot.accent,
+.dot.ready {
   background: var(--color-success);
+}
+
+.dot.failed {
+  background: var(--color-danger);
+}
+
+/* 生成中：蓝色"呼吸点"，用扩散的光环表达"进行中"，
+   避免一上来就用绿点误导成"已完成/在线" */
+.dot.loading {
+  background: var(--color-primary);
+  animation: dot-breathe 1.5s ease-in-out infinite;
+}
+
+@keyframes dot-breathe {
+  0% {
+    box-shadow: 0 0 0 0 rgba(53, 99, 233, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(53, 99, 233, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(53, 99, 233, 0);
+  }
+}
+
+/* 预览区状态文案：跟随状态点的右侧轻量说明 */
+.preview-status-text {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .muted,
@@ -1224,11 +1342,13 @@ h1 {
 
 .progress-list {
   display: grid;
-  gap: 10px;
+  /* 卡片之间留 16px，既有"节奏感"，又给节点连线留出穿插空间 */
+  gap: 16px;
   padding: 20px;
 }
 
 .progress-item {
+  position: relative;
   display: grid;
   grid-template-columns: 30px 1fr;
   gap: 12px;
@@ -1239,17 +1359,62 @@ h1 {
   background: var(--color-surface);
   transition:
     border-color 0.2s ease,
-    background 0.2s ease;
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+/* 节点连线：从当前节点圆圈下方延伸，穿过卡片间距连到下一个节点
+   - 未开始：浅色实线
+   - 已完成：成功色实线
+   - 进行中：品牌色"流光"虚线（向下行进），强化"正在进行"的递进感
+   线条定位在第一列（图标）的水平中心 x≈29px */
+.progress-item:not(.is-last)::after {
+  content: "";
+  position: absolute;
+  left: 29px;
+  top: 40px;
+  bottom: -16px;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: var(--color-border-strong);
+}
+
+.progress-item.completed:not(.is-last)::after {
+  background: rgba(22, 163, 74, 0.4);
+}
+
+.progress-item.running:not(.is-last)::after {
+  background-image: linear-gradient(
+    180deg,
+    var(--color-primary) 0%,
+    var(--color-primary) 45%,
+    transparent 45%,
+    transparent 100%
+  );
+  background-size: 100% 12px;
+  background-repeat: repeat-y;
+  animation: stepper-flow 0.9s linear infinite;
+}
+
+@keyframes stepper-flow {
+  to {
+    background-position: 0 12px;
+  }
 }
 
 .progress-item.running {
   border-color: rgba(53, 99, 233, 0.32);
   background: var(--color-primary-soft);
+  box-shadow: 0 6px 18px -12px rgba(53, 99, 233, 0.5);
 }
 
+/* 已完成节点：克制处理——回归白底 + 默认浅边框，不再铺满绿色背景
+   "成功"已由绿色 Check 圆圈 + 绿色连线表达，避免中栏整片绿抢走
+   右侧预览（核心交付物）的视觉焦点 */
 .progress-item.completed {
-  border-color: rgba(22, 163, 74, 0.2);
-  background: rgba(240, 253, 244, 0.9);
+  border-color: var(--color-border);
+  background: var(--color-surface);
 }
 
 .progress-item.failed {
@@ -1258,30 +1423,54 @@ h1 {
 }
 
 .progress-icon {
+  position: relative;
+  z-index: 1;
   display: grid;
   width: 26px;
   height: 26px;
   place-items: center;
   border-radius: 50%;
-  background: var(--color-surface-soft);
+  /* 未开始：白底 + 较深描边的空心圆，作为清晰的"未点亮"节点 */
+  border: 2px solid var(--color-border-strong);
+  background: var(--color-surface);
   color: var(--color-text-tertiary);
   font-size: 13px;
   font-weight: 700;
 }
 
 .progress-item.running .progress-icon {
+  border-color: var(--color-primary);
   background: var(--color-primary);
   color: #fff;
+  box-shadow: 0 0 0 4px rgba(53, 99, 233, 0.14);
 }
 
 .progress-item.completed .progress-icon {
+  border-color: var(--color-success);
   background: var(--color-success);
   color: #fff;
 }
 
 .progress-item.failed .progress-icon {
+  border-color: var(--color-danger);
   background: var(--color-danger);
   color: #fff;
+}
+
+/* 进行中节点内的转圈 spinner，比静态圆点更能表达"正在处理" */
+.progress-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .progress-title-row {
@@ -1304,15 +1493,25 @@ h1 {
   line-height: 1.55;
 }
 
-.token-pill {
-  flex: none;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+/* Token 用量：作为辅助信息自然融入卡片下方，与描述文字完美左对齐
+   - 前缀换成科技感的闪电微图标（替代像无序列表默认样式的小圆点）
+   - 文字用更弱的次级灰（muted #94a3b8），不与主标题抢视觉权重 */
+.token-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.token-meta-icon {
+  display: inline-flex;
+  font-size: 13px;
   color: var(--color-primary);
-  padding: 3px 8px;
-  font-size: 11.5px;
-  font-weight: 600;
+  opacity: 0.85;
 }
 
 .node-toggle {
@@ -1335,12 +1534,15 @@ h1 {
   color: var(--color-text-primary);
 }
 
+/* 模型思考抽屉：浅灰底 + 内阴影，做出"内嵌面板/抽屉"的层级嵌套感
+   与外层卡片形成明确的"父子层级"，而不是生硬的同级描边 */
 .thinking-node-body {
   margin-top: 12px;
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: #f9fafb;
   border: 1px solid var(--color-border);
   padding: 12px 14px;
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.05);
 }
 
 .thinking-node-body pre,
@@ -1356,28 +1558,91 @@ h1 {
   line-height: 1.75;
 }
 
+/* 预览窗口：把"挂画式"厚白边升级为真实浏览器视窗
+   - 外层仅 1px 细边框 + 一层细腻弥散阴影
+   - 顶部一条极简浏览器控制栏（红黄绿三圆点 + 地址条），沉浸感更强
+   - 内容区直接填满，不再被厚白边包裹 */
+.preview-window {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  margin: 16px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 18px 40px -22px rgba(15, 23, 42, 0.32);
+}
+
+.preview-window-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: #fbfcfd;
+}
+
+.win-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.win-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+
+.win-dot-red {
+  background: #ff5f57;
+}
+
+.win-dot-amber {
+  background: #febc2e;
+}
+
+.win-dot-green {
+  background: #28c840;
+}
+
+/* 地址条：弱化的浅灰胶囊，显示当前预览页面的 URL */
+.preview-window-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .preview-viewport {
   flex: 1;
   min-height: 0;
-  margin: 16px;
   overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(45deg, rgba(148, 163, 184, 0.08) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(148, 163, 184, 0.08) 25%, transparent 25%),
-    #fafbfc;
-  background-position:
-    0 0,
-    0 8px;
-  background-size: 16px 16px;
+  /* 干净的浅灰底，去掉之前的棋盘格，减少视觉杂乱 */
+  background: #f6f7f9;
 }
 
 .preview-scale-shell {
   position: relative;
   margin: 14px auto;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 10px 30px -16px rgba(15, 23, 42, 0.28);
 }
 
 .preview-scale-shell iframe {
@@ -1385,7 +1650,7 @@ h1 {
   top: 0;
   left: 0;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: 10px;
   background: #fff;
   transform-origin: top left;
 }
@@ -1395,34 +1660,99 @@ h1 {
   flex: 1;
   min-height: 0;
   place-items: center;
+  align-content: center;
   padding: 36px;
   text-align: center;
 }
 
-.preview-empty-icon {
+/* 等待生成时的骨架屏：用一张"正在搭建中"的页面线框 + 流光动画，
+   把空旷的等待区变成有信息量的占位，缓解等待焦虑、强化"科技感" */
+.preview-skeleton {
   display: grid;
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 16px;
-  place-items: center;
+  gap: 16px;
+  width: min(440px, 86%);
+  margin: 0 auto 26px;
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.skeleton-topbar {
+  display: flex;
+  gap: 8px;
+}
+
+.skeleton-hero {
+  display: grid;
+  gap: 12px;
+}
+
+.skeleton-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.skeleton-chip,
+.skeleton-line,
+.skeleton-card {
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef1f6 25%, #e1e6ef 37%, #eef1f6 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+.skeleton-chip {
+  width: 34px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.skeleton-line {
+  height: 14px;
+}
+
+.skeleton-line-lg {
+  width: 78%;
+  height: 22px;
+}
+
+.skeleton-line-md {
+  width: 58%;
+}
+
+.skeleton-line-sm {
+  width: 40%;
+}
+
+.skeleton-card {
+  height: 60px;
   border-radius: var(--radius-md);
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  font-size: 22px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
 }
 
 .preview-empty h3 {
   margin: 0;
   color: var(--color-text-primary);
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
 }
 
 .preview-empty p {
-  max-width: 360px;
-  margin: 8px auto 0;
+  max-width: 380px;
+  margin: 10px auto 0;
   color: var(--color-text-secondary);
-  line-height: 1.65;
+  line-height: 1.7;
 }
 
 .link-actions {

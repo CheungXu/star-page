@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChangeEvent, FormEvent, SyntheticEvent } from "react";
+import type { ChangeEvent, FormEvent, ReactNode, SyntheticEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
@@ -172,6 +172,37 @@ const ArrowUpIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <line x1="12" y1="19" x2="12" y2="5" />
     <polyline points="5 12 12 5 19 12" />
+  </svg>
+);
+
+/* 加载态转圈：用于"生成中"按钮，明确表达"处理中"而非"可点击" */
+const SpinnerIcon = () => (
+  <svg className="spinner-icon" width="1em" height="1em" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+  </svg>
+);
+
+/* 关闭/清空小图标：让"清空"从纯文本升级为带图标的次级按钮 */
+const CloseIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
+/* 纸飞机：工作区底部"发送/修改"用，比"创建 ⬆"更贴合"迭代调整"的语义 */
+const SendIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <line x1="22" y1="2" x2="11" y2="13" />
+    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+  </svg>
+);
+
+/* 闪电：Token 用量前缀的科技感微图标，替代默认列表小圆点 */
+const BoltIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" />
   </svg>
 );
 
@@ -760,7 +791,8 @@ export default function HomePage() {
                       {file.name} · {formatFileSize(file.size)}
                     </span>
                   ))}
-                  <button type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
+                  <button className="clear-files-button" type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
+                    <span className="button-icon" aria-hidden="true"><CloseIcon /></span>
                     清空
                   </button>
                 </div>
@@ -769,13 +801,22 @@ export default function HomePage() {
               ) : null}
             </div>
             <button
-              className="submit-button"
+              className={`submit-button ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""}`}
               type="submit"
               disabled={isGenerating || Boolean(fileError)}
-              aria-label="创建页面"
+              aria-label={isGenerating ? "正在生成" : compact ? "发送修改" : "创建页面"}
+              aria-busy={isGenerating}
             >
               {isGenerating ? (
-                "生成中"
+                <>
+                  <span className="button-icon" aria-hidden="true"><SpinnerIcon /></span>
+                  生成中
+                </>
+              ) : compact ? (
+                <>
+                  发送
+                  <span className="button-icon" aria-hidden="true"><SendIcon /></span>
+                </>
               ) : (
                 <>
                   创建
@@ -802,10 +843,9 @@ export default function HomePage() {
             ))}
           </div>
         )}
-        {(fileError || (compact && statusText)) && (
+        {fileError && (
           <div className="prompt-meta-row">
-            {compact && !fileError && <span className="prompt-status">{statusText}</span>}
-            {fileError && <span className="file-error">{fileError}</span>}
+            <span className="file-error">{fileError}</span>
           </div>
         )}
       </div>
@@ -872,10 +912,13 @@ export default function HomePage() {
             <div className="chat-message assistant-message progress-message">
               <div className="assistant-label">创建节点</div>
               <div className="progress-list">
-                {progressSteps.map((step) => (
-                  <div className={`progress-item ${step.status}`} key={step.id}>
-                    <span className="progress-icon">{getProgressIcon(step.status)}</span>
-                    <div>
+                {progressSteps.map((step, index) => (
+                  <div
+                    className={`progress-item ${step.status} ${index === progressSteps.length - 1 ? "is-last" : ""}`}
+                    key={step.id}
+                  >
+                    <span className="progress-icon" aria-hidden="true">{getProgressIcon(step.status)}</span>
+                    <div className="progress-body">
                       <div className="progress-title-row">
                         <strong>{step.title}</strong>
                         {step.id === "model_thinking" && (
@@ -883,14 +926,15 @@ export default function HomePage() {
                             {thinkingExpanded ? "收起" : "展开"}
                           </button>
                         )}
-                        {step.id === "model_output" && (
-                          <span className="token-pill">
-                            输出 {step.outputTokens ?? 0} tokens
-                            {step.tokenSource === "estimated" ? "（估算）" : ""}
-                          </span>
-                        )}
                       </div>
                       <p>{step.description}</p>
+                      {step.id === "model_output" && (
+                        <span className="token-meta">
+                          <span className="token-meta-icon" aria-hidden="true"><BoltIcon /></span>
+                          输出 {step.outputTokens ?? 0} tokens
+                          {step.tokenSource === "estimated" ? "（估算）" : ""}
+                        </span>
+                      )}
                       {step.id === "model_thinking" && thinkingExpanded && (
                         <div className="thinking-node-body">
                           {reasoning ? (
@@ -920,21 +964,37 @@ export default function HomePage() {
         <section className="preview-pane">
           <article className="panel preview-panel workspace-preview">
             <div className="panel-heading">
-              <span className="dot accent" />
+              <span
+                className={`dot ${status === "completed" ? "ready" : status === "failed" ? "failed" : "loading"}`}
+                aria-hidden="true"
+              />
               <h2>页面预览</h2>
+              <span className="preview-status-text">
+                {status === "completed" ? "已生成" : status === "failed" ? "生成失败" : "生成中"}
+              </span>
             </div>
 
             {status === "completed" && absolutePageUrl && (
               <>
-                <div className="preview-viewport" ref={previewStageRef}>
-                  <div className="preview-scale-shell" style={previewShellStyle}>
-                    <iframe
-                      ref={previewIframeRef}
-                      title="生成页面预览"
-                      src={absolutePageUrl}
-                      onLoad={handlePreviewLoad}
-                      style={previewIframeStyle}
-                    />
+                <div className="preview-window">
+                  <div className="preview-window-bar" aria-hidden="true">
+                    <span className="win-dots">
+                      <span className="win-dot win-dot-red" />
+                      <span className="win-dot win-dot-amber" />
+                      <span className="win-dot win-dot-green" />
+                    </span>
+                    <span className="preview-window-url">{absolutePageUrl}</span>
+                  </div>
+                  <div className="preview-viewport" ref={previewStageRef}>
+                    <div className="preview-scale-shell" style={previewShellStyle}>
+                      <iframe
+                        ref={previewIframeRef}
+                        title="生成页面预览"
+                        src={absolutePageUrl}
+                        onLoad={handlePreviewLoad}
+                        style={previewIframeStyle}
+                      />
+                    </div>
                   </div>
                 </div>
                 <div className="link-actions">
@@ -950,9 +1010,25 @@ export default function HomePage() {
 
             {(status === "thinking" || status === "creating") && (
               <div className="preview-empty">
-                <div className="preview-empty-icon">▧</div>
-                <h3>页面生成后会出现在这里</h3>
-                <p>左侧会持续展示模型思考和创建节点，右侧专注预览最终网页。</p>
+                <div className="preview-skeleton" aria-hidden="true">
+                  <div className="skeleton-bar skeleton-topbar">
+                    <span className="skeleton-chip" />
+                    <span className="skeleton-chip" />
+                    <span className="skeleton-chip" />
+                  </div>
+                  <div className="skeleton-hero">
+                    <span className="skeleton-line skeleton-line-lg" />
+                    <span className="skeleton-line skeleton-line-md" />
+                    <span className="skeleton-line skeleton-line-sm" />
+                  </div>
+                  <div className="skeleton-cards">
+                    <span className="skeleton-card" />
+                    <span className="skeleton-card" />
+                    <span className="skeleton-card" />
+                  </div>
+                </div>
+                <h3>正在为你生成页面…</h3>
+                <p>左侧实时展示模型思考与创建节点，完成后这里会渲染最终网页。</p>
               </div>
             )}
 
@@ -1092,11 +1168,11 @@ function parsePayload(event: Event): SsePayload {
   return JSON.parse(message.data) as SsePayload;
 }
 
-function getProgressIcon(status: ProgressStepStatus): string {
+function getProgressIcon(status: ProgressStepStatus): ReactNode {
   if (status === "completed") return "✓";
-  if (status === "running") return "•";
+  if (status === "running") return <span className="progress-spinner" aria-hidden="true" />;
   if (status === "failed") return "!";
-  return "";
+  return null;
 }
 
 function validateFiles(files: File[]): string {
