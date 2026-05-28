@@ -58,6 +58,32 @@
 - **滚动条**：webkit 5px + 圆角，静止态 alpha 0.16 近隐形、hover 才加深。
 - 所有装饰动画（流光 / spinner / 呼吸点 / shimmer）纳入 `prefers-reduced-motion` 降级。
 
+## 首页 ↔ 生成页衔接过渡
+
+首页 hero 与生成工作区是两套条件渲染的 DOM，切换时用一个**命令式过渡协调器**做平滑
+衔接，避免「硬闪」。核心在 `app/page.tsx` 顶部的模块级函数与组件内的 `playTransition`：
+
+- **motion 单方案 + 兜底直切**：`runStageTransition()` 中，`prefers-reduced-motion` 或
+  motion 库未就绪（动态 import 失败）时直接切换（不报错）；否则用 motion 做 FLIP 输入卡
+  飞行 + 文字上浮成气泡 + 内容 stagger 入场。
+  > 曾实现「motion → View Transitions → 纯 CSS」三级降级链，因维护成本简化为此；完整版
+  > 留档在 git 分支 `full-animation-mode`，取舍原因见 wiki。
+- **三处接入**：`handleSubmit` / `startNewChat` / `restoreHistoryItem` 把所有决定新视图
+  的 `setState` 包进 `playTransition(() => { ... })` 这一个闭包。
+- **稳定舞台**：两态外层包 `<div className="app-stage" ref={stageRef}>`，两态 `<main>`
+  各带 `key`（`hero` / `workspace`）。协调器用 `flushSync` 同步提交状态切换，以便 FLIP 在
+  切换前后测量位置。
+- **motion 动态加载**：`import("motion")` 在 `useEffect` 里异步加载并存入 `motionRef`，
+  失败保持为空自动兜底；首屏从 localStorage 恢复非首页态时**不**走过渡（无「从首页来」
+  的语境）。
+- **动画用内联样式**：动画进行中组件可能因其它 `setState` 重渲染而覆盖 className，所以
+  入场/离场全走内联 `style` 或 WAAPI；需要逐项 stagger 入场的容器打 `data-anim-stagger`。
+- **DOM 契约集中化**：过渡依赖的选择器/标记集中为 `TRANSITION_DOM` 常量并加注释，未来改
+  页面（重命名 class / 调结构）时对照同步，避免动画「静默失效」。
+
+跨项目可复用的设计、降级层级取舍与实现经验沉淀在
+`wiki/frontend-home-workspace-transition.md`；选型用的多端口原型在 `script/preview-transition/`。
+
 ## 历史记录与本地状态
 
 历史创建列表从后端 `GET /api/pages` 读取，当前按默认测试用户查询数据库中的页面和生成任务，因此换设备访问也能看到同一测试账号的历史页面。

@@ -193,11 +193,30 @@ pkill -f preview-logo/serve.py
 | Hero 区 / Landing Page / 海报视觉对比 | ✅ |
 | 表单交互、状态切换、键盘快捷键测试 | ❌（无 React 状态、无后端） |
 | API 调用、登录态、SSE 事件流 | ❌（用真实开发环境对比） |
-| 动效复杂度（多状态过渡） | ⚠️（简单 CSS 动画 OK，复杂 Framer Motion 不行） |
+| 动效复杂度（多状态过渡） | ✅ 见下「交互动画对比变体」：公共状态机 + 命令式 motion ESM 也能并排对比 |
 
 如果方案对比涉及到状态切换或后端联动，应该用 Storybook / Ladle 或在真实项目里加 feature flag。本模式的最大优势是**零依赖、零编译、零构建**，5 分钟从想法到上线对比页。
+
+## 进阶：交互动画对比变体（带状态机 + 导演控制条）
+
+本模式不止能比「静态视觉」，加一层公共状态机后也能并排比**交互动画 / 多状态过渡**。
+本仓库 `script/preview-transition/` 就用它对比了三套「首页 ↔ 生成页」衔接动画
+（纯 CSS / View Transitions / motion），扩展点有三个：
+
+1. **公共骨架 `app.js`**：用与生产一致的 className 重建两态 DOM（hero / workspace），
+   并维护一个状态机；各方案不再各写一份 HTML，而是共用骨架。
+2. **导演控制条**（仅原型用）：顶部放几个按钮触发「生成 / 返回 / 历史进入」等切换，
+   可**反复重播**同一种过渡来回看细节；再加一个「模拟 reduced-motion」勾选框，不改系统
+   设置就能验证无障碍降级。
+3. **`variant-*.js` 注入 `transition()`**：骨架把「怎么过渡」开放给每个端口的 variant
+   注入，`SPApp.init({ transition })`。三套方案共享 DOM 与状态机，只换过渡实现，对比公平。
+
+关键：让原型里 motion 的写法（命令式 ESM `animate` DOM）与最终生产集成保持**同一种
+范式**，原型结论才能直接落地，而不只是「视觉目标」。详见
+`frontend-home-workspace-transition.md`。
 
 ## 相关条目
 
 - `frontend-design-tokens-and-prompt-card.md`：精修后的设计 token 和模式可以反向同步到本预览基础设施。
+- `frontend-home-workspace-transition.md`：用本模式选型的「首页 ↔ 工作区衔接过渡」落地案例（含降级层级取舍）。
 - `png-logo-transparent-and-trim.md`：方案对比常涉及 logo 处理，可与本模式串联使用。

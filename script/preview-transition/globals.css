@@ -1882,15 +1882,3 @@ h1 {
     flex-direction: column;
   }
 }
-
-/* ==========================================================================
-   首页 ↔ 生成页 衔接过渡
-   两态 <main> 由 .app-stage 稳定容器包裹；过渡用 motion 库在 page.tsx 命令式驱动，
-   全程走内联样式 / WAAPI，故这里只需保证容器定位。reduced-motion 与 motion 库加载
-   失败的兜底（直接切换）都在 page.tsx 处理。
-   （曾评估并放弃的 View Transitions / 纯 CSS 降级见
-    wiki/frontend-home-workspace-transition.md，完整三级版留档在 full-animation-mode 分支。）
-   ========================================================================== */
-.app-stage {
-  position: relative;
-}

@@ -98,3 +98,33 @@ pkill -f preview-logo/serve.py
 ⚠️ 仅作视觉对比用，无后端调用、无真实交互。方案选定后需要把"通用优化"（padding / 阴影 / 字号等非方案差异项）双向同步到生产 `globals.css` 与本目录的 `_styles.css`。
 
 跨项目可复用方法见 `wiki/multi-port-static-preview-for-design-variants.md`。
+
+## 多端口衔接动画方案对比预览：`preview-transition/`
+
+`preview-transition/` 把上面的「多端口静态对比」模式扩展到**交互动画 / 多状态过渡**，
+用于「首页 ↔ 生成页」衔接动画选型。与 `preview-logo/` 的区别：不再各写一份静态 HTML，
+而是公共骨架 `app.js` 用与生产一致的 className 重建 hero / workspace 两态 DOM + 状态机，
+顶部「导演控制条」反复重播「生成 / 返回 / 历史进入」三种切换并带「模拟 reduced-motion」
+勾选；各端口的 `variant-*.js` 只注入各自的 `transition()` 实现。
+
+| 文件 | 用途 |
+|---|---|
+| `app.js` | 公共骨架：重建两态 DOM + 导演控制条 + 状态机，委托 `variant-*.js` 注入过渡 |
+| `variant-css.js` | 方案一：纯 CSS 交叉过渡（3001） |
+| `variant-vt.js` | 方案二：原生 View Transitions API（3002） |
+| `variant-motion.js` | 方案三：motion 库命令式 FLIP / 编排（3003） |
+| `director.css` | 原型专用样式（导演条 + 舞台，`sp-` 命名空间） |
+| `globals.css` | 从生产复制，保证视觉 1:1（临时双维护，选定即弃） |
+| `demo-page.html` | 完成态预览 iframe 里的占位结果页 |
+| `serve.py` | 三端口静态服务（3001/3002/3003） |
+
+```bash
+cd script/preview-transition
+python3 serve.py        # 占用 3001/3002/3003，勿与 preview-logo 同时启动
+pkill -f preview-transition/serve.py
+```
+
+**最终选型**：仅方案三（motion）落地生产，加载失败 / reduced-motion 时兜底直接切换；
+曾评估的方案二（View Transitions）/ 方案一（纯 CSS）因维护成本放弃，完整三级版留档在
+git 分支 `full-animation-mode`。决策见 `wiki/frontend-home-workspace-transition.md` 与
+`doc/20260529/frontend-transition-animation-plan.md`。原型三套实现保留作选型留档。
