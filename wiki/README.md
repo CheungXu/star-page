@@ -7,7 +7,7 @@
 
 ## 条目
 
-- `aliyun-mvp-deployment-checklist.md`：阿里云 MVP 部署检查清单，覆盖轻量服务器、OSS、ACR、RDS、凭证管理与基础验证顺序。
+- `aliyun-mvp-deployment-checklist.md`：阿里云 MVP 部署检查清单，覆盖轻量服务器、OSS、ACR、RDS、凭证管理与基础验证顺序；含个人版镜像加速器局限、基础镜像预存 ACR、Dockerfile `ARG` 控制 base 来源与「先登录、拒绝才降级」约定。
 - `ai-generation-progress-ux.md`：AI 生成 / 长任务类产品的过程可视化与状态反馈 UX 原则——步骤条流程感连线、状态色克制（只强调进行中/失败）、进行中用动效、唯一主 CTA、按钮文案随状态、等待态骨架屏、辅助数据微徽、选中态字重对比、隐形优雅滚动条、动画无障碍降级，共 11 条。
 - `frontend-design-tokens-and-prompt-card.md`：前端设计 Token 体系（圆角 / 阴影 / 文本色四档）、对话式输入卡片、Hero Aurora 光晕、Header Logo、侧边栏 Active；以及多层弥散阴影、Chip Hover 双层阴影 + active、侧边栏 Logo 圆角白底板（macOS App 图标式）、双语品牌文案双层结构（中文主名 + 英文副名，几何中线对齐）、副标题品牌词高亮（主题色 + 中粗）、视觉节奏 2:1 黄金分组、滚动条 hover 反馈共 11 节精修原则。
 - `frontend-home-workspace-transition.md`：首页 ↔ 工作区两态切换的平滑衔接过渡——用命令式过渡协调器解耦「改状态」与「怎么动画」；含 React 集成 5 个关键点（稳定舞台容器 + key、`flushSync` 同步提交、动态 import、内联样式防 React 覆盖、首屏恢复不走过渡）、FLIP 飞行 / 文字变气泡 / stagger 入场技巧，以及一条重要经验——**降级层级要按项目阶段权衡**（本项目从三级链简化为「motion + 兜底直切」）与 DOM 契约集中化防「静默失效」。

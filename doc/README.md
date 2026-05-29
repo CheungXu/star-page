@@ -18,6 +18,7 @@
   - 第一轮（层级·空间·质感·状态反馈）：未激活文字加深、"创建节点"标题放大加粗+竖条、用户气泡阴影+蓝标签、步骤卡片间距加大、移除底部冗余状态、清空按钮加图标、stepper 连线（完成实线/进行流光/未开始浅线）+ running spinner、思考抽屉浅灰底+内阴影、token 标签融入、生成中按钮加载态、预览状态点动态、骨架屏、`prefers-reduced-motion` 降级。
   - 第二轮（克制·精致）：完成节点去满屏绿回归白底、底部按钮"创建→发送"并降级保唯一主 CTA、滚动条进一步细化、Token 圆点→闪电微徽+muted 灰、侧边栏选中项加粗、预览区窗口化（去厚白边、1px 边框+弥散阴影+浏览器三圆点顶栏）。
 - `20260529/frontend-transition-animation-plan.md`：首页 ↔ 生成页衔接过渡动画的规划与实施记录。三套方案（纯 CSS / View Transitions / motion）多端口原型对比选型；先集成三级降级链，后因可维护性简化为「motion + 兜底直切」主线（完整三级版留档在 `full-animation-mode` 分支），在生产 `page.tsx`/`globals.css` 三处切换入口集成并验证。
+- `20260529/frontend-docker-image-build-and-acr.md`：前端 Docker 镜像构建与 ACR 发布记录。`motion` 依赖经 `npm install` 自动进镜像、补 `.dockerignore`；个人版镜像加速器缺 `node:22` 改用 DaoCloud 拉取并预存基础镜像到 `stars-page/node`；Dockerfile 用 `ARG` 默认走 ACR、可降级 Docker Hub；ACR 命名最终更正为 `stars-page`，镜像清单与 tag 约定。
 
 ## 使用约定
 
