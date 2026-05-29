@@ -34,15 +34,21 @@
 
 ### ACR
 
-已创建阿里云 ACR 私有镜像仓库：
+已创建阿里云 ACR 私有镜像仓库（个人版实例）：
 
 - 地域：华南 3（广州）
-- 命名空间：`stars-page-demo`
-- 仓库名称：`stars-page-demo`
-- Registry：`crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com`
-- 镜像地址：`crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com/stars-page-demo/stars-page-demo`
+- 实例 ID：`crpi-6w1a91eyh3y1vcd9`
+- 命名空间：`stars-page`
+- 应用镜像仓库：`stars-page/stars-page`
+- 基础镜像仓库：`stars-page/node`（预存 `node:22-bookworm-slim`，构建时免加速直接从 ACR 拉）
+- 公网 Registry：`crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com`
+- 专有网络（VPC）Registry：`crpi-6w1a91eyh3y1vcd9-vpc.cn-guangzhou.personal.cr.aliyuncs.com`（同 VPC 内 ECS 推送更快、不耗公网流量）
+- 登录账号：阿里云主账号（邮箱），密码为开通服务时设置的访问凭证密码
 
-当前服务器已完成 ACR 登录。后续本地构建镜像后，可以推送到该仓库。
+> 勘误：仓库命名几经反复，最终以控制台为准应为 `stars-page`（与 OSS Bucket `stars-page-demo` 前缀一致）。早期曾误记为 `stars-page-demo`，中途又一度误用带 t 的 `starts-page`，现统一更正为 `stars-page`，正式使用应用仓库 `stars-page/stars-page`。
+> 个人版注意：自 2026-02-01 起个人版按地域隔离，跨地域无法访问，就近使用华南 3（广州）。
+
+当前服务器已完成 ACR 登录。镜像构建、推送与「无 ACR 登录时的登录/降级」流程见 `code/frontend/README.md`。
 
 ### RDS
 

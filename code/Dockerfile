@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 
-# 当前仓库尚未初始化应用代码。
-# 后续采用 Next.js/Node.js 时，可用本文件作为生产镜像模板：
-#   docker build -f code/Dockerfile -t star-page:latest .
+# 通用 Next.js/Node.js 生产镜像模板（保留作参考）。
+# 实际前端镜像构建使用 code/frontend/Dockerfile，并通过 docker-compose（context: ./frontend）编排。
+# 基础镜像默认指向阿里云 ACR 预存的 node 镜像；无 ACR 登录环境先询问用户登录，
+# 用户选择不登录降级时再回退 Docker Hub：--build-arg NODE_IMAGE=node:22-bookworm-slim
+ARG NODE_IMAGE=crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com/stars-page/node:22-bookworm-slim
 
-FROM node:22-bookworm-slim AS deps
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
@@ -15,7 +17,7 @@ RUN \
   else npm install; \
   fi
 
-FROM node:22-bookworm-slim AS builder
+FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -23,7 +25,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runner
+FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

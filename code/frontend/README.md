@@ -130,3 +130,51 @@ journalctl -u star-page-frontend.service -f
 ```
 
 重要教训：不要在服务运行中只执行 `npm run build` 后就结束。`next build` 会重新生成 `.next/standalone`，可能清掉运行目录里的 `.next/standalone/.next/static`；此时 HTML 还能返回，但 `/_next/static/*.css` 会 500，页面会退化成裸 HTML。每次构建后必须重启 `star-page-frontend.service`，让 `ExecStartPre` 重新复制 `.next/static`，并用 CSS URL 验证返回 `200 text/css`。
+
+## Docker 镜像构建与推送
+
+镜像推送到阿里云 ACR（个人版，华南 3 广州）：
+
+- 应用镜像仓库：`crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com/stars-page/stars-page`
+- tag 约定：`frontend-<git 短 sha>` + `frontend-latest`
+- `.dockerignore` 已排除 `node_modules` / `.next`，保证镜像使用 `npm install` 干净安装的依赖（如新增的 `motion`），而不是本地 `node_modules`。
+
+### 基础镜像与「免加速」
+
+`Dockerfile` 的 `FROM` 由 `ARG NODE_IMAGE` 控制，**默认指向 ACR 上预存的基础镜像**
+`crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com/stars-page/node:22-bookworm-slim`，
+所以构建时直接从 ACR 拉 base，不经过 Docker Hub / 镜像加速器。
+
+> 背景：阿里云个人版镜像加速器只对已缓存镜像有效（缺 `node:22` 等较新 tag，拉取报 `not found`），
+> 因此把 `node:22-bookworm-slim` 预先上传到 ACR `stars-page/node` 仓库一劳永逸。
+> 若本机尚无该 base，可临时用全量回源型加速器（如 DaoCloud `docker.m.daocloud.io`）拉 Docker Hub 镜像。
+
+### 无 ACR 登录环境的处理（重要约定）
+
+默认构建需要先登录 ACR 才能拉到 base 镜像。在**无 ACR 登录**的环境构建时：
+
+1. **先询问用户是否登录 ACR**：
+   ```bash
+   docker login --username=<阿里云账号> crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com
+   ```
+2. 仅当**用户明确表示不登录、要求降级**时，才用构建参数回退到 Docker Hub：
+   ```bash
+   docker build --build-arg NODE_IMAGE=node:22-bookworm-slim -t <repo>:frontend-<sha> .
+   ```
+
+不要在未与用户确认的情况下擅自降级到 Docker Hub。
+
+### 构建与推送
+
+```bash
+cd code/frontend
+ACR=crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com/stars-page/stars-page
+SHA=$(git rev-parse --short HEAD)
+
+# 默认从 ACR 拉 base（需已登录 ACR）
+docker build -t "$ACR:frontend-$SHA" -t "$ACR:frontend-latest" .
+docker push "$ACR:frontend-$SHA"
+docker push "$ACR:frontend-latest"
+```
+
+> 同 VPC 内的 ECS 推送可改用内网域名 `crpi-6w1a91eyh3y1vcd9-vpc.cn-guangzhou.personal.cr.aliyuncs.com` 提速、不耗公网流量。
