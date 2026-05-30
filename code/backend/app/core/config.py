@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -8,6 +10,8 @@ from typing import Any
 from dotenv import load_dotenv
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.services.llm.types import LlmModelConfig
 
 
 def _load_local_env_files() -> None:
@@ -74,6 +78,9 @@ class Settings(BaseSettings):
     object_storage_access_key_id: str = Field(default="", alias="OBJECT_STORAGE_ACCESS_KEY_ID")
     object_storage_access_key_secret: str = Field(default="", alias="OBJECT_STORAGE_ACCESS_KEY_SECRET")
     local_storage_dir: str = Field(default="data/generated-pages", alias="LOCAL_STORAGE_DIR")
+
+    llm_models_file: str = Field(default="config/llm.models.json", alias="LLM_MODELS_FILE")
+    llm_default_models: str | None = Field(default=None, alias="LLM_DEFAULT_MODELS")
 
     @computed_field
     @property
@@ -142,3 +149,125 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+@dataclass(frozen=True)
+class LlmModelRegistry:
+    """多模型目录：key -> 模型配置，外加默认勾选键。"""
+
+    models: dict[str, LlmModelConfig]
+    default_model_keys: list[str]
+
+    def get(self, key: str) -> LlmModelConfig | None:
+        return self.models.get(key)
+
+    def available_models(self) -> list[LlmModelConfig]:
+        return [model for model in self.models.values() if model.available]
+
+
+def _find_catalog_path(settings: Settings) -> Path | None:
+    raw = settings.llm_models_file
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+
+    cwd = Path.cwd()
+    for base in [cwd, *cwd.parents]:
+        path = base / raw
+        if path.exists():
+            return path
+        fallback = base / "config" / "llm.models.json"
+        if fallback.exists():
+            return fallback
+    return None
+
+
+def _resolve_api_key(entry: dict[str, Any]) -> str:
+    for env_name in (entry.get("api_key_env"), entry.get("api_key_fallback_env")):
+        if not env_name:
+            continue
+        value = (os.environ.get(env_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _resolve_params(defaults: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    merged = {**(defaults or {}), **(entry.get("params") or {})}
+    omit = set(entry.get("omit") or [])
+    # 值为 None 表示显式不发该字段；omit 批量丢弃。
+    return {key: value for key, value in merged.items() if value is not None and key not in omit}
+
+
+def _legacy_registry(settings: Settings) -> LlmModelRegistry:
+    """无模型目录文件时，用旧 LLM_* 单模型配置合成一条，保证现有部署可用。"""
+    key = settings.llm_provider or "default"
+    params = {"temperature": settings.llm_temperature, "max_tokens": settings.llm_max_tokens}
+    config = LlmModelConfig(
+        key=key,
+        label=key,
+        provider=settings.llm_provider,
+        protocol=settings.llm_protocol,
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        params={k: v for k, v in params.items() if v is not None},
+        extra_body=dict(settings.llm_extra_body),
+        available=bool(settings.llm_model and settings.llm_api_key),
+    )
+    return LlmModelRegistry(models={key: config}, default_model_keys=[key])
+
+
+@lru_cache(maxsize=1)
+def get_model_registry() -> LlmModelRegistry:
+    settings = get_settings()
+    catalog_path = _find_catalog_path(settings)
+    if catalog_path is None:
+        return _legacy_registry(settings)
+
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    defaults: dict[str, Any] = catalog.get("defaults") or {}
+
+    models: dict[str, LlmModelConfig] = {}
+    for entry in catalog.get("models") or []:
+        key = entry.get("key")
+        if not key:
+            continue
+        api_key = _resolve_api_key(entry)
+        models[key] = LlmModelConfig(
+            key=key,
+            label=entry.get("label") or key,
+            provider=entry.get("provider") or key,
+            protocol=entry.get("protocol") or "openai",
+            base_url=(entry.get("base_url") or "").rstrip("/"),
+            model=entry.get("model") or "",
+            api_key=api_key,
+            params=_resolve_params(defaults, entry),
+            extra_body=dict(entry.get("extra_body") or {}),
+            available=bool(api_key and entry.get("model")),
+        )
+
+    if not models:
+        return _legacy_registry(settings)
+
+    default_keys = _resolve_default_keys(settings, catalog, models)
+    return LlmModelRegistry(models=models, default_model_keys=default_keys)
+
+
+def _resolve_default_keys(settings: Settings, catalog: dict[str, Any], models: dict[str, LlmModelConfig]) -> list[str]:
+    # 优先 env 覆盖，其次目录 default_models，最后回退到首个可用模型。
+    raw = settings.llm_default_models
+    keys: list[str] = []
+    if raw:
+        keys = [item.strip() for item in raw.split(",") if item.strip()]
+    if not keys:
+        keys = [str(item) for item in (catalog.get("default_models") or [])]
+
+    valid = [key for key in keys if key in models]
+    if valid:
+        return valid
+
+    available = [model.key for model in models.values() if model.available]
+    if available:
+        return [available[0]]
+    return [next(iter(models))]

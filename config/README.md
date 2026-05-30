@@ -57,40 +57,26 @@
 - LLM 真实配置建议放在 `config/llm.env`，模板文件为 `config/llm.env.example`；也可以统一放入 `config/.env`，不要提交真实 API Key。
 - `config/env.example` 只能保留变量名和非敏感默认值，不要写入 AccessKey、数据库密码、AI Key、Session Secret 等真实密钥。
 
-## LLM 模型请求
+## LLM 多模型配置
 
-LLM 请求层位于 `code/llm/`，业务代码通过统一 `LlmClient` 调用模型。
+当前支持"多模型并行生成"，配置分三层落点，做到"加模型 / 调参数互不污染、密钥不进 Git"：
 
-当前支持两类主流协议：
+- 模型目录（非密钥，可提交可 review）：`config/llm.models.json`，描述 `defaults`（全局兜底参数）、`default_models`（默认勾选）、`models[]`（每模型 `key/label/provider/protocol/base_url/model/api_key_env/params/extra_body`）。
+- 密钥与基建参数（敏感/运维，gitignored）：`config/llm.env`，只放各模型 API Key 与 `LLM_TIMEOUT_MS`/`LLM_RETRY_*`。模板见 `config/llm.env.example`（只保留变量名）。
 
-- `openai`：OpenAI Chat Completions 兼容格式。
-- `anthropic`：Anthropic Messages 兼容格式。
-
-推荐环境变量：
+各模型密钥变量名由目录里的 `api_key_env` 指定，例如：
 
 ```text
-LLM_PROVIDER=
-LLM_PROTOCOL=
-LLM_BASE_URL=
-LLM_MODEL=
-LLM_API_KEY=
-LLM_TIMEOUT_MS=60000
-LLM_ANTHROPIC_VERSION=2023-06-01
-LLM_ENABLE_THINKING=
-LLM_OPENAI_EXTRA_BODY_JSON=
+QWEN_API_KEY=   # 阿里云百炼 / DashScope（qwen）
+ARK_API_KEY=    # 火山方舟（doubao）
+LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时 qwen 回退到它
 ```
 
-后续接入新模型时，优先通过 `LLM_PROTOCOL` 判断其兼容 OpenAI 还是 Anthropic 格式；只有协议差异较大时再新增适配器。
+参数三层覆盖（就近优先）：`有效参数 = {...defaults, ...model.params}`，再合并 `extra_body`（厂商专有，如 qwen `enable_thinking`、doubao `reasoning_effort`）。`params` 值置 `null` 表示显式不发该字段（doubao 系统固定 temperature/top_p 并忽略传入）。
 
-阿里云百炼 Qwen 配置示例见 `config/llm.env.example`。DashScope / 百炼 API Key 写在真实的 `config/llm.env` 中：
+密钥从 `api_key_env` 解析，缺失的模型自动不可用（前端多选里不出现，不崩）。协议当前后端支持 OpenAI-compatible；qwen 与 doubao 均按此接入，流式响应中可收到 `reasoning_content` 和正式回复内容。
 
-```text
-LLM_API_KEY=
-```
-
-Qwen 的深度思考开关通过 `LLM_ENABLE_THINKING=true` 配置，底层会作为 `enable_thinking` 合并到 OpenAI-compatible 请求体。
-
-当前服务器已通过 `config/llm.env` 成功调用 Qwen 百炼接口，流式响应中可收到 `reasoning_content` 和正式回复内容。
+可选：`LLM_DEFAULT_MODELS=qwen,doubao` 覆盖默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
 
 ## 阿里云 OSS
 

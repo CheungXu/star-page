@@ -17,10 +17,14 @@ code/
 
 `code/backend/` 使用 FastAPI 实现主业务流程：
 
-- `POST /api/generations` 创建页面生成任务，支持用户输入和上传文件一起生成页面。
-- `GET /api/generations/{task_id}/events` 通过 SSE 推送生成过程。
+- `POST /api/generations` 创建一轮生成（批次）：支持 `models` 多选并行、上传文件、以及 `conversation_id`+`base_page_id` 续写；每个模型一个独立 `Page` 节点，返回 `conversation_id/batch_id/runs[]`。
+- `GET /api/generations/{task_id}/events` 通过 SSE 推送单个模型 run 的生成过程（前端为每个 run 开一路）。
+- `GET /api/models` 返回模型目录（key/label/是否默认/是否可用），供前端动态渲染多选。
+- `GET /api/conversations`、`GET /api/conversations/{id}` 会话列表（按会话一条）与会话树（批次 + 各模型节点），用于历史与恢复。
 - `GET /api/pages/{page_id}` 查询页面元数据。
 - `GET /p/{page_id}` 作为页面访问网关，从私有 OSS 读取 HTML 并返回。
+
+多模型生成采用"会话(生成树) → 批次(一轮) → 节点(每模型一个独立可分享 Page)"结构，详见 `wiki/multi-model-generation-tree.md`；模型走"可提交模型目录 `config/llm.models.json` + 仅密钥 env + 参数三层覆盖"，详见 `wiki/llm-provider-abstraction.md`。
 
 进入开发前需要先执行数据库迁移：
 
@@ -35,10 +39,11 @@ python -m app.db.migrate
 
 当前前端体验：
 
-- 未开始生成时，首页展示贴边可折叠 tabbar 和 Gemini 风格的居中输入框。
-- 开始生成后，保留贴边可折叠 tabbar，主区域切换为左侧 LLM 对话流、右侧页面预览的 1:1 双栏。
-- 左侧展示用户需求、上传文件名和创建节点；文件较长时会先压缩为页面生成简报。模型思考作为一个默认展开的节点展示，可手动收起。
-- 右侧用固定 `1200px` 桌面视口宽度渲染生成页，再缩放到预览区域；高度按预览区域反算，避免生成页 `100vh` 被整页高度撑大。
+- 未开始生成时，首页展示贴边可折叠 tabbar 和 Gemini 风格的居中输入框；输入卡下方可多选并行模型（默认勾选项来自 `GET /api/models`）。
+- 开始生成后，主区域切换为左侧 LLM 对话流、右侧页面预览；单模型为 1:1 双栏，多模型对比时会话栏收窄、预览栏加宽。
+- 左侧展示用户需求、上传文件名和创建节点；多模型时用"本轮模型" tab 切换查看各模型的思考与创建节点。模型思考默认展开、可手动收起。
+- 右侧并排对比各模型结果，每个结果是一个"浏览器视窗"单元（固定 `1200px` 视口按单元宽度缩放），支持单元"聚焦"放大、独立打开/复制链接、以及"以此结果继续"续写；高度按单元反算，避免生成页 `100vh` 被整页高度撑大。
+- 每个模型 run 单独一路 SSE，先完成的先展示；历史与会话恢复基于 `GET /api/conversations`。
 - 复制链接支持 HTTP 环境下的降级复制，成功后按钮变绿并显示“复制成功”。
 - 历史创建从后端数据库读取，当前按默认测试用户查询页面历史；浏览器 `localStorage` 仅保留当前设备的会话细节。
 

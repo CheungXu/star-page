@@ -8,15 +8,16 @@ from json import JSONDecodeError
 import httpx
 
 from app.core.config import Settings
-from app.services.llm.types import LlmMessage, LlmStreamChunk, LlmUsage
+from app.services.llm.types import LlmMessage, LlmModelConfig, LlmStreamChunk, LlmUsage
 
 RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 class OpenAICompatibleClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, model: LlmModelConfig, settings: Settings) -> None:
+        self.model = model
         self.settings = settings
-        self.base_url = settings.llm_base_url.rstrip("/")
+        self.base_url = model.base_url.rstrip("/")
 
     async def stream_text(self, messages: list[LlmMessage]) -> AsyncIterator[LlmStreamChunk]:
         attempts = self._retry_attempts()
@@ -62,17 +63,17 @@ class OpenAICompatibleClient:
 
     async def _stream_text_once(self, messages: list[LlmMessage]) -> AsyncIterator[LlmStreamChunk]:
         body = {
-            "model": self.settings.llm_model,
+            "model": self.model.model,
             "messages": [{"role": message.role, "content": message.content} for message in messages],
-            "temperature": self.settings.llm_temperature,
-            "max_tokens": self.settings.llm_max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
-            **self.settings.llm_extra_body,
+            # 参数三层覆盖：defaults+params 已 resolved（仅非 None），extra_body 厂商专有最后合并。
+            **self.model.params,
+            **self.model.extra_body,
         }
 
         headers = {
-            "Authorization": f"Bearer {self.settings.llm_api_key}",
+            "Authorization": f"Bearer {self.model.api_key}",
             "Content-Type": "application/json",
         }
 
@@ -95,14 +96,14 @@ class OpenAICompatibleClient:
                         continue
 
                     raw_chunk = json.loads(payload)
-                    model = raw_chunk.get("model") or self.settings.llm_model
+                    model = raw_chunk.get("model") or self.model.model
                     delta = (raw_chunk.get("choices") or [{}])[0].get("delta") or {}
 
                     reasoning_text = delta.get("reasoning_content")
                     if reasoning_text:
                         yield LlmStreamChunk(
                             type="reasoning_delta",
-                            provider=self.settings.llm_provider,
+                            provider=self.model.provider,
                             model=model,
                             reasoning_text=reasoning_text,
                             raw_chunk=raw_chunk,
@@ -112,7 +113,7 @@ class OpenAICompatibleClient:
                     if text:
                         yield LlmStreamChunk(
                             type="text_delta",
-                            provider=self.settings.llm_provider,
+                            provider=self.model.provider,
                             model=model,
                             text=text,
                             raw_chunk=raw_chunk,
@@ -122,7 +123,7 @@ class OpenAICompatibleClient:
                     if usage:
                         yield LlmStreamChunk(
                             type="done",
-                            provider=self.settings.llm_provider,
+                            provider=self.model.provider,
                             model=model,
                             usage=LlmUsage(
                                 input_tokens=usage.get("prompt_tokens"),
@@ -134,8 +135,8 @@ class OpenAICompatibleClient:
 
         yield LlmStreamChunk(
             type="done",
-            provider=self.settings.llm_provider,
-            model=self.settings.llm_model,
+            provider=self.model.provider,
+            model=self.model.model,
         )
 
     def _retry_attempts(self) -> int:

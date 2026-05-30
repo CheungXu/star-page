@@ -20,6 +20,8 @@
 - `20260529/frontend-transition-animation-plan.md`：首页 ↔ 生成页衔接过渡动画的规划与实施记录。三套方案（纯 CSS / View Transitions / motion）多端口原型对比选型；先集成三级降级链，后因可维护性简化为「motion + 兜底直切」主线（完整三级版留档在 `full-animation-mode` 分支），在生产 `page.tsx`/`globals.css` 三处切换入口集成并验证。
 - `20260529/frontend-docker-image-build-and-acr.md`：前端 Docker 镜像构建与 ACR 发布记录。`motion` 依赖经 `npm install` 自动进镜像、补 `.dockerignore`；个人版镜像加速器缺 `node:22` 改用 DaoCloud 拉取并预存基础镜像到 `stars-page/node`；Dockerfile 用 `ARG` 默认走 ACR、可降级 Docker Hub；ACR 命名最终更正为 `stars-page`，镜像清单与 tag 约定。
 - `20260531/upload-pdf-and-backend-image-record.md`：上传资料支持最多 3 个文件与 PDF 文本抽取的实施记录；包含“点击生成时再上传”的取舍、`markitdown[pdf]` 新依赖、后端 Dockerfile 使用阿里云 PyPI 源、`backend-7d58e50-pdf` / `backend-latest` 镜像推送、Next standalone CSS 静态资源恢复和后端重启加载新白名单等问题处理。
+- `20260531/multi-model-parallel-generation-plan.md`：多模型并行生成实施计划（Scheme A：会话=生成树、Node=Page、合并另起新会话）。新对话多选模型并行生成、预览并排对比、支持从节点多轮续写，合并预留 schema；模型走"可提交模型目录 + 三层参数覆盖（defaults/params/extra_body）+ 密钥缺失自动不可选"的配置规划。
+- `20260531/multi-model-parallel-generation-implementation-record.md`：上述规划的实施记录。含已交付能力、与规划的增量决策（续写两种语义=并行续写/分支、续写改为"指令全带+只裁最近一版答案"的内容感知、max_tokens 上调到 65536）、过程中发现并修复的 4 个问题（状态词撞类名、并行续写血缘、中等宽度布局塌陷、侧栏历史项被网格拉伸）、线上验证与当前限制。
 
 ## 使用约定
 

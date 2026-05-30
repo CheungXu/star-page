@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes_conversations import router as conversations_router
 from app.api.routes_generation import router as generation_router
 from app.api.routes_pages import router as pages_router
 from app.core.config import get_settings
@@ -20,6 +21,7 @@ app.add_middleware(
 )
 
 app.include_router(generation_router)
+app.include_router(conversations_router)
 app.include_router(pages_router)
 
 

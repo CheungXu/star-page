@@ -31,7 +31,24 @@ class User(Base, TimestampMixin):
     email_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
 
 
+class Conversation(Base, TimestampMixin):
+    """会话 = 一棵生成树。会话内"续写"永远单父，保证是严格的树。"""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), default="new", nullable=False)
+    root_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    owner: Mapped[User] = relationship("User")
+
+
 class Page(Base, TimestampMixin):
+    """页面 = 生成树中的一个节点（某个模型的一个结果），拥有独立可分享链接。"""
+
     __tablename__ = "pages"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -41,6 +58,17 @@ class Page(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="generating", nullable=False)
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    parent_page_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True
+    )
+    model_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     owner: Mapped[User] = relationship("User")
 
@@ -56,6 +84,8 @@ class PageVersion(Base):
     status: Mapped[str] = mapped_column(String(32), default="ready", nullable=False)
     model_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -75,12 +105,44 @@ class PagePermission(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class GenerationBatch(Base):
+    """批次 = 一轮生成。持有该轮共享数据与树关系（基点/类型/合并来源/选中模型）。"""
+
+    __tablename__ = "generation_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    base_page_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pages.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), default="create", nullable=False)
+    source_page_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    selected_models: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    user_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_file_names: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    extracted_file_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class GenerationTask(Base):
     __tablename__ = "generation_tasks"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pages.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("generation_batches.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     requested_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    model_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     user_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_file_names: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)

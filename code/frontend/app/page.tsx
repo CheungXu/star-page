@@ -1,16 +1,33 @@
 "use client";
 
-import type { ChangeEvent, FormEvent, ReactNode, SyntheticEvent } from "react";
+import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
 
+type ModelInfo = {
+  key: string;
+  label: string;
+  provider: string;
+  is_default: boolean;
+  available: boolean;
+};
+
 type CreateGenerationResponse = {
+  conversation_id: string;
+  batch_id: string;
+  kind: string;
+  runs: GenerationRunResponse[];
+};
+
+type GenerationRunResponse = {
   task_id: string;
   page_id: string;
-  status: string;
+  model_key: string;
+  model_label: string;
   page_url: string;
+  status: string;
 };
 
 type SsePayload = {
@@ -19,6 +36,7 @@ type SsePayload = {
   page_id?: string;
   url?: string;
   message?: string;
+  model_key?: string;
   step?: ProgressStepId;
   status?: ProgressStepStatus;
   output_tokens?: number;
@@ -45,46 +63,87 @@ type ProgressStep = {
   tokenSource?: "actual" | "estimated";
 };
 
-type StoredSession = {
-  id: string;
-  taskId?: string;
-  pageId?: string;
-  prompt: string;
-  fileNames: string[];
+/* 单个模型 run 的前端状态：每个模型一份独立的思考/进度/预览。 */
+type RunState = {
+  taskId: string;
+  pageId: string;
+  modelKey: string;
+  modelLabel: string;
   status: GenerationStatus;
   reasoning: string;
   statusText: string;
   pageUrl: string;
   errorMessage: string;
   progressSteps: ProgressStep[];
+};
+
+type StoredSession = {
+  conversationId: string;
+  batchId: string;
+  title: string;
+  prompt: string;
+  fileNames: string[];
+  selectedModelKeys: string[];
+  runs: RunState[];
+  roundIndex: number;
+  basePageId?: string;
+  baseModelLabel?: string;
   createdAt: string;
   updatedAt: string;
 };
 
 type HistoryItem = {
   id: string;
-  taskId?: string;
-  pageId?: string;
   title: string;
-  prompt: string;
-  fileNames: string[];
-  pageUrl: string;
+  modelKeys: string[];
+  nodeCount: number;
   status: GenerationStatus;
-  createdAt: string;
   updatedAt: string;
 };
 
-type PageHistoryResponseItem = {
+type ConversationListResponseItem = {
   id: string;
-  task_id?: string | null;
   title: string;
-  prompt: string;
-  file_names: string[];
-  page_url: string;
-  page_status: string;
-  generation_status?: string | null;
+  origin: string;
+  model_keys: string[];
+  node_count: number;
+  latest_batch_status?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type ConversationNodeResponse = {
+  page_id: string;
+  task_id?: string | null;
+  model_key?: string | null;
+  model_label?: string | null;
+  model_name?: string | null;
+  parent_page_id?: string | null;
+  page_status: string;
+  generation_status?: string | null;
+  page_url: string;
+};
+
+type ConversationBatchResponse = {
+  batch_id: string;
+  kind: string;
+  base_page_id?: string | null;
+  selected_models: string[];
+  status: string;
+  prompt: string;
+  user_prompt?: string | null;
+  file_names: string[];
+  created_at: string;
+  nodes: ConversationNodeResponse[];
+};
+
+type ConversationDetailResponse = {
+  id: string;
+  title: string;
+  origin: string;
+  created_at: string;
+  updated_at: string;
+  batches: ConversationBatchResponse[];
 };
 
 const PROGRESS_STEP_META: Record<ProgressStepId, Pick<ProgressStep, "title" | "description">> = {
@@ -134,7 +193,7 @@ function createProgressStep(id: ProgressStepId, status: ProgressStepStatus = "pe
 
 function createInitialProgressSteps(hasFile = false): ProgressStep[] {
   return [
-    ...(hasFile ? [createProgressStep("upload_file", "running"), createProgressStep("parse_file"), createProgressStep("compress_document")] : []),
+    ...(hasFile ? [createProgressStep("upload_file", "completed"), createProgressStep("parse_file"), createProgressStep("compress_document")] : []),
     createProgressStep("model_thinking"),
     createProgressStep("model_output"),
     createProgressStep("deploy"),
@@ -144,6 +203,7 @@ function createInitialProgressSteps(hasFile = false): ProgressStep[] {
 const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
+const SELECTED_MODELS_KEY = "star-page-selected-models";
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 3;
@@ -208,6 +268,18 @@ const BoltIcon = () => (
   </svg>
 );
 
+/* 分支：从某个结果"继续生成"，呼应生成树的分支语义 */
+const BranchIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="6" cy="6" r="2.4" />
+    <circle cx="6" cy="18" r="2.4" />
+    <circle cx="18" cy="9" r="2.4" />
+    <path d="M6 8.4v7.2" />
+    <path d="M18 11.4c0 3-3 3.6-6 3.6" />
+    <path d="M15.8 7l2.2 2 2.2-2" transform="translate(-2.2 -1)" />
+  </svg>
+);
+
 /* Chip 用 emoji：面向年轻白领与学生群体，emoji 比单色线性图标更活泼亲切 */
 type PromptPreset = { id: string; emoji: string; label: string; prompt: string };
 
@@ -240,11 +312,7 @@ const PROMPT_PRESETS: PromptPreset[] = [
 
 /* ==========================================================================
    首页 ↔ 生成页 衔接过渡（motion 单方案 + 兜底直接切换）
-   ------------------------------------------------------------------------
-   用 motion 库做命令式编排：FLIP 输入卡飞行 + 文字上浮成气泡 + 内容 stagger 入场。
-   兜底：prefers-reduced-motion 或 motion 库加载失败 → 直接切换（不报错）。
-   曾评估并放弃的 View Transitions / 纯 CSS 两级降级见
-   wiki/frontend-home-workspace-transition.md；完整三级版留档在 full-animation-mode 分支。
+   见 wiki/frontend-home-workspace-transition.md。
    ========================================================================== */
 type MotionLib = {
   animate: (
@@ -256,15 +324,11 @@ type MotionLib = {
 
 const TRANSITION_EASE = [0.22, 1, 0.36, 1] as const;
 
-/* 过渡依赖的 DOM「契约」——集中在此，便于未来改页面时同步维护。
-   这些选择器 / 标记是 motion 抓取共享元素与入场目标的唯一依据；若重命名相关 class
-   或调整结构，请同步更新这里，否则过渡会「静默失效」（只是没有动画，不会报错、
-   不影响功能）。 */
 const TRANSITION_DOM = {
-  sharedCard: ".prompt-card", // FLIP 飞行的共享输入卡（首页大卡 ↔ 工作区底部 composer）
-  promptText: ".prompt-card textarea", // 文字「变气泡」动画的源文字（首页输入框）
-  bubbleTarget: ".user-message p", // 文字「变气泡」动画的落点（工作区需求气泡）
-  staggerItems: "[data-anim-stagger]", // 逐项 stagger 入场的内容（JSX 上用 data-anim-stagger 标记）
+  sharedCard: ".prompt-card",
+  promptText: ".prompt-card textarea",
+  bubbleTarget: ".user-message p",
+  staggerItems: "[data-anim-stagger]",
 } as const;
 
 function prefersReducedMotion(): boolean {
@@ -275,7 +339,6 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-/* 旧视图快照：克隆当前 <main> 覆盖全屏，用于 motion 离场淡出 */
 function createTransitionOverlay(oldMain: HTMLElement): HTMLElement {
   const overlay = oldMain.cloneNode(true) as HTMLElement;
   overlay.setAttribute("aria-hidden", "true");
@@ -287,11 +350,6 @@ function createTransitionOverlay(oldMain: HTMLElement): HTMLElement {
   return overlay;
 }
 
-/* 过渡总入口（C 方案：仅 motion + 兜底直接切换）。
-   mutate 内是会切换 status 的一批 setState；motion 路径用 flushSync 同步提交，
-   以便在切换前后测量、给输入卡做 FLIP。
-   兜底：reduced-motion 或 motion 库未就绪（动态 import 失败）→ 直接切换，
-   等同改造前的瞬切但不报错。 */
 function runStageTransition(
   stage: HTMLElement | null,
   motionLib: MotionLib | null,
@@ -305,7 +363,6 @@ function runStageTransition(
   motionStageTransition(stage, motionLib, mutate);
 }
 
-/* 主方案：motion 库命令式 FLIP / 编排 */
 function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate: () => void): void {
   const { animate } = motionLib;
   const oldMain = stage.firstElementChild as HTMLElement | null;
@@ -328,7 +385,6 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
   const lastCard = newCard?.getBoundingClientRect() ?? null;
   const bubble = newMain.querySelector(TRANSITION_DOM.bubbleTarget) as HTMLElement | null;
 
-  // 旧视图淡出上移
   if (overlay) {
     const removeOverlay = () => overlay.remove();
     animate(
@@ -338,10 +394,8 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
     ).finished.then(removeOverlay, removeOverlay);
   }
 
-  // 新视图整体淡入
   animate(newMain, { opacity: [0, 1] }, { duration: 0.36, delay: 0.05 });
 
-  // 输入卡 FLIP：从旧位置飞到新位置
   if (firstCard && newCard && lastCard) {
     const dx = firstCard.left - lastCard.left;
     const dy = firstCard.top - lastCard.top;
@@ -363,7 +417,6 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
     ).finished.then(clearOrigin, clearOrigin);
   }
 
-  // 输入文字上浮“变成”需求气泡（仅 首页 → 生成 方向）
   if (fromIdle && floatText && firstText && bubble) {
     const lastText = bubble.getBoundingClientRect();
     const clone = document.createElement("div");
@@ -396,7 +449,6 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
     ).finished.then(cleanupClone, cleanupClone);
   }
 
-  // 新内容逐项 stagger 入场
   const items = Array.from(newMain.querySelectorAll<HTMLElement>(TRANSITION_DOM.staggerItems));
   items.forEach((element, index) => {
     animate(
@@ -407,64 +459,222 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
   });
 }
 
-export default function HomePage() {
-  const [prompt, setPrompt] = useState("");
-  const [currentSessionId, setCurrentSessionId] = useState("");
-  const [currentTaskId, setCurrentTaskId] = useState("");
-  const [currentPageId, setCurrentPageId] = useState("");
-  const [submittedPrompt, setSubmittedPrompt] = useState("");
-  const [submittedFileNames, setSubmittedFileNames] = useState<string[]>([]);
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [fileError, setFileError] = useState("");
-  const [status, setStatus] = useState<GenerationStatus>("idle");
-  const [reasoning, setReasoning] = useState("");
-  const [statusText, setStatusText] = useState("描述你想创建的页面");
-  const [pageUrl, setPageUrl] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [copyFeedback, setCopyFeedback] = useState("");
-  const [thinkingExpanded, setThinkingExpanded] = useState(true);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
-  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
-  const [previewMetrics, setPreviewMetrics] = useState({
+/* ==========================================================================
+   预览单元：每个模型结果一个"浏览器视窗"，自管缩放（固定 1200px 视口 → 按单元宽度 scale）。
+   ========================================================================== */
+function PreviewCell({
+  run,
+  multi,
+  focused,
+  onToggleFocus,
+  onContinue,
+  canContinue,
+}: {
+  run: RunState;
+  multi: boolean;
+  focused: boolean;
+  onToggleFocus: () => void;
+  onContinue: () => void;
+  canContinue: boolean;
+}) {
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [metrics, setMetrics] = useState({
     viewportWidth: PREVIEW_VIEWPORT_WIDTH,
     contentHeight: PREVIEW_DEFAULT_HEIGHT,
     scale: 0.5,
   });
-  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>(createInitialProgressSteps);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState("");
+
+  const absoluteUrl = useMemo(() => toAbsoluteUrl(run.pageUrl), [run.pageUrl]);
+
+  function recomputeMetrics() {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const availableWidth = Math.max(stage.clientWidth - 28, 280);
+    const scale = Math.min(1, availableWidth / PREVIEW_VIEWPORT_WIDTH);
+    const availableHeight = Math.max(stage.clientHeight - 28, PREVIEW_DEFAULT_HEIGHT * scale);
+    const contentHeight = Math.max(PREVIEW_DEFAULT_HEIGHT, Math.round(availableHeight / scale));
+    setMetrics({ viewportWidth: PREVIEW_VIEWPORT_WIDTH, contentHeight, scale });
+  }
+
+  useEffect(() => {
+    if (run.status !== "completed") return;
+
+    const handleResize = () => recomputeMetrics();
+    window.addEventListener("resize", handleResize);
+    const timer = window.setTimeout(handleResize, 0);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      window.clearTimeout(timer);
+    };
+  }, [run.status, absoluteUrl, focused]);
+
+  function handlePreviewLoad() {
+    recomputeMetrics();
+  }
+
+  async function copyUrl() {
+    if (!absoluteUrl) return;
+    try {
+      await copyTextToClipboard(absoluteUrl);
+      setCopied(true);
+      setCopyFeedback("已复制链接");
+      window.setTimeout(() => {
+        setCopied(false);
+        setCopyFeedback("");
+      }, 1800);
+    } catch {
+      setCopied(false);
+      setCopyFeedback("复制失败，请手动复制");
+      window.setTimeout(() => setCopyFeedback(""), 2400);
+    }
+  }
+
+  const shellStyle = {
+    width: `${metrics.viewportWidth * metrics.scale}px`,
+    height: `${metrics.contentHeight * metrics.scale}px`,
+  };
+  const iframeStyle = {
+    width: `${metrics.viewportWidth}px`,
+    height: `${metrics.contentHeight}px`,
+    transform: `scale(${metrics.scale})`,
+  };
+
+  const statusLabel =
+    run.status === "completed" ? "已生成" : run.status === "failed" ? "生成失败" : run.status === "creating" ? "创建中" : "思考中";
+
+  return (
+    <article className={`preview-cell ${focused ? "is-focused" : ""}`}>
+      <header className="preview-cell-head">
+        <span
+          className={`dot ${run.status === "completed" ? "ready" : run.status === "failed" ? "failed" : "loading"}`}
+          aria-hidden="true"
+        />
+        <strong className="preview-cell-model" title={run.modelLabel}>{run.modelLabel}</strong>
+        <span className={`run-status-chip is-${run.status}`}>{statusLabel}</span>
+        {multi && (
+          <button className="cell-action focus-toggle" type="button" onClick={onToggleFocus}>
+            {focused ? "退出聚焦" : "聚焦"}
+          </button>
+        )}
+      </header>
+
+      {run.status === "completed" && absoluteUrl ? (
+        <>
+          <div className="preview-window">
+            <div className="preview-window-bar" aria-hidden="true">
+              <span className="win-dots">
+                <span className="win-dot win-dot-red" />
+                <span className="win-dot win-dot-amber" />
+                <span className="win-dot win-dot-green" />
+              </span>
+              <span className="preview-window-url">{absoluteUrl}</span>
+            </div>
+            <div className="preview-viewport" ref={stageRef}>
+              <div className="preview-scale-shell" style={shellStyle}>
+                <iframe
+                  ref={iframeRef}
+                  title={`${run.modelLabel} 生成页面预览`}
+                  src={absoluteUrl}
+                  onLoad={handlePreviewLoad}
+                  style={iframeStyle}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="link-actions">
+            <a href={absoluteUrl} target="_blank" rel="noreferrer">
+              打开页面
+            </a>
+            <button className={copied ? "copied" : ""} type="button" onClick={copyUrl}>
+              {copied ? "复制成功" : copyFeedback || "复制链接"}
+            </button>
+            {canContinue && (
+              <button className="continue-button" type="button" onClick={onContinue}>
+                <span className="button-icon" aria-hidden="true"><BranchIcon /></span>
+                以此结果继续
+              </button>
+            )}
+          </div>
+        </>
+      ) : run.status === "failed" ? (
+        <div className="preview-cell-error">
+          <p>{run.errorMessage || "页面生成失败，请稍后重试。"}</p>
+        </div>
+      ) : (
+        <div className="preview-empty">
+          <div className="preview-skeleton" aria-hidden="true">
+            <div className="skeleton-bar skeleton-topbar">
+              <span className="skeleton-chip" />
+              <span className="skeleton-chip" />
+              <span className="skeleton-chip" />
+            </div>
+            <div className="skeleton-hero">
+              <span className="skeleton-line skeleton-line-lg" />
+              <span className="skeleton-line skeleton-line-md" />
+              <span className="skeleton-line skeleton-line-sm" />
+            </div>
+            <div className="skeleton-cards">
+              <span className="skeleton-card" />
+              <span className="skeleton-card" />
+              <span className="skeleton-card" />
+            </div>
+          </div>
+          <p className="preview-cell-hint">{run.statusText || "正在生成…"}</p>
+        </div>
+      )}
+    </article>
+  );
+}
+
+export default function HomePage() {
+  const [prompt, setPrompt] = useState("");
+  const [phase, setPhase] = useState<"idle" | "active">("idle");
+  const [conversationId, setConversationId] = useState("");
+  const [batchId, setBatchId] = useState("");
+  const [submittedPrompt, setSubmittedPrompt] = useState("");
+  const [submittedFileNames, setSubmittedFileNames] = useState<string[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState("");
+  const [runs, setRuns] = useState<RunState[]>([]);
+  const [activeModelKey, setActiveModelKey] = useState("");
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  const [thinkingExpanded, setThinkingExpanded] = useState(true);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [selectedModelKeys, setSelectedModelKeys] = useState<string[]>([]);
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [continueBase, setContinueBase] = useState<{ pageId: string; modelLabel: string } | null>(null);
+
+  const eventSourcesRef = useRef<EventSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const previewStageRef = useRef<HTMLDivElement | null>(null);
-  const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const hasHydratedRef = useRef(false);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const motionRef = useRef<MotionLib | null>(null);
 
-  const absolutePageUrl = useMemo(() => {
-    if (!pageUrl) return "";
-    if (pageUrl.startsWith("http://") || pageUrl.startsWith("https://")) {
-      return pageUrl;
-    }
-    return `${window.location.origin}${pageUrl}`;
-  }, [pageUrl]);
-
   useEffect(() => {
     void loadHistory();
+    void loadModels();
 
     const session = readCurrentSession();
-    if (session) {
+    if (session && session.runs?.length) {
       applyStoredSession(session);
-      if ((session.status === "thinking" || session.status === "creating") && session.taskId) {
-        connectToEvents(session.taskId);
-      }
+      session.runs.forEach((run) => {
+        if ((run.status === "thinking" || run.status === "creating") && run.taskId) {
+          connectRun(run.taskId);
+        }
+      });
     }
 
     hasHydratedRef.current = true;
-    // 这里只在首屏恢复本地会话，避免重连逻辑随状态变化重复执行。
+    // 仅首屏恢复本地会话与模型列表。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 动态加载 motion（主过渡方案）；失败则保持为空，过渡时自动降级到 View Transitions / 纯 CSS
   useEffect(() => {
     let cancelled = false;
     import("motion")
@@ -481,57 +691,85 @@ export default function HomePage() {
     };
   }, []);
 
-  // 三处状态切换统一经此入口，套用「motion → View Transitions → 纯 CSS → 直接切换」降级链
   const playTransition = (mutate: () => void) => {
     runStageTransition(stageRef.current, motionRef.current, mutate);
   };
 
   useEffect(() => {
-    if (!hasHydratedRef.current || status === "idle" || !currentSessionId) return;
+    if (!hasHydratedRef.current || phase === "idle" || !conversationId) return;
 
     const now = new Date().toISOString();
     const session: StoredSession = {
-      id: currentSessionId,
-      taskId: currentTaskId || undefined,
-      pageId: currentPageId || undefined,
+      conversationId,
+      batchId,
+      title: buildHistoryTitle(submittedPrompt),
       prompt: submittedPrompt,
       fileNames: submittedFileNames,
-      status,
-      reasoning,
-      statusText,
-      pageUrl,
-      errorMessage,
-      progressSteps,
+      selectedModelKeys,
+      runs,
+      roundIndex,
+      basePageId: continueBase?.pageId,
+      baseModelLabel: continueBase?.modelLabel,
       createdAt: readCurrentSession()?.createdAt ?? now,
       updatedAt: now,
     };
-
     writeCurrentSession(session);
-  }, [
-    currentSessionId,
-    currentTaskId,
-    currentPageId,
-    errorMessage,
-    pageUrl,
-    progressSteps,
-    reasoning,
-    status,
-    statusText,
-    submittedFileNames,
-    submittedPrompt,
-  ]);
+  }, [phase, conversationId, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, roundIndex, continueBase]);
+
+  useEffect(() => {
+    return () => closeAllSources();
+  }, []);
 
   async function loadHistory(): Promise<void> {
     try {
-      const response = await fetch("/api/pages");
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response));
-      }
-      const data = (await response.json()) as PageHistoryResponseItem[];
-      setHistoryItems(data.map(mapPageHistoryItem));
+      const response = await fetch("/api/conversations");
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      const data = (await response.json()) as ConversationListResponseItem[];
+      setHistoryItems(data.map(mapConversationHistoryItem));
     } catch {
       setHistoryItems([]);
     }
+  }
+
+  async function loadModels(): Promise<void> {
+    try {
+      const response = await fetch("/api/models");
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      const data = (await response.json()) as ModelInfo[];
+      setAvailableModels(data);
+
+      const stored = readSelectedModels();
+      const availableKeys = new Set(data.filter((model) => model.available).map((model) => model.key));
+      const restored = (stored ?? []).filter((key) => availableKeys.has(key));
+      if (restored.length) {
+        setSelectedModelKeys(restored);
+        return;
+      }
+      const defaults = data.filter((model) => model.available && model.is_default).map((model) => model.key);
+      if (defaults.length) {
+        setSelectedModelKeys(defaults);
+        return;
+      }
+      const firstAvailable = data.find((model) => model.available);
+      if (firstAvailable) setSelectedModelKeys([firstAvailable.key]);
+    } catch {
+      setAvailableModels([]);
+    }
+  }
+
+  function closeAllSources() {
+    eventSourcesRef.current.forEach((source) => source.close());
+    eventSourcesRef.current = [];
+  }
+
+  function toggleModel(key: string) {
+    setSelectedModelKeys((current) => {
+      const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
+      const ordered = availableModels.filter((model) => next.includes(model.key)).map((model) => model.key);
+      const result = ordered.length ? ordered : current; // 至少保留一个
+      writeSelectedModels(result);
+      return result;
+    });
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -540,232 +778,304 @@ export default function HomePage() {
     const validationError = validateFiles(selectedFiles);
 
     if (!trimmedPrompt) {
-      setStatusText("先描述你想创建的页面");
       return;
     }
-
     if (validationError) {
       setFileError(validationError);
       return;
     }
-
-    if (status === "thinking" || status === "creating") {
+    if (selectedModelKeys.length === 0) {
+      setFileError("请至少选择一个模型");
+      return;
+    }
+    if (isGenerating) {
       return;
     }
 
+    // 在工作区里提交即"在本会话内续写"：
+    //  - 选中了某个结果节点(continueBase) -> 以该节点为基分支；
+    //  - 未选中 -> 每个模型各自接上自己上一轮结果，并行继续。
+    // 首页(idle)提交则新建会话。
+    const inConversation = phase === "active" && Boolean(conversationId);
     const fileNames = selectedFiles.map((file) => file.name);
-    eventSourceRef.current?.close();
-    const optimisticSessionId = createClientId();
-    const now = new Date().toISOString();
+    const hasFile = fileNames.length > 0;
+    closeAllSources();
+
+    const pendingRuns: RunState[] = selectedModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), hasFile));
+
     playTransition(() => {
-      setCurrentSessionId(optimisticSessionId);
-      setCurrentTaskId("");
-      setCurrentPageId("");
+      setPhase("active");
       setSubmittedPrompt(trimmedPrompt);
       setSubmittedFileNames(fileNames);
-      setStatus("thinking");
-      setReasoning("");
+      setRuns(pendingRuns);
+      setActiveModelKey(pendingRuns[0]?.modelKey ?? "");
+      setFocusedTaskId(null);
       setThinkingExpanded(true);
-      setPageUrl("");
-      setCopied(false);
-      setCopyFeedback("");
-      setPreviewMetrics({
-        viewportWidth: PREVIEW_VIEWPORT_WIDTH,
-        contentHeight: PREVIEW_DEFAULT_HEIGHT,
-        scale: 0.5,
-      });
-      setErrorMessage("");
       setFileError("");
-      setStatusText(selectedFiles.length ? "正在上传并解析文件..." : "正在提交你的需求...");
-      setProgressSteps(createInitialProgressSteps(fileNames.length > 0));
       setPrompt("");
-    });
-    writeCurrentSession({
-      id: optimisticSessionId,
-      prompt: trimmedPrompt,
-      fileNames,
-      status: "thinking",
-      reasoning: "",
-      statusText: selectedFiles.length ? "正在上传并解析文件..." : "正在提交你的需求...",
-      pageUrl: "",
-      errorMessage: "",
-      progressSteps: createInitialProgressSteps(fileNames.length > 0),
-      createdAt: now,
-      updatedAt: now,
     });
 
     try {
       const formData = new FormData();
       formData.append("prompt", trimmedPrompt);
       selectedFiles.forEach((file) => formData.append("files", file));
-
-      const response = await fetch("/api/generations", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response));
+      selectedModelKeys.forEach((key) => formData.append("models", key));
+      if (inConversation) {
+        formData.append("conversation_id", conversationId);
+        if (continueBase) formData.append("base_page_id", continueBase.pageId);
       }
+
+      const response = await fetch("/api/generations", { method: "POST", body: formData });
+      if (!response.ok) throw new Error(await readErrorMessage(response));
 
       const data = (await response.json()) as CreateGenerationResponse;
-      setCurrentSessionId(data.task_id);
-      setCurrentTaskId(data.task_id);
-      setCurrentPageId(data.page_id);
-      void loadHistory();
-      if (fileNames.length > 0) {
-        setProgressSteps((current) => updateProgressSteps(current, {
-          type: "progress",
-          step: "upload_file",
-          status: "completed",
-          text: "文件已上传到服务端",
-        }));
-      }
+      setConversationId(data.conversation_id);
+      setBatchId(data.batch_id);
+      if (inConversation) setRoundIndex((value) => value + 1);
+      setContinueBase(null);
       setSelectedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      connectToEvents(data.task_id);
+
+      const nextRuns = data.runs.map((run) => makeRunFromResponse(run, hasFile));
+      setRuns(nextRuns);
+      setActiveModelKey(nextRuns[0]?.modelKey ?? "");
+      void loadHistory();
+
+      nextRuns.forEach((run) => connectRun(run.taskId));
     } catch (error) {
-      setStatus("failed");
-      setErrorMessage(error instanceof Error ? error.message : "创建生成任务失败");
-      setStatusText("生成失败");
+      const message = error instanceof Error ? error.message : "创建生成任务失败";
+      setRuns((current) =>
+        current.map((run) => ({ ...run, status: "failed", statusText: "生成失败", errorMessage: message })),
+      );
     }
   }
 
-  function connectToEvents(taskId: string) {
-    eventSourceRef.current?.close();
+  function connectRun(taskId: string) {
     const source = new EventSource(`/api/generations/${taskId}/events`);
-    eventSourceRef.current = source;
+    eventSourcesRef.current.push(source);
+
+    const patch = (updater: (run: RunState) => RunState) => {
+      setRuns((current) => current.map((run) => (run.taskId === taskId ? updater(run) : run)));
+    };
 
     source.addEventListener("status", (event) => {
       const payload = parsePayload(event);
-      if (payload.text) setStatusText(payload.text);
+      if (payload.text) patch((run) => ({ ...run, statusText: payload.text ?? run.statusText }));
     });
 
     source.addEventListener("reasoning_delta", (event) => {
       const payload = parsePayload(event);
       if (payload.text) {
-        setReasoning((current) => current + payload.text);
-        setStatus("thinking");
-        setProgressSteps((current) => updateProgressSteps(current, {
-          type: "progress",
-          step: "model_thinking",
-          status: "running",
-          text: "模型正在展开思考",
+        patch((run) => ({
+          ...run,
+          status: "thinking",
+          reasoning: run.reasoning + payload.text,
+          progressSteps: updateProgressSteps(run.progressSteps, {
+            type: "progress",
+            step: "model_thinking",
+            status: "running",
+            text: "模型正在展开思考",
+          }),
         }));
       }
     });
 
     source.addEventListener("answer_started", () => {
-      setStatus("creating");
-      setStatusText("页面创建中...");
-      setProgressSteps((current) => updateProgressSteps(current, {
-        type: "progress",
-        step: "model_thinking",
-        status: "completed",
-        text: "模型思考完成",
+      patch((run) => ({
+        ...run,
+        status: "creating",
+        statusText: "页面创建中...",
+        progressSteps: updateProgressSteps(run.progressSteps, {
+          type: "progress",
+          step: "model_thinking",
+          status: "completed",
+          text: "模型思考完成",
+        }),
       }));
     });
 
     source.addEventListener("progress", (event) => {
       const payload = parsePayload(event);
       if (!payload.step || !payload.status) return;
-
-      setProgressSteps((current) => updateProgressSteps(current, payload));
+      patch((run) => ({ ...run, progressSteps: updateProgressSteps(run.progressSteps, payload) }));
     });
 
     source.addEventListener("completed", (event) => {
       const payload = parsePayload(event);
-      setStatus("completed");
-      setStatusText("页面已创建完成");
-      setPageUrl(payload.url ?? "");
-      if (payload.page_id) setCurrentPageId(payload.page_id);
-      void loadHistory();
-      setProgressSteps((current) =>
-        current.map((step) => ({
+      patch((run) => ({
+        ...run,
+        status: "completed",
+        statusText: "页面已创建完成",
+        pageUrl: payload.url ?? run.pageUrl,
+        pageId: payload.page_id ?? run.pageId,
+        progressSteps: run.progressSteps.map((step) => ({
           ...step,
           status: step.status === "pending" || step.status === "running" ? "completed" : step.status,
         })),
-      );
+      }));
+      void loadHistory();
       source.close();
     });
 
     source.addEventListener("failed", (event) => {
       const payload = parsePayload(event);
-      setStatus("failed");
-      setStatusText("生成失败");
-      setErrorMessage(payload.message ?? "页面生成失败，请稍后重试。");
-      setProgressSteps((current) =>
-        current.map((step) => (step.status === "running" ? { ...step, status: "failed" } : step)),
-      );
+      patch((run) => ({
+        ...run,
+        status: "failed",
+        statusText: "生成失败",
+        errorMessage: payload.message ?? "页面生成失败，请稍后重试。",
+        progressSteps: run.progressSteps.map((step) => (step.status === "running" ? { ...step, status: "failed" } : step)),
+      }));
       void loadHistory();
       source.close();
     });
 
     source.onerror = () => {
-      if (status !== "completed") {
-        setStatus("failed");
-        setStatusText("连接中断");
-        setErrorMessage("生成连接中断，请刷新后重试。");
-      }
+      patch((run) =>
+        run.status === "completed"
+          ? run
+          : { ...run, status: "failed", statusText: "连接中断", errorMessage: "生成连接中断，请刷新后重试。" },
+      );
       source.close();
     };
   }
 
   function startNewChat() {
-    eventSourceRef.current?.close();
+    closeAllSources();
     localStorage.removeItem(CURRENT_SESSION_KEY);
     if (fileInputRef.current) fileInputRef.current.value = "";
     playTransition(() => {
-      setCurrentSessionId("");
-      setCurrentTaskId("");
-      setCurrentPageId("");
+      setPhase("idle");
+      setConversationId("");
+      setBatchId("");
       setPrompt("");
       setSubmittedPrompt("");
       setSubmittedFileNames([]);
       setSelectedFiles([]);
       setFileError("");
-      setStatus("idle");
-      setReasoning("");
+      setRuns([]);
+      setActiveModelKey("");
+      setFocusedTaskId(null);
       setThinkingExpanded(true);
-      setStatusText("描述你想创建的页面");
-      setPageUrl("");
-      setErrorMessage("");
-      setCopied(false);
-      setCopyFeedback("");
-      setProgressSteps(createInitialProgressSteps());
-      setPreviewMetrics({
-        viewportWidth: PREVIEW_VIEWPORT_WIDTH,
-        contentHeight: PREVIEW_DEFAULT_HEIGHT,
-        scale: 0.5,
-      });
+      setRoundIndex(0);
+      setContinueBase(null);
     });
   }
 
-  function restoreHistoryItem(item: HistoryItem) {
-    const stored = readStoredSession(item.id);
-    eventSourceRef.current?.close();
-
-    if (stored) {
-      writeCurrentSession(stored);
-      playTransition(() => applyStoredSession(stored));
-
-      if ((stored.status === "thinking" || stored.status === "creating") && stored.taskId) {
-        connectToEvents(stored.taskId);
-      }
-      return;
-    }
-
-    const session = buildSessionFromHistoryItem(item);
-    writeCurrentSession(session);
-    playTransition(() => applyStoredSession(session));
-
-    if ((session.status === "thinking" || session.status === "creating") && session.taskId) {
-      connectToEvents(session.taskId);
+  async function restoreHistoryItem(item: HistoryItem) {
+    closeAllSources();
+    try {
+      const response = await fetch(`/api/conversations/${item.id}`);
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      const detail = (await response.json()) as ConversationDetailResponse;
+      const session = buildSessionFromDetail(detail);
+      writeCurrentSession(session);
+      playTransition(() => applyStoredSession(session));
+      session.runs.forEach((run) => {
+        if ((run.status === "thinking" || run.status === "creating") && run.taskId) {
+          connectRun(run.taskId);
+        }
+      });
+    } catch {
+      // 恢复失败时保持当前视图。
     }
   }
 
+  function applyStoredSession(session: StoredSession) {
+    setPhase("active");
+    setConversationId(session.conversationId);
+    setBatchId(session.batchId);
+    setSubmittedPrompt(session.prompt);
+    setSubmittedFileNames(session.fileNames ?? []);
+    setRuns(session.runs ?? []);
+    setActiveModelKey(session.runs?.[0]?.modelKey ?? "");
+    setFocusedTaskId(null);
+    setSelectedFiles([]);
+    setFileError("");
+    setPrompt("");
+    setThinkingExpanded(true);
+    setRoundIndex(session.roundIndex ?? 0);
+    setContinueBase(
+      session.basePageId ? { pageId: session.basePageId, modelLabel: session.baseModelLabel ?? "上一结果" } : null,
+    );
+    if (session.selectedModelKeys?.length) setSelectedModelKeys(session.selectedModelKeys);
+  }
+
+  function startContinueFrom(run: RunState) {
+    setContinueBase({ pageId: run.pageId, modelLabel: run.modelLabel });
+    setPrompt("");
+    window.requestAnimationFrame(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(".composer-wrap .prompt-card textarea");
+      textarea?.focus();
+    });
+  }
+
+  function handleFileChange(files: FileList | null) {
+    const nextFiles = Array.from(files ?? []);
+    const validationError = validateFiles(nextFiles);
+    setSelectedFiles(validationError ? [] : nextFiles);
+    setFileError(validationError);
+    if (validationError && fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function clearSelectedFiles() {
+    setSelectedFiles([]);
+    setFileError("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    setPrompt(event.target.value);
+    resizePromptTextarea(event.currentTarget);
+  }
+
+  function handlePresetClick(preset: PromptPreset) {
+    if (isGenerating) return;
+    setPrompt(preset.prompt);
+  }
+
+  const isGenerating = runs.some((run) => run.status === "thinking" || run.status === "creating");
+  const isLongPrompt = submittedPrompt.length > 260;
+  const overallStatus = computeOverallStatus(runs);
+  const isMulti = runs.length > 1;
+  const visibleRuns = focusedTaskId ? runs.filter((run) => run.taskId === focusedTaskId) : runs;
+  const activeRun = runs.find((run) => run.modelKey === activeModelKey) ?? runs[0] ?? null;
+  const previewGridStyle = {
+    gridTemplateColumns: focusedTaskId ? "1fr" : `repeat(${Math.min(Math.max(runs.length, 1), 2)}, minmax(0, 1fr))`,
+  };
+  const availableSelectableModels = availableModels.filter((model) => model.available);
+
+  function renderModelPicker() {
+    if (availableModels.length === 0) return null;
+    return (
+      <div className="model-picker" role="group" aria-label="选择生成模型" data-anim-stagger>
+        <span className="model-picker-label">并行模型</span>
+        <div className="model-picker-options">
+          {availableModels.map((model) => {
+            const active = selectedModelKeys.includes(model.key);
+            return (
+              <button
+                key={model.key}
+                type="button"
+                className={`model-option ${active ? "is-active" : ""}`}
+                onClick={() => model.available && toggleModel(model.key)}
+                disabled={!model.available || isGenerating}
+                aria-pressed={active}
+                title={model.available ? model.label : `${model.label}（未配置密钥，暂不可用）`}
+              >
+                <span className="model-check" aria-hidden="true">{active ? "✓" : ""}</span>
+                {model.label}
+                {!model.available && <span className="model-unavailable">未配置</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   function renderHistorySidebar() {
-    const isOnNewChat = status === "idle" && !currentSessionId;
+    const isOnNewChat = phase === "idle" && !conversationId;
     return (
       <nav className={`history-sidebar ${isSidebarCollapsed ? "collapsed" : ""}`} aria-label="历史创建">
         <button
@@ -820,14 +1130,17 @@ export default function HomePage() {
             ) : (
               historyItems.map((item) => (
                 <button
-                  className={`history-item ${item.id === currentSessionId ? "active" : ""}`}
+                  className={`history-item ${item.id === conversationId ? "active" : ""}`}
                   key={item.id}
                   type="button"
                   onClick={() => restoreHistoryItem(item)}
-                  aria-current={item.id === currentSessionId ? "page" : undefined}
+                  aria-current={item.id === conversationId ? "page" : undefined}
                 >
                   <span>{item.title}</span>
-                  <small>{formatHistoryTime(item.updatedAt)}</small>
+                  <small>
+                    {item.modelKeys.length > 1 ? `${item.modelKeys.length} 模型 · ` : ""}
+                    {formatHistoryTime(item.updatedAt)}
+                  </small>
                 </button>
               ))
             )}
@@ -837,131 +1150,23 @@ export default function HomePage() {
     );
   }
 
-  function applyStoredSession(session: StoredSession) {
-    setCurrentSessionId(session.id);
-    setCurrentTaskId(session.taskId ?? "");
-    setCurrentPageId(session.pageId ?? "");
-    setSubmittedPrompt(session.prompt);
-    setSubmittedFileNames(session.fileNames ?? []);
-    setPrompt("");
-    setSelectedFiles([]);
-    setFileError("");
-    setStatus(session.status);
-    setReasoning(session.reasoning);
-    setThinkingExpanded(true);
-    setStatusText(session.statusText);
-    setPageUrl(session.pageUrl);
-    setErrorMessage(session.errorMessage);
-    setProgressSteps(
-      session.progressSteps.length ? session.progressSteps : createInitialProgressSteps((session.fileNames ?? []).length > 0),
-    );
-    setCopied(false);
-    setCopyFeedback("");
-  }
-
-  function handleFileChange(files: FileList | null) {
-    const nextFiles = Array.from(files ?? []);
-    const validationError = validateFiles(nextFiles);
-
-    setSelectedFiles(validationError ? [] : nextFiles);
-    setFileError(validationError);
-    if (validationError && fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  }
-
-  function clearSelectedFiles() {
-    setSelectedFiles([]);
-    setFileError("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-
-  function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    setPrompt(event.target.value);
-    resizePromptTextarea(event.currentTarget);
-  }
-
-  async function copyPageUrl() {
-    if (!absolutePageUrl) return;
-
-    try {
-      await copyTextToClipboard(absolutePageUrl);
-      setCopied(true);
-      setCopyFeedback("已复制链接");
-      window.setTimeout(() => {
-        setCopied(false);
-        setCopyFeedback("");
-      }, 1800);
-    } catch {
-      setCopied(false);
-      setCopyFeedback("复制失败，请手动复制");
-      window.setTimeout(() => setCopyFeedback(""), 2400);
-    }
-  }
-
-  function handlePreviewLoad(event: SyntheticEvent<HTMLIFrameElement>) {
-    updatePreviewMetrics(event.currentTarget);
-  }
-
-  const isGenerating = status === "thinking" || status === "creating";
-  const isLongPrompt = submittedPrompt.length > 260;
-  const previewShellStyle = {
-    width: `${previewMetrics.viewportWidth * previewMetrics.scale}px`,
-    height: `${previewMetrics.contentHeight * previewMetrics.scale}px`,
-  };
-  const previewIframeStyle = {
-    width: `${previewMetrics.viewportWidth}px`,
-    height: `${previewMetrics.contentHeight}px`,
-    transform: `scale(${previewMetrics.scale})`,
-  };
-
-  useEffect(() => {
-    if (status !== "completed") return;
-
-    const handleResize = () => {
-      if (previewIframeRef.current) {
-        updatePreviewMetrics(previewIframeRef.current);
-      }
-    };
-
-    window.addEventListener("resize", handleResize);
-    window.setTimeout(handleResize, 0);
-
-    return () => window.removeEventListener("resize", handleResize);
-  }, [status, absolutePageUrl]);
-
-  function updatePreviewMetrics(iframe: HTMLIFrameElement) {
-    try {
-      const doc = iframe.contentDocument;
-      const stage = previewStageRef.current;
-      if (!doc || !stage) return;
-
-      const availableWidth = Math.max(stage.clientWidth - 28, 320);
-      const scale = Math.min(1, availableWidth / PREVIEW_VIEWPORT_WIDTH);
-      const availableHeight = Math.max(stage.clientHeight - 28, PREVIEW_DEFAULT_HEIGHT * scale);
-      const contentHeight = Math.max(PREVIEW_DEFAULT_HEIGHT, Math.round(availableHeight / scale));
-
-      setPreviewMetrics({
-        viewportWidth: PREVIEW_VIEWPORT_WIDTH,
-        contentHeight,
-        scale,
-      });
-    } catch {
-      setPreviewMetrics((current) => ({
-        ...current,
-        scale: Math.min(1, Math.max((previewStageRef.current?.clientWidth ?? 640) - 28, 320) / PREVIEW_VIEWPORT_WIDTH),
-      }));
-    }
-  }
-
-  function handlePresetClick(preset: PromptPreset) {
-    if (isGenerating) return;
-    setPrompt(preset.prompt);
-  }
-
   function renderPromptForm(compact = false) {
     return (
       <div className={`prompt-form-wrap ${compact ? "compact-wrap" : "hero-wrap"}`}>
+        {compact && continueBase && (
+          <div className="continue-indicator">
+            <span className="continue-indicator-icon" aria-hidden="true"><BranchIcon /></span>
+            基于「{continueBase.modelLabel}」结果分支继续
+            <button type="button" onClick={() => setContinueBase(null)} aria-label="取消继续">
+              <CloseIcon />
+            </button>
+          </div>
+        )}
+        {compact && !continueBase && runs.length > 0 && (
+          <div className="continue-hint">
+            发送将让 {runs.length} 个模型各自基于上一轮结果并行继续；如需以某个结果为基础，点其卡片上的「以此结果继续」。
+          </div>
+        )}
         <form className={`prompt-card ${compact ? "compact-prompt" : "hero-prompt"}`} onSubmit={handleSubmit}>
           <textarea
             value={prompt}
@@ -1003,7 +1208,7 @@ export default function HomePage() {
             <button
               className={`submit-button ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""}`}
               type="submit"
-              disabled={isGenerating || Boolean(fileError)}
+              disabled={isGenerating || Boolean(fileError) || selectedModelKeys.length === 0}
               aria-label={isGenerating ? "正在生成" : compact ? "发送修改" : "创建页面"}
               aria-busy={isGenerating}
             >
@@ -1026,6 +1231,7 @@ export default function HomePage() {
             </button>
           </div>
         </form>
+        {!compact && renderModelPicker()}
         {!compact && (
           <div className="prompt-chip-row" role="list" aria-label="推荐场景" data-anim-stagger>
             {PROMPT_PRESETS.map((preset) => (
@@ -1054,190 +1260,217 @@ export default function HomePage() {
 
   return (
     <div className="app-stage" ref={stageRef}>
-      {status === "idle" ? (
-      <main key="hero" className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-        <div className="hero-aurora" aria-hidden="true">
-          <span className="aurora-blob aurora-blob-1" />
-          <span className="aurora-blob aurora-blob-2" />
-          <span className="aurora-blob aurora-blob-3" />
-          <span className="aurora-grid" />
-        </div>
-        {renderHistorySidebar()}
-        <section className="page-shell">
-          <div className="hero">
-            <div className="brand-mark" data-anim-stagger>
-              <img
-                src="/stars-page-logo-simple.png"
-                alt="星页 StarPage"
-                className="brand-logo"
-                width={56}
-                height={56}
-              />
-            </div>
-            <h1 data-anim-stagger>想做什么页面？</h1>
-            <p className="subtitle" data-anim-stagger>
-              说说你的想法，<strong className="brand-inline">星页 StarPage</strong> 帮你生成一个可分享的精致网页。
-            </p>
-
-            {renderPromptForm()}
+      {phase === "idle" ? (
+        <main key="hero" className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+          <div className="hero-aurora" aria-hidden="true">
+            <span className="aurora-blob aurora-blob-1" />
+            <span className="aurora-blob aurora-blob-2" />
+            <span className="aurora-blob aurora-blob-3" />
+            <span className="aurora-grid" />
           </div>
-        </section>
-      </main>
-      ) : (
-      <main key="workspace" className="workspace-shell">
-      <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-        {renderHistorySidebar()}
-        <aside className="conversation-pane">
-          <div className="conversation-scroll">
-            <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`} data-anim-stagger>
-              <div className="user-message-meta">
-                <span>你的需求</span>
-                <span>
-                  {submittedPrompt.length} 字
-                  {submittedFileNames.length ? ` · ${submittedFileNames.length} 个文件` : ""}
-                </span>
+          {renderHistorySidebar()}
+          <section className="page-shell">
+            <div className="hero">
+              <div className="brand-mark" data-anim-stagger>
+                <img
+                  src="/stars-page-logo-simple.png"
+                  alt="星页 StarPage"
+                  className="brand-logo"
+                  width={56}
+                  height={56}
+                />
               </div>
-              <p>{submittedPrompt}</p>
-              {submittedFileNames.length > 0 && (
-                <div className="submitted-files">
-                  {submittedFileNames.map((name) => (
-                    <span key={name}>{name}</span>
+              <h1 data-anim-stagger>想做什么页面？</h1>
+              <p className="subtitle" data-anim-stagger>
+                说说你的想法，<strong className="brand-inline">星页 StarPage</strong> 帮你同时调用多个模型生成可对比的网页。
+              </p>
+
+              {renderPromptForm()}
+            </div>
+          </section>
+        </main>
+      ) : (
+        <main key="workspace" className="workspace-shell">
+          <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMulti ? "compare-mode" : ""}`}>
+            {renderHistorySidebar()}
+            <aside className="conversation-pane">
+              <div className="conversation-scroll">
+                <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`} data-anim-stagger>
+                  <div className="user-message-meta">
+                    <span>你的需求</span>
+                    <span>
+                      {submittedPrompt.length} 字
+                      {submittedFileNames.length ? ` · ${submittedFileNames.length} 个文件` : ""}
+                      {roundIndex > 0 ? ` · 第 ${roundIndex + 1} 轮` : ""}
+                    </span>
+                  </div>
+                  <p>{submittedPrompt}</p>
+                  {submittedFileNames.length > 0 && (
+                    <div className="submitted-files">
+                      {submittedFileNames.map((name) => (
+                        <span key={name}>{name}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="chat-message assistant-message progress-message" data-anim-stagger>
+                  <div className="assistant-label">本轮模型 · {runs.length} 个并行</div>
+                  <div className="run-tabs" role="tablist" aria-label="本轮模型">
+                    {runs.map((run) => (
+                      <button
+                        key={run.taskId || run.modelKey}
+                        type="button"
+                        role="tab"
+                        className={`run-tab ${run.modelKey === activeModelKey ? "is-active" : ""} is-${run.status}`}
+                        aria-selected={run.modelKey === activeModelKey}
+                        onClick={() => setActiveModelKey(run.modelKey)}
+                      >
+                        <span className="run-tab-icon" aria-hidden="true">{getRunStatusIcon(run.status)}</span>
+                        <span className="run-tab-label">{run.modelLabel}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeRun && (
+                    <div className="progress-list">
+                      {activeRun.progressSteps.map((step, index) => (
+                        <div
+                          className={`progress-item ${step.status} ${index === activeRun.progressSteps.length - 1 ? "is-last" : ""}`}
+                          key={step.id}
+                        >
+                          <span className="progress-icon" aria-hidden="true">{getProgressIcon(step.status)}</span>
+                          <div className="progress-body">
+                            <div className="progress-title-row">
+                              <strong>{step.title}</strong>
+                              {step.id === "model_thinking" && (
+                                <button className="node-toggle" type="button" onClick={() => setThinkingExpanded((value) => !value)}>
+                                  {thinkingExpanded ? "收起" : "展开"}
+                                </button>
+                              )}
+                            </div>
+                            <p>{step.description}</p>
+                            {step.id === "model_output" && (
+                              <span className="token-meta">
+                                <span className="token-meta-icon" aria-hidden="true"><BoltIcon /></span>
+                                输出 {step.outputTokens ?? 0} tokens
+                                {step.tokenSource === "estimated" ? "（估算）" : ""}
+                              </span>
+                            )}
+                            {step.id === "model_thinking" && thinkingExpanded && (
+                              <div className="thinking-node-body">
+                                {activeRun.reasoning ? (
+                                  <pre>{activeRun.reasoning}</pre>
+                                ) : (
+                                  <p>模型开始思考后，会在这里展示 reasoning_content。</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {activeRun?.status === "failed" && (
+                  <div className="chat-message assistant-message error-message">
+                    <div className="assistant-label">生成失败</div>
+                    <p>{activeRun.errorMessage}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="composer-wrap">{renderPromptForm(true)}</div>
+            </aside>
+
+            <section className="preview-pane">
+              <article className="panel preview-panel workspace-preview" data-anim-stagger>
+                <div className="panel-heading">
+                  <span
+                    className={`dot ${overallStatus === "completed" ? "ready" : overallStatus === "failed" ? "failed" : "loading"}`}
+                    aria-hidden="true"
+                  />
+                  <h2>页面预览{isMulti ? ` · 对比 ${runs.length} 个模型` : ""}</h2>
+                  <span className="preview-status-text">
+                    {overallStatus === "completed" ? "已生成" : overallStatus === "failed" ? "生成失败" : "生成中"}
+                  </span>
+                  {focusedTaskId && (
+                    <button className="exit-focus-button" type="button" onClick={() => setFocusedTaskId(null)}>
+                      返回对比
+                    </button>
+                  )}
+                </div>
+
+                <div className="preview-grid" style={previewGridStyle}>
+                  {visibleRuns.map((run) => (
+                    <PreviewCell
+                      key={run.taskId || run.modelKey}
+                      run={run}
+                      multi={isMulti}
+                      focused={focusedTaskId === run.taskId}
+                      canContinue={!isGenerating && Boolean(run.pageId)}
+                      onToggleFocus={() => setFocusedTaskId((current) => (current === run.taskId ? null : run.taskId))}
+                      onContinue={() => startContinueFrom(run)}
+                    />
                   ))}
                 </div>
-              )}
-            </div>
-
-            <div className="chat-message assistant-message progress-message" data-anim-stagger>
-              <div className="assistant-label">创建节点</div>
-              <div className="progress-list">
-                {progressSteps.map((step, index) => (
-                  <div
-                    className={`progress-item ${step.status} ${index === progressSteps.length - 1 ? "is-last" : ""}`}
-                    key={step.id}
-                  >
-                    <span className="progress-icon" aria-hidden="true">{getProgressIcon(step.status)}</span>
-                    <div className="progress-body">
-                      <div className="progress-title-row">
-                        <strong>{step.title}</strong>
-                        {step.id === "model_thinking" && (
-                          <button className="node-toggle" type="button" onClick={() => setThinkingExpanded((value) => !value)}>
-                            {thinkingExpanded ? "收起" : "展开"}
-                          </button>
-                        )}
-                      </div>
-                      <p>{step.description}</p>
-                      {step.id === "model_output" && (
-                        <span className="token-meta">
-                          <span className="token-meta-icon" aria-hidden="true"><BoltIcon /></span>
-                          输出 {step.outputTokens ?? 0} tokens
-                          {step.tokenSource === "estimated" ? "（估算）" : ""}
-                        </span>
-                      )}
-                      {step.id === "model_thinking" && thinkingExpanded && (
-                        <div className="thinking-node-body">
-                          {reasoning ? (
-                            <pre>{reasoning}</pre>
-                          ) : (
-                            <p>模型开始思考后，会在这里展示 reasoning_content。</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {status === "failed" && (
-              <div className="chat-message assistant-message error-message">
-                <div className="assistant-label">生成失败</div>
-                <p>{errorMessage}</p>
-              </div>
-            )}
-          </div>
-
-          <div className="composer-wrap">{renderPromptForm(true)}</div>
-        </aside>
-
-        <section className="preview-pane">
-          <article className="panel preview-panel workspace-preview" data-anim-stagger>
-            <div className="panel-heading">
-              <span
-                className={`dot ${status === "completed" ? "ready" : status === "failed" ? "failed" : "loading"}`}
-                aria-hidden="true"
-              />
-              <h2>页面预览</h2>
-              <span className="preview-status-text">
-                {status === "completed" ? "已生成" : status === "failed" ? "生成失败" : "生成中"}
-              </span>
-            </div>
-
-            {status === "completed" && absolutePageUrl && (
-              <>
-                <div className="preview-window">
-                  <div className="preview-window-bar" aria-hidden="true">
-                    <span className="win-dots">
-                      <span className="win-dot win-dot-red" />
-                      <span className="win-dot win-dot-amber" />
-                      <span className="win-dot win-dot-green" />
-                    </span>
-                    <span className="preview-window-url">{absolutePageUrl}</span>
-                  </div>
-                  <div className="preview-viewport" ref={previewStageRef}>
-                    <div className="preview-scale-shell" style={previewShellStyle}>
-                      <iframe
-                        ref={previewIframeRef}
-                        title="生成页面预览"
-                        src={absolutePageUrl}
-                        onLoad={handlePreviewLoad}
-                        style={previewIframeStyle}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="link-actions">
-                  <a href={absolutePageUrl} target="_blank" rel="noreferrer">
-                    打开页面
-                  </a>
-                  <button className={copied ? "copied" : ""} type="button" onClick={copyPageUrl}>
-                    {copied ? "复制成功" : copyFeedback || "复制链接"}
-                  </button>
-                </div>
-              </>
-            )}
-
-            {(status === "thinking" || status === "creating") && (
-              <div className="preview-empty">
-                <div className="preview-skeleton" aria-hidden="true">
-                  <div className="skeleton-bar skeleton-topbar">
-                    <span className="skeleton-chip" />
-                    <span className="skeleton-chip" />
-                    <span className="skeleton-chip" />
-                  </div>
-                  <div className="skeleton-hero">
-                    <span className="skeleton-line skeleton-line-lg" />
-                    <span className="skeleton-line skeleton-line-md" />
-                    <span className="skeleton-line skeleton-line-sm" />
-                  </div>
-                  <div className="skeleton-cards">
-                    <span className="skeleton-card" />
-                    <span className="skeleton-card" />
-                    <span className="skeleton-card" />
-                  </div>
-                </div>
-                <h3>正在为你生成页面…</h3>
-                <p>左侧实时展示模型思考与创建节点，完成后这里会渲染最终网页。</p>
-              </div>
-            )}
-
-            {status === "failed" && <p className="error-text">{errorMessage}</p>}
-          </article>
-        </section>
-      </section>
-    </main>
+              </article>
+            </section>
+          </section>
+        </main>
       )}
     </div>
   );
+}
+
+function makePendingRun(modelKey: string, modelLabel: string, hasFile: boolean): RunState {
+  return {
+    taskId: "",
+    pageId: "",
+    modelKey,
+    modelLabel,
+    status: "thinking",
+    reasoning: "",
+    statusText: "正在提交你的需求...",
+    pageUrl: "",
+    errorMessage: "",
+    progressSteps: createInitialProgressSteps(hasFile),
+  };
+}
+
+function makeRunFromResponse(run: GenerationRunResponse, hasFile: boolean): RunState {
+  return {
+    taskId: run.task_id,
+    pageId: run.page_id,
+    modelKey: run.model_key,
+    modelLabel: run.model_label,
+    status: "thinking",
+    reasoning: "",
+    statusText: "正在理解你的页面需求...",
+    pageUrl: run.page_url,
+    errorMessage: "",
+    progressSteps: createInitialProgressSteps(hasFile),
+  };
+}
+
+function labelForModel(key: string, models: ModelInfo[]): string {
+  return models.find((model) => model.key === key)?.label ?? key;
+}
+
+function computeOverallStatus(runs: RunState[]): GenerationStatus {
+  if (runs.length === 0) return "idle";
+  if (runs.some((run) => run.status === "thinking" || run.status === "creating")) return "creating";
+  if (runs.some((run) => run.status === "completed")) return "completed";
+  if (runs.every((run) => run.status === "failed")) return "failed";
+  return "completed";
+}
+
+function toAbsoluteUrl(pageUrl: string): string {
+  if (!pageUrl) return "";
+  if (pageUrl.startsWith("http://") || pageUrl.startsWith("https://")) return pageUrl;
+  if (typeof window === "undefined") return pageUrl;
+  return `${window.location.origin}${pageUrl}`;
 }
 
 function readCurrentSession(): StoredSession | null {
@@ -1246,11 +1479,18 @@ function readCurrentSession(): StoredSession | null {
 
 function writeCurrentSession(session: StoredSession): void {
   localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(session));
-  localStorage.setItem(`${CURRENT_SESSION_KEY}:${session.id}`, JSON.stringify(session));
 }
 
-function readStoredSession(id: string): StoredSession | null {
-  return readJson<StoredSession>(`${CURRENT_SESSION_KEY}:${id}`);
+function readSelectedModels(): string[] | null {
+  return readJson<string[]>(SELECTED_MODELS_KEY);
+}
+
+function writeSelectedModels(keys: string[]): void {
+  try {
+    localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(keys));
+  } catch {
+    // 忽略存储异常
+  }
 }
 
 function readJson<T>(key: string): T | null {
@@ -1267,49 +1507,74 @@ function buildHistoryTitle(prompt: string): string {
   return normalized.length > 22 ? `${normalized.slice(0, 22)}...` : normalized || "未命名页面";
 }
 
-function mapPageHistoryItem(item: PageHistoryResponseItem): HistoryItem {
-  const taskId = item.task_id ?? undefined;
-  const pageId = item.id;
+function mapConversationHistoryItem(item: ConversationListResponseItem): HistoryItem {
   return {
-    id: taskId ?? pageId,
-    taskId,
-    pageId,
-    title: item.title || buildHistoryTitle(item.prompt),
-    prompt: item.prompt,
-    fileNames: item.file_names ?? [],
-    pageUrl: item.page_url,
-    status: mapHistoryStatus(item.page_status, item.generation_status),
-    createdAt: item.created_at,
+    id: item.id,
+    title: item.title || "未命名页面",
+    modelKeys: item.model_keys ?? [],
+    nodeCount: item.node_count,
+    status: mapBatchStatus(item.latest_batch_status),
     updatedAt: item.updated_at,
   };
 }
 
-function mapHistoryStatus(pageStatus: string, generationStatus?: string | null): GenerationStatus {
+function mapBatchStatus(status?: string | null): GenerationStatus {
+  if (status === "succeeded" || status === "partial") return "completed";
+  if (status === "failed" || status === "cancelled") return "failed";
+  if (status === "running" || status === "pending") return "thinking";
+  return "idle";
+}
+
+function mapNodeStatus(pageStatus: string, generationStatus?: string | null): GenerationStatus {
   if (pageStatus === "ready" || generationStatus === "succeeded") return "completed";
   if (pageStatus === "failed" || generationStatus === "failed" || generationStatus === "cancelled") return "failed";
   if (pageStatus === "generating" || generationStatus === "pending" || generationStatus === "running") return "thinking";
   return "idle";
 }
 
-function buildSessionFromHistoryItem(item: HistoryItem): StoredSession {
-  const statusText = getStoredStatusText(item.status);
+function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSession {
+  const batches = detail.batches ?? [];
+  const latest = batches[batches.length - 1];
+  const baseBatch = latest;
+  const hasFile = (baseBatch?.file_names ?? []).length > 0;
+
+  const runs: RunState[] = (baseBatch?.nodes ?? []).map((node) => {
+    const status = mapNodeStatus(node.page_status, node.generation_status);
+    return {
+      taskId: node.task_id ?? "",
+      pageId: node.page_id,
+      modelKey: node.model_key ?? "",
+      modelLabel: node.model_label ?? node.model_key ?? "模型",
+      status: status === "idle" ? "thinking" : status,
+      reasoning: "",
+      statusText: getStoredStatusText(status),
+      pageUrl: node.page_url,
+      errorMessage: status === "failed" ? "页面生成失败，请重新创建。" : "",
+      progressSteps: createInitialProgressSteps(hasFile).map((step) => ({
+        ...step,
+        status: status === "completed" ? "completed" : step.status,
+      })),
+    };
+  });
+
+  const baseNode = baseBatch?.base_page_id
+    ? (batches.flatMap((batch) => batch.nodes).find((node) => node.page_id === baseBatch.base_page_id) ?? null)
+    : null;
+
+  const now = new Date().toISOString();
   return {
-    id: item.id,
-    taskId: item.taskId,
-    pageId: item.pageId,
-    prompt: item.prompt,
-    fileNames: item.fileNames,
-    status: item.status,
-    reasoning: "",
-    statusText,
-    pageUrl: item.status === "completed" ? item.pageUrl : "",
-    errorMessage: item.status === "failed" ? "页面生成失败，请重新创建。" : "",
-    progressSteps: createInitialProgressSteps(item.fileNames.length > 0).map((step) => ({
-      ...step,
-      status: item.status === "completed" ? "completed" : step.status,
-    })),
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
+    conversationId: detail.id,
+    batchId: baseBatch?.batch_id ?? "",
+    title: detail.title,
+    prompt: baseBatch?.user_prompt || baseBatch?.prompt || detail.title,
+    fileNames: baseBatch?.file_names ?? [],
+    selectedModelKeys: baseBatch?.selected_models ?? [],
+    runs,
+    roundIndex: Math.max(0, batches.length - 1),
+    basePageId: baseBatch?.base_page_id ?? undefined,
+    baseModelLabel: baseNode?.model_label ?? undefined,
+    createdAt: detail.created_at ?? now,
+    updatedAt: detail.updated_at ?? now,
   };
 }
 
@@ -1330,14 +1595,6 @@ function formatHistoryTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function createClientId(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function updateProgressSteps(current: ProgressStep[], payload: SsePayload): ProgressStep[] {
@@ -1373,6 +1630,12 @@ function getProgressIcon(status: ProgressStepStatus): ReactNode {
   if (status === "running") return <span className="progress-spinner" aria-hidden="true" />;
   if (status === "failed") return "!";
   return null;
+}
+
+function getRunStatusIcon(status: GenerationStatus): ReactNode {
+  if (status === "completed") return "✓";
+  if (status === "failed") return "!";
+  return <span className="progress-spinner" aria-hidden="true" />;
 }
 
 function validateFiles(files: File[]): string {
