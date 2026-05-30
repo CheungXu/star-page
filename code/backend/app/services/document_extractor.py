@@ -14,8 +14,9 @@ from starlette.datastructures import UploadFile
 from app.services.llm.client import create_llm_client
 from app.services.llm.types import LlmMessage
 
-SUPPORTED_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".xls", ".txt", ".md", ".markdown", ".html", ".htm"}
-MAX_FILE_COUNT = 1
+SUPPORTED_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"}
+SUPPORTED_FILE_TYPES_LABEL = "docx、pptx、xlsx、xls、pdf、txt、md 或 html"
+MAX_FILE_COUNT = 3
 MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_FILE_SIZE_BYTES = 50 * 1024 * 1024
 MAX_DOCUMENT_CONTEXT_CHARS = 5000
@@ -111,7 +112,7 @@ async def extract_uploaded_documents(files: list[UploadFile]) -> list[ExtractedD
     if len(selected_files) > MAX_FILE_COUNT:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="当前一次只允许上传 1 个文件",
+            detail=f"当前一次最多上传 {MAX_FILE_COUNT} 个文件",
         )
 
     extracted: list[ExtractedDocument] = []
@@ -123,7 +124,7 @@ async def extract_uploaded_documents(files: list[UploadFile]) -> list[ExtractedD
         if extension not in SUPPORTED_EXTENSIONS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{filename} 的格式暂不支持，请上传 docx、pptx、xlsx、xls、txt、md 或 html 文件",
+                detail=f"{filename} 的格式暂不支持，请上传 {SUPPORTED_FILE_TYPES_LABEL} 文件",
             )
 
         raw_bytes = await file.read()
@@ -269,11 +270,11 @@ async def _extract_content(filename: str, extension: str, raw_bytes: bytes) -> s
 
     if extension in {".html", ".htm"}:
         try:
-            return await asyncio.to_thread(_convert_office_to_markdown, filename, extension, raw_bytes)
+            return await asyncio.to_thread(_convert_file_to_markdown, filename, extension, raw_bytes)
         except HTTPException:
             return _extract_html_text(raw_bytes)
 
-    return await asyncio.to_thread(_convert_office_to_markdown, filename, extension, raw_bytes)
+    return await asyncio.to_thread(_convert_file_to_markdown, filename, extension, raw_bytes)
 
 
 def _decode_text(raw_bytes: bytes) -> str:
@@ -299,7 +300,7 @@ def _extract_html_text(raw_bytes: bytes) -> str:
     return body_text
 
 
-def _convert_office_to_markdown(filename: str, extension: str, raw_bytes: bytes) -> str:
+def _convert_file_to_markdown(filename: str, extension: str, raw_bytes: bytes) -> str:
     temp_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
@@ -312,9 +313,10 @@ def _convert_office_to_markdown(filename: str, extension: str, raw_bytes: bytes)
             raise ValueError("未能从文件中抽取到文本内容")
         return str(markdown)
     except Exception as exc:
+        pdf_hint = "；扫描版图片 PDF 暂不支持，请先转换为可复制文本的 PDF 或其他文档格式" if extension == ".pdf" else ""
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"{filename} 解析失败，请确认文件未加密且内容可读取",
+            detail=f"{filename} 解析失败，请确认文件未加密且内容可读取{pdf_hint}",
         ) from exc
     finally:
         if temp_path:

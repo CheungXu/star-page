@@ -44,6 +44,8 @@
 - 个人版镜像加速器（`*.mirror.aliyuncs.com`）只对已缓存镜像有效，较新的官方 tag（如 `node:22`）常拉取报 `not found`，不能当通用 Docker Hub 加速器。
 - 可把项目依赖的基础镜像（如 `node`）预先 push 到自己的 ACR 仓库，后续构建直接从 ACR 拉、免加速。push 到已有命名空间下不存在的仓库时，个人版会自动创建该仓库。
 - Dockerfile 用 `ARG` 控制基础镜像来源、默认指向 ACR；在无 ACR 登录的环境构建时，先询问用户登录 ACR，仅当用户明确选择不登录降级时，才用 `--build-arg` 回退 Docker Hub。
+- Python 后端镜像构建时也要关注依赖源速度。若默认 PyPI 在服务器或容器内过慢，可在 Dockerfile 中提供 `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` 构建参数，并默认指向可信的内网或云厂商镜像源。注意：`FROM` 前声明的 `ARG` 只保证可用于 `FROM`，若后续 `ENV` 或 `RUN` 还要使用，应在 `FROM` 后重新声明同名 `ARG`。
+- 应用镜像建议同时推送版本 tag 和滚动 tag：版本 tag（如 `backend-<git 短 sha>`）用于回滚与排查，滚动 tag（如 `backend-latest`）用于部署配置稳定引用。若工作区未提交但必须临时发布，可在版本 tag 后追加说明后缀，并在发布记录里写明原因。
 
 ## RDS 配置
 

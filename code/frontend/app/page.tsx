@@ -144,10 +144,11 @@ function createInitialProgressSteps(hasFile = false): ProgressStep[] {
 const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
-const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".txt", ".md", ".markdown", ".html", ".htm"];
+const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
-const MAX_FILE_COUNT = 1;
+const MAX_FILE_COUNT = 3;
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+const MAX_TOTAL_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const HistoryIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -975,6 +976,7 @@ export default function HomePage() {
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept={ACCEPTED_FILE_TYPES}
                   disabled={isGenerating}
                   onChange={(event) => handleFileChange(event.target.files)}
@@ -984,8 +986,8 @@ export default function HomePage() {
               </label>
               {selectedFiles.length > 0 ? (
                 <div className="selected-files" aria-label="已选择文件">
-                  {selectedFiles.map((file) => (
-                    <span className="selected-file" key={`${file.name}-${file.size}`}>
+                  {selectedFiles.map((file, index) => (
+                    <span className="selected-file" key={`${file.name}-${file.size}-${index}`}>
                       {file.name} · {formatFileSize(file.size)}
                     </span>
                   ))}
@@ -995,7 +997,7 @@ export default function HomePage() {
                   </button>
                 </div>
               ) : !compact ? (
-                <span className="file-hint">docx · pptx · xlsx · txt · md · html，单文件 ≤ 50MB</span>
+                <span className="file-hint">docx · pptx · xlsx · pdf · txt · md · html，最多 3 个，总计 ≤ 50MB</span>
               ) : null}
             </div>
             <button
@@ -1375,16 +1377,21 @@ function getProgressIcon(status: ProgressStepStatus): ReactNode {
 
 function validateFiles(files: File[]): string {
   if (files.length > MAX_FILE_COUNT) {
-    return "当前一次只允许上传 1 个文件";
+    return `当前一次最多上传 ${MAX_FILE_COUNT} 个文件`;
   }
 
+  let totalSize = 0;
   for (const file of files) {
     const extension = getFileExtension(file.name);
     if (!ACCEPTED_FILE_EXTENSIONS.includes(extension)) {
-      return `${file.name} 的格式暂不支持`;
+      return `${file.name} 的格式暂不支持，请上传 docx、pptx、xlsx、xls、pdf、txt、md 或 html 文件`;
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
       return `${file.name} 超过 50MB，请压缩或拆分后再上传`;
+    }
+    totalSize += file.size;
+    if (totalSize > MAX_TOTAL_FILE_SIZE_BYTES) {
+      return "本次上传文件总大小超过 50MB，请减少文件大小";
     }
   }
 

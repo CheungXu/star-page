@@ -19,6 +19,7 @@
   - 第二轮（克制·精致）：完成节点去满屏绿回归白底、底部按钮"创建→发送"并降级保唯一主 CTA、滚动条进一步细化、Token 圆点→闪电微徽+muted 灰、侧边栏选中项加粗、预览区窗口化（去厚白边、1px 边框+弥散阴影+浏览器三圆点顶栏）。
 - `20260529/frontend-transition-animation-plan.md`：首页 ↔ 生成页衔接过渡动画的规划与实施记录。三套方案（纯 CSS / View Transitions / motion）多端口原型对比选型；先集成三级降级链，后因可维护性简化为「motion + 兜底直切」主线（完整三级版留档在 `full-animation-mode` 分支），在生产 `page.tsx`/`globals.css` 三处切换入口集成并验证。
 - `20260529/frontend-docker-image-build-and-acr.md`：前端 Docker 镜像构建与 ACR 发布记录。`motion` 依赖经 `npm install` 自动进镜像、补 `.dockerignore`；个人版镜像加速器缺 `node:22` 改用 DaoCloud 拉取并预存基础镜像到 `stars-page/node`；Dockerfile 用 `ARG` 默认走 ACR、可降级 Docker Hub；ACR 命名最终更正为 `stars-page`，镜像清单与 tag 约定。
+- `20260531/upload-pdf-and-backend-image-record.md`：上传资料支持最多 3 个文件与 PDF 文本抽取的实施记录；包含“点击生成时再上传”的取舍、`markitdown[pdf]` 新依赖、后端 Dockerfile 使用阿里云 PyPI 源、`backend-7d58e50-pdf` / `backend-latest` 镜像推送、Next standalone CSS 静态资源恢复和后端重启加载新白名单等问题处理。
 
 ## 使用约定
 

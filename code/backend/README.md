@@ -15,6 +15,24 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 真实配置从环境变量读取，也会在本地开发时尝试读取仓库 `config/*.env`。密钥文件不要提交。
 
+## Docker 镜像
+
+后端镜像推送到阿里云 ACR 应用仓库：
+
+- 镜像仓库：`crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com/stars-page/stars-page`
+- tag 约定：`backend-<git 短 sha>` 或带变更说明的版本 tag，另用 `backend-latest` 指向最新后端镜像。
+
+```bash
+cd code/backend
+ACR=crpi-6w1a91eyh3y1vcd9.cn-guangzhou.personal.cr.aliyuncs.com/stars-page/stars-page
+SHA=$(git rev-parse --short HEAD)
+docker build -t "$ACR:backend-$SHA" -t "$ACR:backend-latest" .
+docker push "$ACR:backend-$SHA"
+docker push "$ACR:backend-latest"
+```
+
+`Dockerfile` 默认使用阿里云 PyPI 镜像源安装依赖，避免构建时访问默认 PyPI 过慢；如需切换源，可通过 `--build-arg PIP_INDEX_URL=... --build-arg PIP_TRUSTED_HOST=...` 覆盖。
+
 如果迁移时报 `permission denied for schema public`，说明当前 RDS 应用账号只有连接权限、没有建表权限。请先用高权限账号参考 `script/prepare_rds_database.sql` 创建业务库并授权，再重新执行迁移。
 
 服务器上已通过 `star-page-backend.service` 常驻运行：
@@ -35,11 +53,11 @@ journalctl -u star-page-backend.service -f
 `POST /api/generations` 同时兼容 JSON 和 `multipart/form-data`。上传文件时表单字段为：
 
 - `prompt`：用户页面需求。
-- `files`：当前只允许 1 个文件，最大 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`txt`、`md`、`html`。后端会抽取为 Markdown/文本并合并到 LLM 上下文。
+- `files`：当前最多允许 3 个文件，单文件和单次总大小均不超过 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`pdf`、`txt`、`md`、`html`。后端会抽取为 Markdown/文本并合并到 LLM 上下文；PDF 仅保证可复制文本内容的抽取，扫描版图片 PDF 或加密 PDF 可能解析失败。
 
 如果抽取文本超过 5000 字符，后端会先调用 LLM 将资料压缩为面向页面生成的任务简报，再把压缩后的资料放入最终生成 prompt。
 
-Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client_max_body_size 60m`，用于覆盖 50MB 单文件上传和 multipart 开销。
+Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client_max_body_size 60m`，用于覆盖 50MB 单次上传和 multipart 开销。
 
 为方便后续排查，`generation_tasks` 会记录：
 
