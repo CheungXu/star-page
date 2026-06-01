@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Doctype
 
-BANNED_TAGS = {"script", "iframe", "form", "object", "embed", "base"}
-URI_ATTRS = {"href", "src", "action", "formaction"}
+from app.core.config import get_settings
+
+# 展示页用不到、且属于高风险/插件/跳转能力的标签，一律移除。
+# 注意：<script>/<form> 不在此列——本产品已用 CSP sandbox + connect-src none
+# 把页面关进无凭证、无外部网络的沙箱，故放行展示型 JS 与纯前端表单控件。
+BANNED_TAGS = {"iframe", "object", "embed", "base"}
 
 
 def extract_html_document(raw_text: str) -> str:
@@ -35,25 +40,18 @@ def sanitize_html(raw_html: str) -> str:
     for node in soup.find_all(BANNED_TAGS):
         node.decompose()
 
+    # 移除会自动跳转的 meta refresh。
     for meta in soup.find_all("meta"):
         http_equiv = str(meta.get("http-equiv", "")).lower()
         if http_equiv == "refresh":
             meta.decompose()
 
-    for tag in soup.find_all(True):
-        attrs_to_delete: list[str] = []
-        for attr_name, attr_value in tag.attrs.items():
-            lower_name = attr_name.lower()
-            value = " ".join(attr_value) if isinstance(attr_value, list) else str(attr_value)
-            lower_value = value.strip().lower()
-
-            if lower_name.startswith("on"):
-                attrs_to_delete.append(attr_name)
-            elif lower_name in URI_ATTRS and lower_value.startswith("javascript:"):
-                attrs_to_delete.append(attr_name)
-
-        for attr_name in attrs_to_delete:
-            del tag.attrs[attr_name]
+    # 外链脚本仅允许可信 CDN，其余 <script src> 丢弃；内联脚本（无 src）保留。
+    allowed_hosts = _allowed_script_hosts()
+    for script in soup.find_all("script"):
+        src = script.get("src")
+        if src is not None and not _is_allowed_script_src(str(src), allowed_hosts):
+            script.decompose()
 
     rendered = str(soup)
     has_doctype = any(isinstance(item, Doctype) for item in soup.contents)
@@ -61,6 +59,28 @@ def sanitize_html(raw_html: str) -> str:
         rendered = "<!doctype html>\n" + rendered
 
     return rendered
+
+
+def _allowed_script_hosts() -> set[str]:
+    """从 CDN 白名单配置解析出允许的脚本来源主机名（小写）。"""
+    hosts: set[str] = set()
+    for entry in get_settings().generated_page_cdn_sources:
+        parsed = urlparse(entry if "//" in entry else f"https://{entry}")
+        if parsed.netloc:
+            hosts.add(parsed.netloc.lower())
+    return hosts
+
+
+def _is_allowed_script_src(src: str, allowed_hosts: set[str]) -> bool:
+    src = src.strip()
+    if not src:
+        return True  # 内联脚本无 src
+    parsed = urlparse(src if not src.startswith("//") else f"https:{src}")
+    if parsed.scheme and parsed.scheme not in {"http", "https"}:
+        return False  # 拒绝 data:/javascript: 等作为外链脚本来源
+    if not parsed.netloc:
+        return False  # 自包含页不接受相对路径外链脚本
+    return parsed.netloc.lower() in allowed_hosts
 
 
 def _first_existing_index(text: str, needles: list[str]) -> int:

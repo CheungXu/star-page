@@ -5,12 +5,13 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_model_registry, get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.default_user import ensure_default_user
+from app.core.urls import build_page_url
 from app.models.entities import Conversation, GenerationBatch, GenerationTask, Page
 from app.schemas.conversations import (
     ConversationBatch as ConversationBatchSchema,
@@ -102,6 +103,12 @@ async def delete_conversation(conversation_id: uuid.UUID) -> None:
         now = datetime.now(UTC)
         conversation.deleted_at = now
         conversation.updated_at = now
+        # 级联软删会话下的全部节点，使其分享链接 /p/{conversation_id}/{page_id} 同步失效。
+        await session.execute(
+            update(Page)
+            .where(Page.conversation_id == conversation.id, Page.deleted_at.is_(None))
+            .values(deleted_at=now)
+        )
         await session.commit()
 
 
@@ -162,7 +169,7 @@ async def get_conversation(conversation_id: uuid.UUID) -> ConversationDetail:
                         parent_page_id=page.parent_page_id,
                         page_status=page.status,
                         generation_status=task.status if task else None,
-                        page_url=f"{settings.public_base_url.rstrip('/')}/p/{page.id}",
+                        page_url=build_page_url(settings, page.conversation_id, page.id),
                     )
                 )
 

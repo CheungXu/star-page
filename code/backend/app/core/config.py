@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -79,6 +80,12 @@ class Settings(BaseSettings):
     object_storage_access_key_secret: str = Field(default="", alias="OBJECT_STORAGE_ACCESS_KEY_SECRET")
     local_storage_dir: str = Field(default="data/generated-pages", alias="LOCAL_STORAGE_DIR")
 
+    # 生成页允许引用的可信 CDN（空格或逗号分隔），同时供 HTML 清洗与页面 CSP 复用。
+    generated_page_cdn_allowlist: str = Field(
+        default="https://cdn.jsdelivr.net https://unpkg.com",
+        alias="GENERATED_PAGE_CDN_ALLOWLIST",
+    )
+
     llm_models_file: str = Field(default="config/llm.models.json", alias="LLM_MODELS_FILE")
     llm_default_models: str | None = Field(default=None, alias="LLM_DEFAULT_MODELS")
 
@@ -106,6 +113,18 @@ class Settings(BaseSettings):
             f"postgresql+asyncpg://{self.pguser}:{self.pgpassword}"
             f"@{self.pghost}:{self.pgport}/{self.pgdatabase}"
         )
+
+    @property
+    def generated_page_cdn_sources(self) -> list[str]:
+        """把 CDN 白名单字符串解析为去重、保序的来源列表（如 https://cdn.jsdelivr.net）。"""
+        seen: set[str] = set()
+        sources: list[str] = []
+        for entry in re.split(r"[\s,]+", self.generated_page_cdn_allowlist or ""):
+            entry = entry.strip()
+            if entry and entry not in seen:
+                seen.add(entry)
+                sources.append(entry)
+        return sources
 
     @property
     def llm_extra_body(self) -> dict[str, Any]:

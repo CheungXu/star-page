@@ -22,7 +22,7 @@ code/
 - `GET /api/models` 返回模型目录（key/label/是否默认/是否可用），供前端动态渲染多选。
 - `GET /api/conversations`、`GET /api/conversations/{id}` 会话列表（按会话一条）与会话树（批次 + 各模型节点），用于历史与恢复。
 - `GET /api/pages/{page_id}` 查询页面元数据。
-- `GET /p/{page_id}` 作为页面访问网关，从私有 OSS 读取 HTML 并返回。
+- `GET /p/{conversation_id}/{page_id}` 作为页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回。生成页支持展示型 CSS/JS，网关下发"隔离优先"的沙箱 CSP（`sandbox allow-scripts ...; connect-src 'none'`），详见 `wiki/generated-page-js-sandbox-and-security.md`。
 
 多模型生成采用"会话(生成树) → 批次(一轮) → 节点(每模型一个独立可分享 Page)"结构，详见 `wiki/multi-model-generation-tree.md`；模型走"可提交模型目录 `config/llm.models.json` + 仅密钥 env + 参数三层覆盖"，详见 `wiki/llm-provider-abstraction.md`。
 

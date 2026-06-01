@@ -24,6 +24,23 @@
 - 构建后必须重启 `star-page-frontend.service`，让 `ExecStartPre` 重新复制 `.next/static` 和 `public`。
 - 不能只用首页 `200 OK` 判断部署成功，还要验证 CSS 资源返回 `200 text/css`。
 
+## 代码更新需重启服务（无 `--reload`）
+
+常驻服务直接从仓库目录运行 uvicorn / Next.js standalone，且生产**不开 `--reload`**，只在启动时加载一次代码。
+
+- 改了后端代码（哪怕只是改一行 prompt 文案），必须 `systemctl restart star-page-backend.service`，否则进程内存里还是旧代码——典型症状：磁盘代码已更新，但线上行为不变（看 `systemctl status` 的 `Active: since` 早于改动时间即可确认）。
+- 前端改动需要先 `next build` 再重启（见上一节静态资源教训）。
+- 排查口诀：行为没变先看进程启动时间，而不是反复怀疑代码。
+
+## SSE / 长连接与停止超时
+
+后端有 SSE 长连接（生成过程事件流）。uvicorn 收到 SIGTERM 会**优雅关闭、等连接断开**；若客户端连接还挂着，systemd 会等到默认 `TimeoutStopSec`（90s）才 SIGKILL，导致 `systemctl restart` 长时间卡住。
+
+处理原则：
+
+- 给这类服务显式设较短的 `TimeoutStopSec`（本项目后端设为 `10s`），让停止在合理时间内强制收尾。
+- 日志里出现 `State 'stop-sigterm' timed out. Killing.` 属预期，不是故障。
+
 ## 常用命令
 
 ```bash

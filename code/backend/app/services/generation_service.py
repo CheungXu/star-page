@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_model_registry, get_settings
 from app.core.default_user import ensure_default_user
+from app.core.urls import build_page_url
 from app.models.entities import (
     Conversation,
     GenerationBatch,
@@ -182,7 +183,7 @@ class GenerationService:
                     page_id=page.id,
                     model_key=model_key,
                     model_label=model.label if model else model_key,
-                    page_url=self._page_url(page.id),
+                    page_url=self._page_url(page),
                 )
             )
 
@@ -194,8 +195,8 @@ class GenerationService:
             runs=runs,
         )
 
-    def _page_url(self, page_id: uuid.UUID) -> str:
-        return f"{self.settings.public_base_url.rstrip('/')}/p/{page_id}"
+    def _page_url(self, page: Page) -> str:
+        return build_page_url(self.settings, page.conversation_id, page.id)
 
     async def _latest_node_per_model(
         self, conversation_id: uuid.UUID, model_keys: list[str]
@@ -526,7 +527,7 @@ class GenerationService:
                 },
             )
 
-            page_url = self._page_url(page.id)
+            page_url = self._page_url(page)
             yield await self._record_event(
                 task.id,
                 "completed",

@@ -607,6 +607,7 @@ function PreviewCell({
                   title={`${run.modelLabel} 生成页面预览`}
                   src={absoluteUrl}
                   onLoad={handlePreviewLoad}
+                  sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
                   style={iframeStyle}
                 />
               </div>

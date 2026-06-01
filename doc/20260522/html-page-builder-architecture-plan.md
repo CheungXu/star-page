@@ -4,6 +4,8 @@
 
 本项目计划建设一个网站，用户可以通过自然语言创建 HTML 展示页面。每个用户创建的页面都可以获得一个独立链接，用于对外展示或私下分享。
 
+> 更新说明（20260602）：本文为 20260522 的初始规划，其中"第一版禁用 JavaScript、靠清洗去掉危险代码"已调整。生成页现已支持展示型 CSS/JS，安全改为"隔离优先"（沙箱 CSP + sandboxed iframe + 默认禁外部网络），详见 `wiki/generated-page-js-sandbox-and-security.md` 与 `doc/20260602/generated-page-js-css-sandbox-record.md`。
+
 当前阶段目标是先完成整体架构规划，不进入开发实现。规划重点包括：
 
 - 支持多用户、多页面的页面生成、存储、访问与展示。

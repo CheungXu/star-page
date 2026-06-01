@@ -1,6 +1,8 @@
 # FastAPI 后端
 
-后端负责页面生成主流程：默认用户、数据库、LLM 流式调用、OSS 存取、HTML 清洗、SSE 事件、上传文件内容抽取和 `/p/{page_id}` 页面访问网关。
+后端负责页面生成主流程：默认用户、数据库、LLM 流式调用、OSS 存取、HTML 清洗、SSE 事件、上传文件内容抽取和 `/p/{conversation_id}/{page_id}` 页面访问网关。
+
+生成页现已支持展示型 CSS/JS：安全采用"隔离优先"——`/p` 网关统一下发 `Content-Security-Policy: sandbox allow-scripts ...; connect-src 'none'`，把页面关进无主站凭证、无外部网络的不透明 origin；`html_sanitizer` 放行内联脚本/事件/表单控件，移除 iframe/object/embed/base 与 meta refresh，外链 `<script src>` 仅留可信 CDN（`GENERATED_PAGE_CDN_ALLOWLIST`）。原理详见 `wiki/generated-page-js-sandbox-and-security.md`。
 
 ## 本地运行
 
@@ -42,6 +44,8 @@ systemctl restart star-page-backend.service
 journalctl -u star-page-backend.service -f
 ```
 
+> 备忘（重要）：常驻服务直接从仓库目录跑 uvicorn 且**未开 `--reload`**，只在启动时加载一次代码。**每次修改后端代码后，必须执行 `systemctl restart star-page-backend.service`**，否则线上仍在用旧代码（例如改了 prompt 但生成仍是旧行为）。该服务已设 `TimeoutStopSec=10s`，避免 SSE 长连接把 restart 卡到默认 90s。
+
 ## 关键接口
 
 - `POST /api/generations`：创建页面生成任务。
@@ -52,7 +56,7 @@ journalctl -u star-page-backend.service -f
 - `DELETE /api/conversations/{conversation_id}`：软删除会话，写入 `deleted_at` 后不再出现在历史列表。
 - `GET /api/pages`：旧版页面级历史接口，当前左侧历史已切到会话级接口。
 - `GET /api/pages/{page_id}`：获取页面元数据。
-- `GET /p/{page_id}`：页面访问网关，从私有 OSS 读取 HTML 并返回。
+- `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。会话被软删后其下节点链接同步失效（404）。
 
 `POST /api/generations` 同时兼容 JSON 和 `multipart/form-data`。上传文件时表单字段为：
 
@@ -91,6 +95,7 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 ## 当前默认配置
 
 - 默认测试用户：`default_test`。
-- 页面默认权限：`public`，但 OSS Bucket 仍保持私有，访问统一走 `/p/{page_id}` 网关。
+- 页面默认权限：`public`，但 OSS Bucket 仍保持私有，访问统一走 `/p/{conversation_id}/{page_id}` 网关。
+- 生成页可信 CDN 白名单：`GENERATED_PAGE_CDN_ALLOWLIST`，默认 `https://cdn.jsdelivr.net https://unpkg.com`。
 - 业务数据库：`stars_page`。
 - 当前 Qwen 配置：`LLM_PROVIDER=qwen`、`LLM_PROTOCOL=openai`、`LLM_MODEL=qwen3.7-max`。
