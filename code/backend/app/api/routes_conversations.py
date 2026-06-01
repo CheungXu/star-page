@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException
-from sqlalchemy import desc, func, select
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import desc, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_model_registry, get_settings
 from app.core.database import AsyncSessionLocal
@@ -17,6 +19,7 @@ from app.schemas.conversations import (
     ConversationDetail,
     ConversationListItem,
     ConversationNode,
+    ConversationUpdate,
 )
 from app.schemas.generation import ModelInfo
 
@@ -40,47 +43,66 @@ async def list_models() -> list[ModelInfo]:
 
 
 @router.get("/api/conversations", response_model=list[ConversationListItem])
-async def list_conversations() -> list[ConversationListItem]:
+async def list_conversations(
+    favorite_only: bool = False,
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> list[ConversationListItem]:
     async with AsyncSessionLocal() as session:
         user = await ensure_default_user(session)
+        conditions = [Conversation.owner_user_id == user.id, Conversation.deleted_at.is_(None)]
+        if favorite_only:
+            conditions.append(Conversation.is_favorite.is_(True))
+
+        keyword = q.strip() if q else ""
+        if keyword:
+            pattern = f"%{keyword}%"
+            prompt_match_ids = select(GenerationBatch.conversation_id).where(
+                or_(
+                    GenerationBatch.user_prompt.ilike(pattern),
+                    GenerationBatch.prompt.ilike(pattern),
+                )
+            )
+            conditions.append(or_(Conversation.title.ilike(pattern), Conversation.id.in_(prompt_match_ids)))
+
         result = await session.execute(
             select(Conversation)
-            .where(Conversation.owner_user_id == user.id, Conversation.deleted_at.is_(None))
+            .where(*conditions)
             .order_by(desc(Conversation.updated_at), desc(Conversation.created_at))
-            .limit(50)
+            .limit(limit)
         )
         conversations = result.scalars().all()
 
-        items: list[ConversationListItem] = []
-        for conversation in conversations:
-            latest_result = await session.execute(
-                select(GenerationBatch)
-                .where(GenerationBatch.conversation_id == conversation.id)
-                .order_by(desc(GenerationBatch.created_at))
-                .limit(1)
-            )
-            latest = latest_result.scalar_one_or_none()
+        return [await _build_conversation_list_item(session, conversation) for conversation in conversations]
 
-            node_count_result = await session.execute(
-                select(func.count(Page.id)).where(
-                    Page.conversation_id == conversation.id, Page.deleted_at.is_(None)
-                )
-            )
-            node_count = int(node_count_result.scalar_one())
 
-            items.append(
-                ConversationListItem(
-                    id=conversation.id,
-                    title=conversation.title,
-                    origin=conversation.origin,
-                    model_keys=list(latest.selected_models) if latest else [],
-                    node_count=node_count,
-                    latest_batch_status=latest.status if latest else None,
-                    created_at=conversation.created_at,
-                    updated_at=conversation.updated_at,
-                )
-            )
-        return items
+@router.patch("/api/conversations/{conversation_id}", response_model=ConversationListItem)
+async def update_conversation(conversation_id: uuid.UUID, payload: ConversationUpdate) -> ConversationListItem:
+    async with AsyncSessionLocal() as session:
+        user = await ensure_default_user(session)
+        conversation = await session.get(Conversation, conversation_id)
+        if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+        conversation.is_favorite = payload.is_favorite
+        conversation.updated_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(conversation)
+        return await _build_conversation_list_item(session, conversation)
+
+
+@router.delete("/api/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(conversation_id: uuid.UUID) -> None:
+    async with AsyncSessionLocal() as session:
+        user = await ensure_default_user(session)
+        conversation = await session.get(Conversation, conversation_id)
+        if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+        now = datetime.now(UTC)
+        conversation.deleted_at = now
+        conversation.updated_at = now
+        await session.commit()
 
 
 @router.get("/api/conversations/{conversation_id}", response_model=ConversationDetail)
@@ -89,8 +111,9 @@ async def get_conversation(conversation_id: uuid.UUID) -> ConversationDetail:
     registry = get_model_registry()
 
     async with AsyncSessionLocal() as session:
+        user = await ensure_default_user(session)
         conversation = await session.get(Conversation, conversation_id)
-        if conversation is None or conversation.deleted_at is not None:
+        if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="会话不存在")
 
         batches_result = await session.execute(
@@ -172,3 +195,33 @@ def _model_order(model_key: str | None, selected: list[str]) -> int:
     if model_key and model_key in selected:
         return selected.index(model_key)
     return len(selected)
+
+
+async def _build_conversation_list_item(
+    session: AsyncSession,
+    conversation: Conversation,
+) -> ConversationListItem:
+    latest_result = await session.execute(
+        select(GenerationBatch)
+        .where(GenerationBatch.conversation_id == conversation.id)
+        .order_by(desc(GenerationBatch.created_at))
+        .limit(1)
+    )
+    latest = latest_result.scalar_one_or_none()
+
+    node_count_result = await session.execute(
+        select(func.count(Page.id)).where(Page.conversation_id == conversation.id, Page.deleted_at.is_(None))
+    )
+    node_count = int(node_count_result.scalar_one())
+
+    return ConversationListItem(
+        id=conversation.id,
+        title=conversation.title,
+        origin=conversation.origin,
+        is_favorite=conversation.is_favorite,
+        model_keys=list(latest.selected_models) if latest else [],
+        node_count=node_count,
+        latest_batch_status=latest.status if latest else None,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+    )

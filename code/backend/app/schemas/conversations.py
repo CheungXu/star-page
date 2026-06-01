@@ -10,11 +10,16 @@ class ConversationListItem(BaseModel):
     id: UUID
     title: str
     origin: str
+    is_favorite: bool
     model_keys: list[str]
     node_count: int
     latest_batch_status: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationUpdate(BaseModel):
+    is_favorite: bool
 
 
 class ConversationNode(BaseModel):

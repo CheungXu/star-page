@@ -86,7 +86,14 @@
 
 ## 历史记录与本地状态
 
-历史创建列表从后端 `GET /api/pages` 读取，当前按默认测试用户查询数据库中的页面和生成任务，因此换设备访问也能看到同一测试账号的历史页面。
+历史创建列表从后端 `GET /api/conversations` 读取，当前按默认测试用户查询数据库中的会话、批次和页面节点，因此换设备访问也能看到同一测试账号的历史会话。
+
+侧边栏支持：
+
+- 收藏/取消收藏：调用 `PATCH /api/conversations/{conversation_id}` 更新会话收藏字段。
+- 仅看收藏：请求 `GET /api/conversations?favorite_only=true`。
+- 检索历史：请求 `GET /api/conversations?q=关键词`，收藏筛选下会同时带上 `favorite_only=true`。
+- 删除历史：调用 `DELETE /api/conversations/{conversation_id}` 软删除会话；后端设置 `deleted_at`，列表不再展示。
 
 前端仍使用浏览器 `localStorage` 保存当前设备上的会话细节：
 

@@ -102,7 +102,7 @@ class GenerationService:
         parent_for_model: dict[str, uuid.UUID | None]
         if conversation_id is not None:
             conversation = await self.session.get(Conversation, conversation_id)
-            if conversation is None:
+            if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
                 raise ValueError("会话不存在")
             conversation.updated_at = datetime.now(UTC)
             kind = "continue"

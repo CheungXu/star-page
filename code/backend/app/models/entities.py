@@ -41,6 +41,7 @@ class Conversation(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     origin: Mapped[str] = mapped_column(String(16), default="new", nullable=False)
     root_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(default=False, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     owner: Mapped[User] = relationship("User")

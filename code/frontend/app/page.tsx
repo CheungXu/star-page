@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import type { ChangeEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
@@ -95,16 +95,20 @@ type StoredSession = {
 type HistoryItem = {
   id: string;
   title: string;
+  isFavorite: boolean;
   modelKeys: string[];
   nodeCount: number;
   status: GenerationStatus;
   updatedAt: string;
 };
 
+type HistoryScope = "all" | "favorite";
+
 type ConversationListResponseItem = {
   id: string;
   title: string;
   origin: string;
+  is_favorite: boolean;
   model_keys: string[];
   node_count: number;
   latest_batch_status?: string | null;
@@ -214,6 +218,29 @@ const HistoryIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="10"></circle>
     <polyline points="12 6 12 12 16 14"></polyline>
+  </svg>
+);
+
+const SearchIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="11" cy="11" r="7" />
+    <line x1="16.5" y1="16.5" x2="21" y2="21" />
+  </svg>
+);
+
+const StarIcon = ({ filled = false }: { filled?: boolean }) => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polygon points="12 2 15.1 8.4 22 9.3 17 14.2 18.2 21 12 17.8 5.8 21 7 14.2 2 9.3 8.9 8.4 12 2" />
+  </svg>
+);
+
+const TrashIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M8 6V4h8v2" />
+    <path d="M19 6l-1 14H6L5 6" />
+    <line x1="10" y1="11" x2="10" y2="17" />
+    <line x1="14" y1="11" x2="14" y2="17" />
   </svg>
 );
 
@@ -645,6 +672,9 @@ export default function HomePage() {
   const [thinkingExpanded, setThinkingExpanded] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyScope, setHistoryScope] = useState<HistoryScope>("all");
+  const [historySearch, setHistorySearch] = useState("");
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModelKeys, setSelectedModelKeys] = useState<string[]>([]);
   const [roundIndex, setRoundIndex] = useState(0);
@@ -720,14 +750,23 @@ export default function HomePage() {
     return () => closeAllSources();
   }, []);
 
-  async function loadHistory(): Promise<void> {
+  async function loadHistory(scope = historyScope, search = historySearch): Promise<void> {
+    const params = new URLSearchParams();
+    if (scope === "favorite") params.set("favorite_only", "true");
+    const keyword = search.trim();
+    if (keyword) params.set("q", keyword);
+    const query = params.toString();
+
+    setIsHistoryLoading(true);
     try {
-      const response = await fetch("/api/conversations");
+      const response = await fetch(`/api/conversations${query ? `?${query}` : ""}`);
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const data = (await response.json()) as ConversationListResponseItem[];
       setHistoryItems(data.map(mapConversationHistoryItem));
     } catch {
       setHistoryItems([]);
+    } finally {
+      setIsHistoryLoading(false);
     }
   }
 
@@ -981,6 +1020,76 @@ export default function HomePage() {
     }
   }
 
+  function switchHistoryScope(scope: HistoryScope) {
+    setHistoryScope(scope);
+    if (isSidebarCollapsed) setIsSidebarCollapsed(false);
+    void loadHistory(scope, historySearch);
+  }
+
+  function handleHistorySearchChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextValue = event.target.value;
+    setHistorySearch(nextValue);
+    void loadHistory(historyScope, nextValue);
+  }
+
+  function clearHistorySearch() {
+    setHistorySearch("");
+    void loadHistory(historyScope, "");
+  }
+
+  function handleHistoryItemKeyDown(event: KeyboardEvent<HTMLDivElement>, item: HistoryItem) {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    void restoreHistoryItem(item);
+  }
+
+  async function toggleHistoryFavorite(event: MouseEvent<HTMLButtonElement>, item: HistoryItem) {
+    event.preventDefault();
+    event.stopPropagation();
+    const nextFavorite = !item.isFavorite;
+    setHistoryItems((current) =>
+      current
+        .map((historyItem) => (historyItem.id === item.id ? { ...historyItem, isFavorite: nextFavorite } : historyItem))
+        .filter((historyItem) => historyScope !== "favorite" || historyItem.isFavorite),
+    );
+
+    try {
+      const response = await fetch(`/api/conversations/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_favorite: nextFavorite }),
+      });
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      const data = (await response.json()) as ConversationListResponseItem;
+      const updatedItem = mapConversationHistoryItem(data);
+      setHistoryItems((current) =>
+        current
+          .map((historyItem) => (historyItem.id === updatedItem.id ? updatedItem : historyItem))
+          .filter((historyItem) => historyScope !== "favorite" || historyItem.isFavorite),
+      );
+    } catch {
+      void loadHistory(historyScope, historySearch);
+    }
+  }
+
+  async function deleteHistoryItem(event: MouseEvent<HTMLButtonElement>, item: HistoryItem) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!window.confirm("删除后这条历史记录将不再显示，确认删除？")) return;
+
+    try {
+      const response = await fetch(`/api/conversations/${item.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      setHistoryItems((current) => current.filter((historyItem) => historyItem.id !== item.id));
+      if (item.id === conversationId) {
+        startNewChat();
+      }
+    } catch {
+      void loadHistory(historyScope, historySearch);
+    }
+  }
+
   function applyStoredSession(session: StoredSession) {
     setPhase("active");
     setConversationId(session.conversationId);
@@ -1110,6 +1219,17 @@ export default function HomePage() {
           <span className="sidebar-icon"><PlusIcon /></span>
           {!isSidebarCollapsed && <span className="sidebar-label">新对话</span>}
         </button>
+        <button
+          className={`favorite-filter-button ${historyScope === "favorite" ? "is-active" : ""}`}
+          type="button"
+          onClick={() => switchHistoryScope(historyScope === "favorite" ? "all" : "favorite")}
+          title={historyScope === "favorite" ? "显示全部历史" : "只看收藏"}
+          aria-label={historyScope === "favorite" ? "显示全部历史" : "只看收藏"}
+          aria-pressed={historyScope === "favorite"}
+        >
+          <span className="sidebar-icon"><StarIcon filled={historyScope === "favorite"} /></span>
+          {!isSidebarCollapsed && <span className="sidebar-label">收藏</span>}
+        </button>
         {isSidebarCollapsed && (
           <button
             className="sidebar-icon-button"
@@ -1123,25 +1243,68 @@ export default function HomePage() {
         )}
 
         <div className="history-content" aria-hidden={isSidebarCollapsed}>
-          <div className="history-title">历史创建</div>
+          <div className="history-title-row">
+            <div className="history-title">{historyScope === "favorite" ? "收藏记录" : "历史创建"}</div>
+            {historySearch && (
+              <button className="history-clear-search" type="button" onClick={clearHistorySearch} aria-label="清空检索">
+                <CloseIcon />
+              </button>
+            )}
+          </div>
+          <label className="history-search">
+            <span className="history-search-icon"><SearchIcon /></span>
+            <input
+              type="search"
+              value={historySearch}
+              onChange={handleHistorySearchChange}
+              placeholder={historyScope === "favorite" ? "检索收藏记录" : "检索历史记录"}
+            />
+          </label>
           <div className="history-list">
-            {historyItems.length === 0 ? (
-              <p className="history-empty">暂无历史</p>
+            {isHistoryLoading ? (
+              <p className="history-empty">正在加载...</p>
+            ) : historyItems.length === 0 ? (
+              <p className="history-empty">{historySearch ? "未找到匹配记录" : historyScope === "favorite" ? "暂无收藏" : "暂无历史"}</p>
             ) : (
               historyItems.map((item) => (
-                <button
-                  className={`history-item ${item.id === conversationId ? "active" : ""}`}
+                <div
+                  className={`history-item ${item.id === conversationId ? "active" : ""} ${item.isFavorite ? "is-favorite" : ""}`}
                   key={item.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => restoreHistoryItem(item)}
+                  onKeyDown={(event) => handleHistoryItemKeyDown(event, item)}
                   aria-current={item.id === conversationId ? "page" : undefined}
                 >
-                  <span>{item.title}</span>
-                  <small>
-                    {item.modelKeys.length > 1 ? `${item.modelKeys.length} 模型 · ` : ""}
-                    {formatHistoryTime(item.updatedAt)}
-                  </small>
-                </button>
+                  <span className="history-item-main">
+                    <span className="history-item-title">{item.title}</span>
+                    <small>
+                      {item.modelKeys.length > 1 ? `${item.modelKeys.length} 模型 · ` : ""}
+                      {formatHistoryTime(item.updatedAt)}
+                    </small>
+                  </span>
+                  <span className="history-item-actions">
+                    <button
+                      className={`history-action-button favorite ${item.isFavorite ? "is-active" : ""}`}
+                      type="button"
+                      onClick={(event) => toggleHistoryFavorite(event, item)}
+                      title={item.isFavorite ? "取消收藏" : "收藏"}
+                      aria-label={item.isFavorite ? `取消收藏 ${item.title}` : `收藏 ${item.title}`}
+                      aria-pressed={item.isFavorite}
+                    >
+                      <StarIcon filled={item.isFavorite} />
+                    </button>
+                    <button
+                      className="history-action-button danger"
+                      type="button"
+                      onClick={(event) => deleteHistoryItem(event, item)}
+                      title="删除"
+                      aria-label={`删除 ${item.title}`}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </span>
+                </div>
               ))
             )}
           </div>
@@ -1511,6 +1674,7 @@ function mapConversationHistoryItem(item: ConversationListResponseItem): History
   return {
     id: item.id,
     title: item.title || "未命名页面",
+    isFavorite: Boolean(item.is_favorite),
     modelKeys: item.model_keys ?? [],
     nodeCount: item.node_count,
     status: mapBatchStatus(item.latest_batch_status),
