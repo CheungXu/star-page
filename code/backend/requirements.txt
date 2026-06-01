@@ -9,3 +9,4 @@ oss2
 beautifulsoup4
 python-dotenv
 markitdown[docx,pptx,xlsx,xls,pdf]
+pyyaml

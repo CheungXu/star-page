@@ -14,11 +14,19 @@ type ModelInfo = {
   available: boolean;
 };
 
+type SkillInfo = {
+  key: string;
+  name: string;
+  description: string;
+};
+
 type CreateGenerationResponse = {
   conversation_id: string;
   batch_id: string;
   kind: string;
   runs: GenerationRunResponse[];
+  skill_key?: string | null;
+  skill_name?: string | null;
 };
 
 type GenerationRunResponse = {
@@ -84,6 +92,8 @@ type StoredSession = {
   prompt: string;
   fileNames: string[];
   selectedModelKeys: string[];
+  selectedSkillKey?: string;
+  appliedSkillName?: string | null;
   runs: RunState[];
   roundIndex: number;
   basePageId?: string;
@@ -208,6 +218,10 @@ const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
 const SELECTED_MODELS_KEY = "star-page-selected-models";
+const SELECTED_SKILL_KEY = "star-page-selected-skill";
+// 技能选择特殊值：空串=自动（由模型选择）；__none__=显式不使用技能。
+const SKILL_AUTO_VALUE = "";
+const SKILL_NONE_VALUE = "__none__";
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 3;
@@ -678,6 +692,9 @@ export default function HomePage() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModelKeys, setSelectedModelKeys] = useState<string[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([]);
+  const [selectedSkillKey, setSelectedSkillKey] = useState<string>(SKILL_AUTO_VALUE);
+  const [appliedSkill, setAppliedSkill] = useState<{ key: string; name: string } | null>(null);
   const [roundIndex, setRoundIndex] = useState(0);
   const [continueBase, setContinueBase] = useState<{ pageId: string; modelLabel: string } | null>(null);
 
@@ -690,6 +707,7 @@ export default function HomePage() {
   useEffect(() => {
     void loadHistory();
     void loadModels();
+    void loadSkills();
 
     const session = readCurrentSession();
     if (session && session.runs?.length) {
@@ -737,6 +755,8 @@ export default function HomePage() {
       prompt: submittedPrompt,
       fileNames: submittedFileNames,
       selectedModelKeys,
+      selectedSkillKey,
+      appliedSkillName: appliedSkill?.name ?? null,
       runs,
       roundIndex,
       basePageId: continueBase?.pageId,
@@ -745,7 +765,7 @@ export default function HomePage() {
       updatedAt: now,
     };
     writeCurrentSession(session);
-  }, [phase, conversationId, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, roundIndex, continueBase]);
+  }, [phase, conversationId, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, selectedSkillKey, appliedSkill, roundIndex, continueBase]);
 
   useEffect(() => {
     return () => closeAllSources();
@@ -795,6 +815,31 @@ export default function HomePage() {
     } catch {
       setAvailableModels([]);
     }
+  }
+
+  async function loadSkills(): Promise<void> {
+    try {
+      const response = await fetch("/api/skills");
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      const data = (await response.json()) as SkillInfo[];
+      setAvailableSkills(data);
+
+      // 恢复上次选择；失效则回退到"自动"。__none__ 始终合法。
+      const stored = readSelectedSkill();
+      const validKeys = new Set(data.map((skill) => skill.key));
+      if (stored && stored !== SKILL_NONE_VALUE && !validKeys.has(stored)) {
+        setSelectedSkillKey(SKILL_AUTO_VALUE);
+      } else if (stored !== null) {
+        setSelectedSkillKey(stored);
+      }
+    } catch {
+      setAvailableSkills([]);
+    }
+  }
+
+  function handleSkillChange(value: string) {
+    setSelectedSkillKey(value);
+    writeSelectedSkill(value);
   }
 
   function closeAllSources() {
@@ -860,6 +905,8 @@ export default function HomePage() {
       formData.append("prompt", trimmedPrompt);
       selectedFiles.forEach((file) => formData.append("files", file));
       selectedModelKeys.forEach((key) => formData.append("models", key));
+      // 技能：空串=自动（不透传，由后端路由或续写延用）；具体 key 或 __none__ 则显式透传。
+      if (selectedSkillKey) formData.append("skill_keys", selectedSkillKey);
       if (inConversation) {
         formData.append("conversation_id", conversationId);
         if (continueBase) formData.append("base_page_id", continueBase.pageId);
@@ -871,6 +918,7 @@ export default function HomePage() {
       const data = (await response.json()) as CreateGenerationResponse;
       setConversationId(data.conversation_id);
       setBatchId(data.batch_id);
+      setAppliedSkill(data.skill_key ? { key: data.skill_key, name: data.skill_name ?? data.skill_key } : null);
       if (inConversation) setRoundIndex((value) => value + 1);
       setContinueBase(null);
       setSelectedFiles([]);
@@ -999,6 +1047,7 @@ export default function HomePage() {
       setThinkingExpanded(true);
       setRoundIndex(0);
       setContinueBase(null);
+      setAppliedSkill(null);
     });
   }
 
@@ -1109,6 +1158,12 @@ export default function HomePage() {
       session.basePageId ? { pageId: session.basePageId, modelLabel: session.baseModelLabel ?? "上一结果" } : null,
     );
     if (session.selectedModelKeys?.length) setSelectedModelKeys(session.selectedModelKeys);
+    if (typeof session.selectedSkillKey === "string") setSelectedSkillKey(session.selectedSkillKey);
+    setAppliedSkill(
+      session.appliedSkillName
+        ? { key: session.selectedSkillKey ?? "", name: session.appliedSkillName }
+        : null,
+    );
   }
 
   function startContinueFrom(run: RunState) {
@@ -1176,6 +1231,39 @@ export default function HomePage() {
                 <span className="model-check" aria-hidden="true">{active ? "✓" : ""}</span>
                 {model.label}
                 {!model.available && <span className="model-unavailable">未配置</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function renderSkillPicker() {
+    if (availableSkills.length === 0) return null;
+    const options = [
+      { key: SKILL_AUTO_VALUE, label: "自动", hint: "由模型自动匹配最合适的网页技能" },
+      ...availableSkills.map((skill) => ({ key: skill.key, label: skill.name, hint: skill.description })),
+      { key: SKILL_NONE_VALUE, label: "不使用", hint: "本次不应用任何网页技能" },
+    ];
+    return (
+      <div className="model-picker skill-picker" role="group" aria-label="选择网页技能" data-anim-stagger>
+        <span className="model-picker-label">网页技能</span>
+        <div className="model-picker-options">
+          {options.map((option) => {
+            const active = selectedSkillKey === option.key;
+            return (
+              <button
+                key={option.key || "auto"}
+                type="button"
+                className={`model-option ${active ? "is-active" : ""}`}
+                onClick={() => handleSkillChange(option.key)}
+                disabled={isGenerating}
+                aria-pressed={active}
+                title={option.hint}
+              >
+                <span className="model-check" aria-hidden="true">{active ? "✓" : ""}</span>
+                {option.label}
               </button>
             );
           })}
@@ -1396,6 +1484,7 @@ export default function HomePage() {
           </div>
         </form>
         {!compact && renderModelPicker()}
+        {!compact && renderSkillPicker()}
         {!compact && (
           <div className="prompt-chip-row" role="list" aria-label="推荐场景" data-anim-stagger>
             {PROMPT_PRESETS.map((preset) => (
@@ -1479,7 +1568,14 @@ export default function HomePage() {
                 </div>
 
                 <div className="chat-message assistant-message progress-message" data-anim-stagger>
-                  <div className="assistant-label">本轮模型 · {runs.length} 个并行</div>
+                  <div className="assistant-label">
+                    本轮模型 · {runs.length} 个并行
+                    {appliedSkill && (
+                      <span className="applied-skill-badge" title="本轮应用的网页技能">
+                        技能 · {appliedSkill.name}
+                      </span>
+                    )}
+                  </div>
                   <div className="run-tabs" role="tablist" aria-label="本轮模型">
                     {runs.map((run) => (
                       <button
@@ -1652,6 +1748,22 @@ function readSelectedModels(): string[] | null {
 function writeSelectedModels(keys: string[]): void {
   try {
     localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(keys));
+  } catch {
+    // 忽略存储异常
+  }
+}
+
+function readSelectedSkill(): string | null {
+  try {
+    return localStorage.getItem(SELECTED_SKILL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeSelectedSkill(value: string): void {
+  try {
+    localStorage.setItem(SELECTED_SKILL_KEY, value);
   } catch {
     // 忽略存储异常
   }

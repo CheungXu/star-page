@@ -24,6 +24,7 @@
 - `20260531/multi-model-parallel-generation-implementation-record.md`：上述规划的实施记录。含已交付能力、与规划的增量决策（续写两种语义=并行续写/分支、续写改为"指令全带+只裁最近一版答案"的内容感知、max_tokens 上调到 65536）、过程中发现并修复的 4 个问题（状态词撞类名、并行续写血缘、中等宽度布局塌陷、侧栏历史项被网格拉伸）、线上验证与当前限制。
 - `20260602/generated-page-js-css-sandbox-record.md`：为展示页安全放开 CSS/JS 的实施记录。安全范式从"清洗掉 JS"切换为"隔离优先"（沙箱 CSP + sandboxed iframe + `connect-src 'none'` 默认禁网 + 可信 CDN 白名单）；顺带把页面访问链接升级为 `/p/{conversation_id}/{page_id}` 并修复删会话后页面仍可访问。
 - `20260602/generated_page_js_sandbox.plan.md`：上述实施对应的方案归档（plan 同步留档便于回溯）。
+- `20260602/page-skills-injection-record.md`：网页制作技能（page-skills）发现与注入实施记录。方案 B（技能目录扫描 + 轻量 LLM 路由 + 全量注入 + 持久化延用，选择器抽象预留演进到 Agentic 方案 C）；含默认开启/未选由模型自动选/可手动覆盖与显式关闭、续写延用 parent 链路、batch 级一次路由、路由短超时+关键词兜底、技能目录不在后端构建上下文的部署注意点。
 
 ## 使用约定
 

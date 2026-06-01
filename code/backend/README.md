@@ -54,6 +54,8 @@ journalctl -u star-page-backend.service -f
 - `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树。
 - `PATCH /api/conversations/{conversation_id}`：更新会话收藏状态。
 - `DELETE /api/conversations/{conversation_id}`：软删除会话，写入 `deleted_at` 后不再出现在历史列表。
+- `GET /api/models`：返回多模型目录（含可用性）供前端勾选。
+- `GET /api/skills`：返回网页制作技能目录（key/name/description）；技能能力关闭时返回空列表。
 - `GET /api/pages`：旧版页面级历史接口，当前左侧历史已切到会话级接口。
 - `GET /api/pages/{page_id}`：获取页面元数据。
 - `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。会话被软删后其下节点链接同步失效（404）。
@@ -61,6 +63,8 @@ journalctl -u star-page-backend.service -f
 `POST /api/generations` 同时兼容 JSON 和 `multipart/form-data`。上传文件时表单字段为：
 
 - `prompt`：用户页面需求。
+- `models`：勾选的并行模型 key（可重复字段或单个 JSON 数组字符串）。
+- `skill_keys`：网页技能选择（可选）。不传=自动（由模型路由或续写延用）；传具体技能 key=手动指定；传 `__none__`=本次不使用技能。
 - `files`：当前最多允许 3 个文件，单文件和单次总大小均不超过 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`pdf`、`txt`、`md`、`html`。后端会抽取为 Markdown/文本并合并到 LLM 上下文；PDF 仅保证可复制文本内容的抽取，扫描版图片 PDF 或加密 PDF 可能解析失败。
 
 如果抽取文本超过 5000 字符，后端会先调用 LLM 将资料压缩为面向页面生成的任务简报，再把压缩后的资料放入最终生成 prompt。
@@ -91,6 +95,18 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - `failed`：生成失败。
 
 `model_thinking` 节点承载模型 reasoning 内容，前端默认展开且支持收起；`model_output` 节点会优先使用模型返回的真实 `completion_tokens`，生成中没有真实 usage 时，前端先展示估算 token 数。
+
+## 网页制作技能（page-skills）
+
+后端在生成时可自动应用 `skills/page-skills/` 下的网页制作技能（落地页、简历、数据报告等），提升对应场景质量。机制（`app/services/skills/`）：
+
+- `registry.py`：扫描技能目录，解析每个 `SKILL.md` 的 frontmatter(YAML) + 正文，构建进程级缓存的技能目录（改技能文件需重启后端）。
+- `selector.py`：`SkillSelector` 接口 + `LlmClassifierSelector`。用户未手动选技能时做一次轻量、非流式的 LLM 分类路由（把技能 name/description 清单交给模型返回 key/NONE）；超时或失败回退到 `triggers` 关键词匹配，再回退到不注入。
+- 注入：选中技能的正文经 `build_skill_system_message` 追加为一条 system 消息，叠加在通用提示之上；首轮与续写均注入。
+- 路由发生在 `create_batch`（batch 级，作用于该批所有模型）；选定的 `skill_key` 写入 `generation_batches`/`pages`/`generation_tasks`；续写沿 parent 链路延用同一技能。
+- 配置：`PAGE_SKILLS_ENABLED`（默认开）、`PAGE_SKILLS_DIR`（默认 `skills/page-skills`）、`SKILL_ROUTER_MODEL`（留空复用默认模型）。
+
+> 部署注意：技能目录默认在仓库根的 `skills/page-skills/`，不在后端 Docker 构建上下文（`code/backend`）内。容器化部署时需把技能目录一并提供给后端（COPY 进镜像或挂载卷），并用 `PAGE_SKILLS_DIR` 指向容器内路径，否则技能列表为空、退化为通用生成。技能编写规范见 `skills/page-skills/README.md`。
 
 ## 当前默认配置
 

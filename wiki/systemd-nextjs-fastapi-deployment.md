@@ -53,6 +53,35 @@ journalctl -u star-page-backend.service -f
 journalctl -u star-page-frontend.service -f
 ```
 
+## 一次完整发布流程（含迁移与验证）
+
+改了后端代码/技能文件、或新增 SQL 迁移时，按此顺序发布（在仓库根执行）：
+
+```bash
+# 0) 若改过 service 单元文件
+systemctl daemon-reload
+
+# 1) 数据库迁移（用服务同环境；迁移脚本无"已应用"跟踪，靠 SQL 自身幂等）
+cd code/backend && set -a && . ../../config/db.env && . ../../config/oss.env && . ../../config/llm.env && set +a \
+  && .venv/bin/python -m app.db.migrate
+
+# 2) 重启后端并验证
+systemctl restart star-page-backend.service
+curl -s http://127.0.0.1:8000/healthz
+curl -s http://127.0.0.1:8000/api/skills   # 确认技能数符合预期
+
+# 3) 前端：先 build 再重启（standalone 需复制 .next/static，由 ExecStartPre 完成）
+cd ../frontend && npm run build
+systemctl restart star-page-frontend.service
+
+# 4) 验证首页与 CSS 资源（不能只看首页 200）
+curl -s -o /tmp/idx.html -w "%{http_code}\n" http://127.0.0.1:3000/
+css=$(grep -oE '/_next/static/[^"]+\.css' /tmp/idx.html | head -1)
+curl -sI "http://127.0.0.1:3000$css" | grep -iE 'HTTP/|content-type'
+```
+
+要点：迁移脚本（`app/db/migrate.py`）会把 `migrations/*.sql` 全部按序执行一遍，因此每个 SQL 必须幂等（如 `ADD COLUMN IF NOT EXISTS`）；后端 registry 等进程级缓存只在启动时加载，技能/配置改动必须重启后端，仅改磁盘文件不生效。
+
 ## 适用阶段
 
 适合早期 MVP、单机部署、需要快速保证服务常驻的阶段。等应用稳定后，可以再统一切换到 Docker Compose、镜像仓库和更完整的发布流程。

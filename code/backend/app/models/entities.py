@@ -70,6 +70,7 @@ class Page(Base, TimestampMixin):
     model_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     owner: Mapped[User] = relationship("User")
 
@@ -126,6 +127,7 @@ class GenerationBatch(Base):
     input_file_names: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     extracted_file_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -149,6 +151,7 @@ class GenerationTask(Base):
     input_file_names: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     extracted_file_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_html_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)

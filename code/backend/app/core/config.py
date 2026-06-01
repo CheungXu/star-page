@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     llm_models_file: str = Field(default="config/llm.models.json", alias="LLM_MODELS_FILE")
     llm_default_models: str | None = Field(default=None, alias="LLM_DEFAULT_MODELS")
 
+    # 网页制作技能（page-skills）：默认开启；未手动选择时由模型自动路由匹配技能并注入生成提示。
+    page_skills_enabled: bool = Field(default=True, alias="PAGE_SKILLS_ENABLED")
+    page_skills_dir: str = Field(default="skills/page-skills", alias="PAGE_SKILLS_DIR")
+    # 技能路由使用的模型 key；留空则复用默认模型。
+    skill_router_model: str | None = Field(default=None, alias="SKILL_ROUTER_MODEL")
+
     @computed_field
     @property
     def async_database_url(self) -> str:

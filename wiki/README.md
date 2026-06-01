@@ -19,6 +19,7 @@
 - `multi-model-preview-comparison.md`：多模型结果预览对比设计——复用固定视口缩放、按 N 自适应网格 + 单元聚焦、对比模式加宽预览栏、各单元独立信息与动作、先完成先展示。
 - `multi-port-static-preview-for-design-variants.md`：前端"方案 A/B/C 对比"模式，单进程 Python `http.server` + `ThreadingTCPServer` 同时绑定多个端口、每个端口默认入口指向对应方案 HTML，零依赖、零编译、零构建。
 - `png-logo-transparent-and-trim.md`：白底 PNG logo 透明化 + 自动裁剪流程，覆盖 GIMP color-to-alpha 算法、近白色伪影清理、按 alpha bbox 裁剪，配套 CSS `drop-shadow` 最佳实践。本仓库另有"轻量阈值法"版本适用于干净白底无伪影的源图，记录在 `script/README.md`。
+- `skill-discovery-and-injection.md`：技能（Skill）发现与注入的通用做法——技能目录(SKILL.md=元数据+正文) + 选择器(关键词/轻量 LLM 路由/Agentic 工具发现三范式) + 注入(包装成 system 叠加)；含默认开启+自动选+手动覆盖、路由兜底不可阻断、batch 级一次定调、持久化多轮延用、渐进式披露省成本、选择器做接口平滑演进(B→C)、技能目录不在构建上下文的部署陷阱。
 - `systemd-nextjs-fastapi-deployment.md`：Next.js + FastAPI 早期 MVP 使用 systemd 常驻运行的部署要点；含 standalone 静态资源教训、"代码更新需重启（无 `--reload`）"、SSE 长连接导致停止卡 90s 应设 `TimeoutStopSec`。
 - `uploaded-document-ingestion-for-generation.md`：上传资料辅助页面生成时的文件抽取、长文本压缩、LLM 重试、调试记录和节点可视化原则。
 - `user-scoped-history-persistence.md`：用户维度历史记录持久化原则，说明跨设备历史应落数据库，浏览器本地只保存设备内临时会话状态。

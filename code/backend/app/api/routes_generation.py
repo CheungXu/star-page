@@ -23,6 +23,7 @@ class ParsedGenerationRequest:
     prompt: str
     files: list[UploadFile] = field(default_factory=list)
     models: list[str] = field(default_factory=list)
+    skill_keys: list[str] = field(default_factory=list)
     conversation_id: uuid.UUID | None = None
     base_page_id: uuid.UUID | None = None
 
@@ -45,6 +46,7 @@ async def create_generation(request: Request) -> GenerationCreateResponse:
                 compression_prompt=generation_input.compression_prompt,
                 conversation_id=parsed.conversation_id,
                 base_page_id=parsed.base_page_id,
+                skill_keys=parsed.skill_keys,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
@@ -53,6 +55,8 @@ async def create_generation(request: Request) -> GenerationCreateResponse:
             conversation_id=creation.conversation_id,
             batch_id=creation.batch_id,
             kind=creation.kind,
+            skill_key=creation.skill_key,
+            skill_name=creation.skill_name,
             runs=[
                 GenerationRunItem(
                     task_id=run.task_id,
@@ -78,7 +82,8 @@ async def _parse_create_generation_request(request: Request) -> ParsedGeneration
 
         payload = _validate_generation_payload(
             prompt=raw_prompt,
-            models=_parse_models_from_form(form),
+            models=_parse_list_from_form(form, "models"),
+            skill_keys=_parse_list_from_form(form, "skill_keys"),
             conversation_id=_parse_optional_str(form.get("conversation_id")),
             base_page_id=_parse_optional_str(form.get("base_page_id")),
         )
@@ -87,6 +92,7 @@ async def _parse_create_generation_request(request: Request) -> ParsedGeneration
             prompt=payload.prompt,
             files=files,
             models=payload.models,
+            skill_keys=payload.skill_keys,
             conversation_id=payload.conversation_id,
             base_page_id=payload.base_page_id,
         )
@@ -99,6 +105,7 @@ async def _parse_create_generation_request(request: Request) -> ParsedGeneration
         prompt=payload.prompt,
         files=[],
         models=payload.models,
+        skill_keys=payload.skill_keys,
         conversation_id=payload.conversation_id,
         base_page_id=payload.base_page_id,
     )
@@ -108,6 +115,7 @@ def _validate_generation_payload(
     *,
     prompt: str,
     models: list[str],
+    skill_keys: list[str],
     conversation_id: str | None,
     base_page_id: str | None,
 ) -> GenerationCreateRequest:
@@ -115,6 +123,7 @@ def _validate_generation_payload(
         return GenerationCreateRequest(
             prompt=prompt,
             models=models,
+            skill_keys=skill_keys,
             conversation_id=conversation_id,
             base_page_id=base_page_id,
         )
@@ -122,9 +131,9 @@ def _validate_generation_payload(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()) from exc
 
 
-def _parse_models_from_form(form: FormData) -> list[str]:
-    raw_values = [value for value in form.getlist("models") if isinstance(value, str)]
-    # 支持两种传法：重复字段 models=qwen&models=doubao，或单个 JSON 数组字符串。
+def _parse_list_from_form(form: FormData, field_name: str) -> list[str]:
+    raw_values = [value for value in form.getlist(field_name) if isinstance(value, str)]
+    # 支持两种传法：重复字段 field=a&field=b，或单个 JSON 数组字符串。
     if len(raw_values) == 1 and raw_values[0].strip().startswith("["):
         try:
             parsed = json.loads(raw_values[0])

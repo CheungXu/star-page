@@ -24,12 +24,16 @@ from app.models.entities import (
 )
 from app.services.html_sanitizer import extract_html_document, sanitize_html
 from app.services.llm.client import create_llm_client
-from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT
+from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, build_skill_system_message
 from app.services.llm.types import LlmMessage, LlmUsage
+from app.services.skills.registry import SkillRegistry, get_skill_registry
+from app.services.skills.selector import select_skill_for_prompt
 from app.services.sse import SseEvent
 from app.services.storage.factory import create_storage_provider
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+# 前端"不使用技能"的显式信号：跳过自动路由、本轮不注入技能。
+SKILL_NONE_SENTINEL = "__none__"
 
 
 @dataclass
@@ -49,6 +53,8 @@ class BatchCreation:
     batch_id: uuid.UUID
     kind: str
     runs: list[BatchRunRef] = field(default_factory=list)
+    skill_key: str | None = None
+    skill_name: str | None = None
 
 
 class GenerationService:
@@ -89,6 +95,7 @@ class GenerationService:
         compression_prompt: str | None = None,
         conversation_id: uuid.UUID | None = None,
         base_page_id: uuid.UUID | None = None,
+        skill_keys: list[str] | None = None,
     ) -> BatchCreation:
         """创建一轮生成：会话(新建/复用) -> 批次 -> 每个模型一个 Page 节点 + Task。"""
         registry = get_model_registry()
@@ -122,6 +129,14 @@ class GenerationService:
             kind = "create"
             parent_for_model = {key: None for key in model_keys}
 
+        skill_key = await self._resolve_skill_key(
+            skill_keys=skill_keys,
+            is_continue=conversation_id is not None,
+            parent_for_model=parent_for_model,
+            base_page_id=base_page_id,
+            route_prompt=title_prompt or user_prompt or prompt,
+        )
+
         batch = GenerationBatch(
             conversation_id=conversation.id,
             base_page_id=base_page_id,
@@ -132,6 +147,7 @@ class GenerationService:
             input_file_names=input_file_names or [],
             extracted_file_text=extracted_file_text or None,
             compression_prompt=compression_prompt,
+            skill_key=skill_key,
             status="pending",
         )
         self.session.add(batch)
@@ -154,6 +170,7 @@ class GenerationService:
                 model_key=model_key,
                 model_provider=model.provider if model else None,
                 model_name=model.model if model else None,
+                skill_key=skill_key,
             )
             self.session.add(page)
             await self.session.flush()
@@ -170,6 +187,7 @@ class GenerationService:
                 input_file_names=input_file_names or [],
                 extracted_file_text=extracted_file_text or None,
                 compression_prompt=compression_prompt,
+                skill_key=skill_key,
                 model_prompt=prompt,
                 status="pending",
             )
@@ -188,15 +206,75 @@ class GenerationService:
             )
 
         await self.session.commit()
+        skill = get_skill_registry().get(skill_key)
         return BatchCreation(
             conversation_id=conversation.id,
             batch_id=batch.id,
             kind=kind,
             runs=runs,
+            skill_key=skill_key,
+            skill_name=skill.name if skill else None,
         )
 
     def _page_url(self, page: Page) -> str:
         return build_page_url(self.settings, page.conversation_id, page.id)
+
+    async def _resolve_skill_key(
+        self,
+        *,
+        skill_keys: list[str] | None,
+        is_continue: bool,
+        parent_for_model: dict[str, uuid.UUID | None],
+        base_page_id: uuid.UUID | None,
+        route_prompt: str,
+    ) -> str | None:
+        """决定本批次的技能 key。优先级：手动具体技能 > 显式关闭 > 续写延用 > 新建自动路由。"""
+        if not self.settings.page_skills_enabled:
+            return None
+
+        registry = get_skill_registry()
+        mode, manual_key = _interpret_skill_selection(skill_keys, registry)
+        if mode == "off":
+            return None
+        if mode == "manual":
+            return manual_key
+
+        # 自动：续写延用 parent 链路上的技能（不重新路由，保持同一会话一致）；新建则 LLM 路由。
+        if is_continue:
+            return await self._inherit_skill_key(parent_for_model, base_page_id)
+        return await select_skill_for_prompt(route_prompt, router_model=self.settings.skill_router_model)
+
+    async def _inherit_skill_key(
+        self, parent_for_model: dict[str, uuid.UUID | None], base_page_id: uuid.UUID | None
+    ) -> str | None:
+        """续写时沿 parent 链路找最近一个已设置的 skill_key：分支续写优先用基点链路，否则取任一父节点链路。"""
+        candidate_ids: list[uuid.UUID] = []
+        if base_page_id is not None:
+            candidate_ids.append(base_page_id)
+        candidate_ids.extend(pid for pid in parent_for_model.values() if pid is not None)
+
+        seen: set[uuid.UUID] = set()
+        for page_id in candidate_ids:
+            if page_id in seen:
+                continue
+            seen.add(page_id)
+            key = await self._skill_key_from_chain(page_id)
+            if key:
+                return key
+        return None
+
+    async def _skill_key_from_chain(self, page_id: uuid.UUID) -> str | None:
+        current_id: uuid.UUID | None = page_id
+        visited: set[uuid.UUID] = set()
+        while current_id is not None and current_id not in visited and len(visited) < 100:
+            visited.add(current_id)
+            node = await self.session.get(Page, current_id)
+            if node is None:
+                break
+            if node.skill_key:
+                return node.skill_key
+            current_id = node.parent_page_id
+        return None
 
     async def _latest_node_per_model(
         self, conversation_id: uuid.UUID, model_keys: list[str]
@@ -221,15 +299,15 @@ class GenerationService:
         策略：历次"指令"都带上（短、廉价，保留完整意图）；"答案"只保留最近一版 HTML
         （HTML 是完整快照，已包含此前全部改动，无需再带更早版本，避免上下文爆炸）。
         """
-        system = LlmMessage(role="system", content=HTML_PAGE_SYSTEM_PROMPT)
+        system_messages = self._build_system_messages(task)
 
         if page.parent_page_id is None:
-            return [system, LlmMessage(role="user", content=task.prompt)]
+            return [*system_messages, LlmMessage(role="user", content=task.prompt)]
 
         parent_html = await self._load_node_html(page.parent_page_id)
         if not parent_html:
             # 拿不到上一版 HTML 时退化为普通生成，至少不报错。
-            return [system, LlmMessage(role="user", content=task.prompt)]
+            return [*system_messages, LlmMessage(role="user", content=task.prompt)]
 
         instructions = await self._collect_ancestor_instructions(page.parent_page_id)
         if instructions:
@@ -242,11 +320,20 @@ class GenerationService:
             + task.prompt
         )
         return [
-            system,
+            *system_messages,
             LlmMessage(role="user", content=history_text),
             LlmMessage(role="assistant", content=parent_html),
             LlmMessage(role="user", content=continue_instruction),
         ]
+
+    def _build_system_messages(self, task: GenerationTask) -> list[LlmMessage]:
+        """通用系统提示 + （如选中技能则）该技能的专项指南。"""
+        messages = [LlmMessage(role="system", content=HTML_PAGE_SYSTEM_PROMPT)]
+        if self.settings.page_skills_enabled and task.skill_key:
+            skill = get_skill_registry().get(task.skill_key)
+            if skill is not None:
+                messages.append(LlmMessage(role="system", content=build_skill_system_message(skill)))
+        return messages
 
     async def _collect_ancestor_instructions(self, parent_page_id: uuid.UUID) -> list[str]:
         """沿 parent_page_id 向上收集历次"指令"（每个祖先节点对应那一轮的用户需求），按时间正序返回。"""
@@ -665,6 +752,24 @@ class GenerationService:
                 break
 
             await asyncio.sleep(1)
+
+
+def _interpret_skill_selection(
+    skill_keys: list[str] | None, registry: SkillRegistry
+) -> tuple[str, str | None]:
+    """解析前端技能选择：返回 (mode, key)。mode ∈ {off, manual, auto}。
+
+    - 含 __none__：显式关闭。
+    - 含可用技能 key：手动指定（取首个有效）。
+    - 否则：自动（交由续写延用或新建路由）。
+    """
+    keys = [key.strip() for key in (skill_keys or []) if key and key.strip()]
+    if any(key == SKILL_NONE_SENTINEL for key in keys):
+        return "off", None
+    for key in keys:
+        if registry.get(key) is not None:
+            return "manual", key
+    return "auto", None
 
 
 def _build_page_title(prompt: str) -> str:

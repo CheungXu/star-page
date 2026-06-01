@@ -1,0 +1,4 @@
+# 外部技能原始仓库（仅作改造参考，不纳入版本库）
+# 这些目录由克隆上游 skills 仓库产生，体积较大且各自带 .git，
+# 改造后的成品在 skills/page-skills/ 下，原始件无需提交。
+skills/ori-page-skills/
