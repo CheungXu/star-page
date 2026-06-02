@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Request, Response, status
+
+from app.core.auth import get_client_ip, get_current_user, get_session_token
+from app.core.config import get_settings
+from app.core.database import AsyncSessionLocal
+from app.schemas.auth import (
+    AuthLoginResponse,
+    AuthUserResponse,
+    PasswordSetRequest,
+    SmsLoginRequest,
+    SmsSendRequest,
+    SmsSendResponse,
+)
+from app.services.auth_service import AuthService
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+@router.post("/sms/send", response_model=SmsSendResponse)
+async def send_sms_code(payload: SmsSendRequest, request: Request) -> SmsSendResponse:
+    async with AsyncSessionLocal() as session:
+        service = AuthService(session)
+        try:
+            await service.send_login_code(phone=payload.phone, sent_ip=get_client_ip(request))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return SmsSendResponse(cooldown_seconds=service.settings.sms_send_cooldown_seconds)
+
+
+@router.post("/sms/login", response_model=AuthLoginResponse)
+async def login_with_sms(payload: SmsLoginRequest, request: Request, response: Response) -> AuthLoginResponse:
+    async with AsyncSessionLocal() as session:
+        service = AuthService(session)
+        try:
+            result = await service.login_with_code(
+                phone=payload.phone,
+                code=payload.code,
+                user_agent=request.headers.get("user-agent"),
+                ip_address=get_client_ip(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+        _set_session_cookie(response, result.session_token)
+        return AuthLoginResponse(user=_to_user_response(result.user))
+
+
+@router.get("/me", response_model=AuthUserResponse)
+async def get_me(request: Request) -> AuthUserResponse:
+    async with AsyncSessionLocal() as session:
+        user = await get_current_user(session, request)
+        return _to_user_response(user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(request: Request, response: Response) -> None:
+    async with AsyncSessionLocal() as session:
+        await AuthService(session).revoke_session_token(get_session_token(request))
+    _clear_session_cookie(response)
+
+
+@router.post("/password", response_model=AuthUserResponse)
+async def set_password(payload: PasswordSetRequest, request: Request) -> AuthUserResponse:
+    async with AsyncSessionLocal() as session:
+        user = await get_current_user(session, request)
+        user = await AuthService(session).set_password(user, payload.password)
+        return _to_user_response(user)
+
+
+def _to_user_response(user) -> AuthUserResponse:
+    return AuthUserResponse(
+        id=user.id,
+        phone=user.phone or "",
+        display_name=user.display_name,
+        phone_verified=user.phone_verified,
+        has_password=bool(user.password_hash),
+    )
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    settings = get_settings()
+    response.set_cookie(
+        key=settings.auth_session_cookie_name,
+        value=token,
+        max_age=settings.auth_session_ttl_seconds,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    settings = get_settings()
+    response.delete_cookie(
+        key=settings.auth_session_cookie_name,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )

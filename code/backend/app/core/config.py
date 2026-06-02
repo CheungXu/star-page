@@ -28,6 +28,7 @@ def _load_local_env_files() -> None:
                 base / "config" / "db.env",
                 base / "config" / "oss.env",
                 base / "config" / "llm.env",
+                base / "config" / "sms.env",
             ]
         )
 
@@ -57,6 +58,20 @@ class Settings(BaseSettings):
     default_user_name: str = Field(default="default_test", alias="DEFAULT_USER_NAME")
     default_user_email: str = Field(default="default_test@example.local", alias="DEFAULT_USER_EMAIL")
     default_user_display_name: str = Field(default="默认测试用户", alias="DEFAULT_USER_DISPLAY_NAME")
+
+    auth_session_cookie_name: str = Field(default="sp_session", alias="AUTH_SESSION_COOKIE_NAME")
+    auth_session_ttl_seconds: int = Field(default=60 * 60 * 24 * 30, alias="AUTH_SESSION_TTL_SECONDS")
+    auth_cookie_secure: bool = Field(default=False, alias="AUTH_COOKIE_SECURE")
+    auth_secret_key: str = Field(default="star-page-dev-secret-change-me", alias="AUTH_SECRET_KEY")
+
+    sms_provider: str = Field(default="mock", alias="SMS_PROVIDER")
+    sms_code_ttl_seconds: int = Field(default=300, alias="SMS_CODE_TTL_SECONDS")
+    sms_send_cooldown_seconds: int = Field(default=60, alias="SMS_SEND_COOLDOWN_SECONDS")
+    sms_daily_limit_per_phone: int = Field(default=20, alias="SMS_DAILY_LIMIT_PER_PHONE")
+    sms_daily_limit_per_ip: int = Field(default=100, alias="SMS_DAILY_LIMIT_PER_IP")
+    aliyun_sms_sign_name: str = Field(default="", alias="ALIYUN_SMS_SIGN_NAME")
+    aliyun_sms_template_code: str = Field(default="", alias="ALIYUN_SMS_TEMPLATE_CODE")
+    aliyun_sms_endpoint: str = Field(default="dysmsapi.aliyuncs.com", alias="ALIYUN_SMS_ENDPOINT")
 
     llm_provider: str = Field(default="qwen", alias="LLM_PROVIDER")
     llm_protocol: str = Field(default="openai", alias="LLM_PROTOCOL")
@@ -168,6 +183,17 @@ class Settings(BaseSettings):
             if normalized in {"0", "false", "no", "off"}:
                 return False
 
+        return value
+
+    @field_validator("auth_cookie_secure", mode="before")
+    @classmethod
+    def parse_bool(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
         return value
 
 

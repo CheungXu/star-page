@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from starlette.datastructures import FormData, UploadFile
 
+from app.core.auth import get_current_user
 from app.core.database import AsyncSessionLocal
 from app.schemas.generation import GenerationCreateRequest, GenerationCreateResponse, GenerationRunItem
 from app.services.document_extractor import prepare_generation_input
@@ -31,9 +32,10 @@ class ParsedGenerationRequest:
 @router.post("", response_model=GenerationCreateResponse)
 async def create_generation(request: Request) -> GenerationCreateResponse:
     parsed = await _parse_create_generation_request(request)
-    generation_input = await prepare_generation_input(parsed.prompt, parsed.files)
 
     async with AsyncSessionLocal() as session:
+        user = await get_current_user(session, request)
+        generation_input = await prepare_generation_input(parsed.prompt, parsed.files)
         service = GenerationService(session)
         try:
             creation = await service.create_batch(
@@ -47,6 +49,7 @@ async def create_generation(request: Request) -> GenerationCreateResponse:
                 conversation_id=parsed.conversation_id,
                 base_page_id=parsed.base_page_id,
                 skill_keys=parsed.skill_keys,
+                user=user,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
@@ -152,10 +155,13 @@ def _parse_optional_str(value: object) -> str | None:
 
 @router.get("/{task_id}/events")
 async def stream_generation_events(task_id: uuid.UUID, request: Request) -> StreamingResponse:
+    async with AsyncSessionLocal() as session:
+        user = await get_current_user(session, request)
+
     async def event_generator():
         async with AsyncSessionLocal() as session:
             service = GenerationService(session)
-            async for event in service.run_or_replay(task_id):
+            async for event in service.run_or_replay(task_id, user):
                 if await request.is_disconnected():
                     break
                 yield format_sse(event)

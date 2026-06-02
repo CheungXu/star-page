@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import desc, or_, select
 
+from app.core.auth import get_current_user, get_optional_user
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from app.core.default_user import ensure_default_user
 from app.core.urls import build_page_url
 from app.models.entities import Conversation, GenerationTask, Page, PagePermission, PageVersion
 from app.schemas.pages import PageHistoryItem, PageResponse
@@ -42,11 +42,11 @@ def _build_page_csp() -> str:
 
 
 @router.get("/api/pages", response_model=list[PageHistoryItem])
-async def list_pages() -> list[PageHistoryItem]:
+async def list_pages(request: Request) -> list[PageHistoryItem]:
     settings = get_settings()
 
     async with AsyncSessionLocal() as session:
-        user = await ensure_default_user(session)
+        user = await get_current_user(session, request)
         result = await session.execute(
             select(Page)
             .outerjoin(
@@ -94,10 +94,13 @@ async def list_pages() -> list[PageHistoryItem]:
 
 
 @router.get("/api/pages/{page_id}", response_model=PageResponse)
-async def get_page(page_id: uuid.UUID) -> PageResponse:
+async def get_page(page_id: uuid.UUID, request: Request) -> PageResponse:
     async with AsyncSessionLocal() as session:
+        user = await get_current_user(session, request)
         page = await session.get(Page, page_id)
         if page is None:
+            raise HTTPException(status_code=404, detail="页面不存在")
+        if not await can_view_page(session, page, user):
             raise HTTPException(status_code=404, detail="页面不存在")
 
         return PageResponse(
@@ -113,7 +116,7 @@ async def get_page(page_id: uuid.UUID) -> PageResponse:
 
 
 @router.get("/p/{conversation_id}/{page_id}")
-async def serve_page(conversation_id: uuid.UUID, page_id: uuid.UUID) -> HTMLResponse:
+async def serve_page(conversation_id: uuid.UUID, page_id: uuid.UUID, request: Request) -> HTMLResponse:
     async with AsyncSessionLocal() as session:
         page = await session.get(Page, page_id)
         if page is None or page.deleted_at is not None:
@@ -128,7 +131,7 @@ async def serve_page(conversation_id: uuid.UUID, page_id: uuid.UUID) -> HTMLResp
         if conversation is None or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="页面不存在")
 
-        user = await ensure_default_user(session)
+        user = await get_optional_user(session, request)
         if not await can_view_page(session, page, user):
             raise HTTPException(status_code=403, detail="无权访问该页面")
 

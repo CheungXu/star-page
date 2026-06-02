@@ -11,7 +11,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_model_registry, get_settings
-from app.core.default_user import ensure_default_user
 from app.core.urls import build_page_url
 from app.models.entities import (
     Conversation,
@@ -21,6 +20,7 @@ from app.models.entities import (
     Page,
     PagePermission,
     PageVersion,
+    User,
 )
 from app.services.html_sanitizer import extract_html_document, sanitize_html
 from app.services.llm.client import create_llm_client
@@ -96,11 +96,11 @@ class GenerationService:
         conversation_id: uuid.UUID | None = None,
         base_page_id: uuid.UUID | None = None,
         skill_keys: list[str] | None = None,
+        user: User,
     ) -> BatchCreation:
         """创建一轮生成：会话(新建/复用) -> 批次 -> 每个模型一个 Page 节点 + Task。"""
         registry = get_model_registry()
         model_keys = self._resolve_model_keys(selected_model_keys)
-        user = await ensure_default_user(self.session)
         title = _build_page_title(title_prompt or prompt)
 
         # parent_for_model：每个模型的新节点接到哪个父节点。
@@ -383,10 +383,13 @@ class GenerationService:
                     return None
         return None
 
-    async def run_or_replay(self, task_id: uuid.UUID) -> AsyncIterator[SseEvent]:
+    async def run_or_replay(self, task_id: uuid.UUID, user: User) -> AsyncIterator[SseEvent]:
         task = await self.session.get(GenerationTask, task_id)
         if task is None:
             yield SseEvent("failed", {"type": "failed", "message": "生成任务不存在"})
+            return
+        if task.requested_by_user_id != user.id:
+            yield SseEvent("failed", {"type": "failed", "message": "无权访问该生成任务"})
             return
 
         if task.status == "pending":

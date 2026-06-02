@@ -6,8 +6,6 @@ from pathlib import Path
 import asyncpg
 
 from app.core.config import get_settings
-from app.core.database import AsyncSessionLocal
-from app.core.default_user import ensure_default_user
 
 
 async def run_migrations() -> None:
@@ -23,10 +21,6 @@ async def run_migrations() -> None:
             print(f"已执行迁移：{sql_file.name}")
     finally:
         await connection.close()
-
-    async with AsyncSessionLocal() as session:
-        user = await ensure_default_user(session)
-        print(f"默认测试用户已就绪：{user.username}")
 
 
 def _to_asyncpg_dsn(database_url: str) -> str:

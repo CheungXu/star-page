@@ -1,6 +1,6 @@
 # FastAPI 后端
 
-后端负责页面生成主流程：默认用户、数据库、LLM 流式调用、OSS 存取、HTML 清洗、SSE 事件、上传文件内容抽取和 `/p/{conversation_id}/{page_id}` 页面访问网关。
+后端负责页面生成主流程：手机号用户系统、数据库、LLM 流式调用、OSS 存取、HTML 清洗、SSE 事件、上传文件内容抽取和 `/p/{conversation_id}/{page_id}` 页面访问网关。
 
 生成页现已支持展示型 CSS/JS：安全采用"隔离优先"——`/p` 网关统一下发 `Content-Security-Policy: sandbox allow-scripts ...; connect-src 'none'`，把页面关进无主站凭证、无外部网络的不透明 origin；`html_sanitizer` 放行内联脚本/事件/表单控件，移除 iframe/object/embed/base 与 meta refresh，外链 `<script src>` 仅留可信 CDN（`GENERATED_PAGE_CDN_ALLOWLIST`）。原理详见 `wiki/generated-page-js-sandbox-and-security.md`。
 
@@ -48,9 +48,14 @@ journalctl -u star-page-backend.service -f
 
 ## 关键接口
 
+- `POST /api/auth/sms/send`：向手机号发送登录验证码。
+- `POST /api/auth/sms/login`：验证码登录；手机号未注册时自动注册，并写入 HttpOnly Session Cookie。
+- `GET /api/auth/me`：读取当前登录用户。
+- `POST /api/auth/logout`：注销当前 Session。
+- `POST /api/auth/password`：登录后设置或更新密码。
 - `POST /api/generations`：创建页面生成任务。
 - `GET /api/generations/{task_id}/events`：通过 SSE 推送思考过程和完成状态。
-- `GET /api/conversations`：查询当前默认测试用户的会话历史列表，支持 `favorite_only=true` 和 `q=关键词`。
+- `GET /api/conversations`：查询当前登录用户的会话历史列表，支持 `favorite_only=true` 和 `q=关键词`。
 - `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树。
 - `PATCH /api/conversations/{conversation_id}`：更新会话收藏状态。
 - `DELETE /api/conversations/{conversation_id}`：软删除会话，写入 `deleted_at` 后不再出现在历史列表。
@@ -110,7 +115,8 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 
 ## 当前默认配置
 
-- 默认测试用户：`default_test`。
+- 用户系统：手机号验证码登录/自动注册，Session Cookie 名默认 `sp_session`。
+- 短信 Provider：`SMS_PROVIDER`，本地可用 `mock`，生产使用 `aliyun`。
 - 页面默认权限：`public`，但 OSS Bucket 仍保持私有，访问统一走 `/p/{conversation_id}/{page_id}` 网关。
 - 生成页可信 CDN 白名单：`GENERATED_PAGE_CDN_ALLOWLIST`，默认 `https://cdn.jsdelivr.net https://unpkg.com`。
 - 业务数据库：`stars_page`。

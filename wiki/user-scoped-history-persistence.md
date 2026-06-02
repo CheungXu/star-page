@@ -22,15 +22,16 @@
 - 创建节点的即时 UI 状态。
 - 复制成功、输入框内容等短生命周期状态。
 
-## 过渡期默认测试用户
+## 当前用户来源
 
-在正式用户系统上线前，可以沿用默认测试用户：
+正式用户系统接入后，请求用户来源应来自服务端登录态：
 
-- 后端通过 `ensure_default_user()` 获取当前默认用户。
-- 创建页面时把该用户写入 `conversations.owner_user_id`、`pages.owner_user_id` 和 `page_permissions`。
-- 历史接口按默认用户查询其拥有的会话，页面访问仍按页面权限控制。
+- 后端通过 `HttpOnly` Session Cookie 解析当前手机号用户。
+- 创建页面时把该用户写入 `conversations.owner_user_id`、`pages.owner_user_id`、`generation_tasks.requested_by_user_id` 和 `page_permissions`。
+- 历史接口按当前用户查询其拥有的会话，页面访问仍按页面权限控制。
+- 未登录访问个人历史、创建生成等业务接口应返回 401；`public` 分享页可匿名访问。
 
-这样可以保持未来用户体系的表结构和权限边界，后续接入真实登录用户时，只需要替换“当前用户来源”，而不是重写页面历史模型。
+预研阶段不迁移、不认领默认测试用户期间产生的历史数据，避免把混合 demo 数据误归属给真实用户。
 
 ## 接口设计
 

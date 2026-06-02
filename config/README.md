@@ -55,7 +55,38 @@
 - 当前 OSS 真实配置文件为 `config/oss.env`，该文件包含密钥，不读取、不提交。
 - RDS 真实配置文件建议使用 `config/db.env`，模板文件为 `config/db.env.example`。
 - LLM 真实配置建议放在 `config/llm.env`，模板文件为 `config/llm.env.example`；也可以统一放入 `config/.env`，不要提交真实 API Key。
+- 短信真实配置建议放在 `config/sms.env`，用于 `SMS_PROVIDER`、短信签名、模板 Code 和阿里云凭据；不要提交真实 AccessKey。
 - `config/env.example` 只能保留变量名和非敏感默认值，不要写入 AccessKey、数据库密码、AI Key、Session Secret 等真实密钥。
+
+## 阿里云短信
+
+手机号验证码登录使用短信 Provider 抽象，当前可选：
+
+```text
+SMS_PROVIDER=mock    # 本地开发，不真实发送
+SMS_PROVIDER=aliyun  # 阿里云短信服务
+```
+
+阿里云短信当前业务配置：
+
+```text
+ALIYUN_SMS_SIGN_NAME=深圳星泽创旗科技
+ALIYUN_SMS_TEMPLATE_CODE=SMS_507185134
+ALIYUN_SMS_ENDPOINT=dysmsapi.aliyuncs.com
+```
+
+模板参数只有一个验证码变量：
+
+```json
+{"code": "123456"}
+```
+
+认证优先级：
+
+- 如果环境变量中存在 `ALIBABA_CLOUD_ACCESS_KEY_ID` 和 `ALIBABA_CLOUD_ACCESS_KEY_SECRET`，后端直接用这组 AK/SK 调用短信接口。
+- 如果没有 AK/SK，则回退阿里云默认凭据链，后续迁移到 ECS/RAM Role 时可复用。
+
+建议短信 RAM 用户只授予 `dysmsapi:SendSms` 最小权限。
 
 ## LLM 多模型配置
 
@@ -179,4 +210,4 @@ bash script/check_postgres_connection.sh
 
 MVP 业务表已统一放在独立数据库 `stars_page`。应用账号需要具备在业务库 `public` schema 下创建表的权限；如果迁移时报 `permission denied for schema public`，用高权限账号参考 `script/prepare_rds_database.sql` 先完成授权。
 
-当前 `stars_page` 迁移已成功执行，默认测试用户 `default_test` 已初始化。后续不要长期把业务表放在默认 `postgres` 数据库。
+当前 `stars_page` 迁移已成功执行，手机号用户系统相关表已创建。后续不要长期把业务表放在默认 `postgres` 数据库。

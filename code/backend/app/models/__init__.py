@@ -5,7 +5,9 @@ from app.models.entities import (
     Page,
     PagePermission,
     PageVersion,
+    SmsVerificationCode,
     User,
+    UserSession,
 )
 
 __all__ = [
@@ -15,5 +17,7 @@ __all__ = [
     "Page",
     "PagePermission",
     "PageVersion",
+    "SmsVerificationCode",
     "User",
+    "UserSession",
 ]

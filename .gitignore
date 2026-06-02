@@ -2,3 +2,10 @@
 # 这些目录由克隆上游 skills 仓库产生，体积较大且各自带 .git，
 # 改造后的成品在 skills/page-skills/ 下，原始件无需提交。
 skills/ori-page-skills/
+
+# 本地与服务器真实环境变量，包含数据库、OSS、LLM、短信等密钥
+config/*.env
+
+# Python 虚拟环境
+.venv/
+code/backend/.venv/

@@ -20,6 +20,18 @@ type SkillInfo = {
   description: string;
 };
 
+type AuthUser = {
+  id: string;
+  phone: string;
+  display_name: string;
+  phone_verified: boolean;
+  has_password: boolean;
+};
+
+type AuthLoginResponse = {
+  user: AuthUser;
+};
+
 type CreateGenerationResponse = {
   conversation_id: string;
   batch_id: string;
@@ -86,6 +98,7 @@ type RunState = {
 };
 
 type StoredSession = {
+  userId?: string;
   conversationId: string;
   batchId: string;
   title: string;
@@ -318,6 +331,13 @@ const BranchIcon = () => (
     <path d="M6 8.4v7.2" />
     <path d="M18 11.4c0 3-3 3.6-6 3.6" />
     <path d="M15.8 7l2.2 2 2.2-2" transform="translate(-2.2 -1)" />
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20 21a8 8 0 0 0-16 0" />
+    <circle cx="12" cy="8" r="4" />
   </svg>
 );
 
@@ -672,7 +692,195 @@ function PreviewCell({
   );
 }
 
+function AuthModal({
+  onClose,
+  onLogin,
+}: {
+  onClose: () => void;
+  onLogin: (user: AuthUser) => void;
+}) {
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [step, setStep] = useState<"phone" | "code">("phone");
+  const [countdown, setCountdown] = useState(0);
+  const [isSending, setIsSending] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = window.setTimeout(() => setCountdown((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [countdown]);
+
+  async function sendCode(event?: FormEvent) {
+    event?.preventDefault();
+    if (isSending || countdown > 0) return;
+    setErrorMessage("");
+    setIsSending(true);
+    try {
+      const response = await apiFetch("/api/auth/sms/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+      if (!response.ok) throw new Error(await readErrorMessage(response, "验证码发送失败"));
+      const payload = (await response.json()) as { cooldown_seconds?: number };
+      setStep("code");
+      setCountdown(payload.cooldown_seconds ?? 60);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "验证码发送失败");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  async function login(event: FormEvent) {
+    event.preventDefault();
+    setErrorMessage("");
+    setIsLoggingIn(true);
+    try {
+      const response = await apiFetch("/api/auth/sms/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, code }),
+      });
+      if (!response.ok) throw new Error(await readErrorMessage(response, "登录失败"));
+      const payload = (await response.json()) as AuthLoginResponse;
+      onLogin(payload.user);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "登录失败");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
+  return (
+    <div className="auth-modal-backdrop" role="presentation">
+      <section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+        <button className="auth-modal-close" type="button" onClick={onClose} aria-label="关闭登录窗口">
+          <CloseIcon />
+        </button>
+        <div className="auth-modal-icon" aria-hidden="true"><UserIcon /></div>
+        <h2 id="auth-modal-title">手机号登录 / 注册</h2>
+        <p>输入手机号获取验证码，未注册手机号会自动创建账号。</p>
+
+        <form className="auth-form" onSubmit={step === "phone" ? sendCode : login}>
+          <label>
+            手机号
+            <input
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="请输入手机号"
+              disabled={isSending || isLoggingIn}
+            />
+          </label>
+
+          {step === "code" && (
+            <label>
+              验证码
+              <input
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="请输入短信验证码"
+                disabled={isLoggingIn}
+              />
+            </label>
+          )}
+
+          {errorMessage && <div className="auth-error">{errorMessage}</div>}
+
+          <div className="auth-actions">
+            {step === "code" && (
+              <button className="auth-secondary-button" type="button" onClick={() => void sendCode()} disabled={isSending || countdown > 0}>
+                {countdown > 0 ? `${countdown}s 后重发` : "重新发送"}
+              </button>
+            )}
+            <button className="auth-primary-button" type="submit" disabled={isSending || isLoggingIn}>
+              {step === "phone" ? (isSending ? "发送中..." : "获取验证码") : isLoggingIn ? "登录中..." : "登录 / 注册"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function PasswordPromptModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: (user: AuthUser) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function savePassword(event: FormEvent) {
+    event.preventDefault();
+    setErrorMessage("");
+    setIsSaving(true);
+    try {
+      const response = await apiFetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) throw new Error(await readErrorMessage(response, "密码设置失败"));
+      const user = (await response.json()) as AuthUser;
+      onSaved(user);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "密码设置失败");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="auth-modal-backdrop" role="presentation">
+      <section className="auth-modal password-modal" role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
+        <button className="auth-modal-close" type="button" onClick={onClose} aria-label="稍后设置密码">
+          <CloseIcon />
+        </button>
+        <h2 id="password-modal-title">建议设置登录密码</h2>
+        <p>你已经可以用手机号验证码登录。设置密码后，后续可以扩展更多账号安全能力。</p>
+        <form className="auth-form" onSubmit={savePassword}>
+          <label>
+            新密码
+            <input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              type="password"
+              autoComplete="new-password"
+              placeholder="至少 8 位"
+              disabled={isSaving}
+            />
+          </label>
+          {errorMessage && <div className="auth-error">{errorMessage}</div>}
+          <div className="auth-actions">
+            <button className="auth-secondary-button" type="button" onClick={onClose}>
+              稍后再说
+            </button>
+            <button className="auth-primary-button" type="submit" disabled={isSaving}>
+              {isSaving ? "保存中..." : "设置密码"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 export default function HomePage() {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [phase, setPhase] = useState<"idle" | "active">("idle");
   const [conversationId, setConversationId] = useState("");
@@ -705,26 +913,6 @@ export default function HomePage() {
   const motionRef = useRef<MotionLib | null>(null);
 
   useEffect(() => {
-    void loadHistory();
-    void loadModels();
-    void loadSkills();
-
-    const session = readCurrentSession();
-    if (session && session.runs?.length) {
-      applyStoredSession(session);
-      session.runs.forEach((run) => {
-        if ((run.status === "thinking" || run.status === "creating") && run.taskId) {
-          connectRun(run.taskId);
-        }
-      });
-    }
-
-    hasHydratedRef.current = true;
-    // 仅首屏恢复本地会话与模型列表。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     import("motion")
       .then((mod) => {
@@ -750,6 +938,7 @@ export default function HomePage() {
     const now = new Date().toISOString();
     const session: StoredSession = {
       conversationId,
+      userId: authUser?.id,
       batchId,
       title: buildHistoryTitle(submittedPrompt),
       prompt: submittedPrompt,
@@ -765,13 +954,73 @@ export default function HomePage() {
       updatedAt: now,
     };
     writeCurrentSession(session);
-  }, [phase, conversationId, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, selectedSkillKey, appliedSkill, roundIndex, continueBase]);
+  }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, selectedSkillKey, appliedSkill, roundIndex, continueBase]);
 
-  useEffect(() => {
-    return () => closeAllSources();
-  }, []);
+  async function initializeAuthState(): Promise<void> {
+    const user = await loadMe();
+    if (!user) {
+      localStorage.removeItem(CURRENT_SESSION_KEY);
+      setHistoryItems([]);
+      hasHydratedRef.current = true;
+      return;
+    }
 
-  async function loadHistory(scope = historyScope, search = historySearch): Promise<void> {
+    await loadHistory(historyScope, historySearch, user);
+    const session = readCurrentSession();
+    if (session && session.userId !== user.id) {
+      localStorage.removeItem(CURRENT_SESSION_KEY);
+    }
+    hasHydratedRef.current = true;
+  }
+
+  async function loadMe(): Promise<AuthUser | null> {
+    setIsAuthLoading(true);
+    try {
+      const response = await apiFetch("/api/auth/me");
+      if (response.status === 401) {
+        setAuthUser(null);
+        return null;
+      }
+      if (!response.ok) throw new Error(await readErrorMessage(response, "读取登录态失败"));
+      const user = (await response.json()) as AuthUser;
+      setAuthUser(user);
+      return user;
+    } catch {
+      setAuthUser(null);
+      return null;
+    } finally {
+      setIsAuthLoading(false);
+    }
+  }
+
+  function handleLogin(user: AuthUser) {
+    setAuthUser(user);
+    setIsAuthModalOpen(false);
+    setFileError("");
+    localStorage.removeItem(CURRENT_SESSION_KEY);
+    startNewChat();
+    void loadHistory(historyScope, historySearch, user);
+    if (!user.has_password) setShowPasswordPrompt(true);
+  }
+
+  async function handleLogout() {
+    closeAllSources();
+    try {
+      await apiFetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setAuthUser(null);
+      setHistoryItems([]);
+      setShowPasswordPrompt(false);
+      startNewChat();
+    }
+  }
+
+  async function loadHistory(scope = historyScope, search = historySearch, user = authUser): Promise<void> {
+    if (!user) {
+      setHistoryItems([]);
+      setIsHistoryLoading(false);
+      return;
+    }
     const params = new URLSearchParams();
     if (scope === "favorite") params.set("favorite_only", "true");
     const keyword = search.trim();
@@ -780,7 +1029,12 @@ export default function HomePage() {
 
     setIsHistoryLoading(true);
     try {
-      const response = await fetch(`/api/conversations${query ? `?${query}` : ""}`);
+      const response = await apiFetch(`/api/conversations${query ? `?${query}` : ""}`);
+      if (response.status === 401) {
+        setAuthUser(null);
+        setHistoryItems([]);
+        return;
+      }
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const data = (await response.json()) as ConversationListResponseItem[];
       setHistoryItems(data.map(mapConversationHistoryItem));
@@ -793,7 +1047,7 @@ export default function HomePage() {
 
   async function loadModels(): Promise<void> {
     try {
-      const response = await fetch("/api/models");
+      const response = await apiFetch("/api/models");
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const data = (await response.json()) as ModelInfo[];
       setAvailableModels(data);
@@ -819,7 +1073,7 @@ export default function HomePage() {
 
   async function loadSkills(): Promise<void> {
     try {
-      const response = await fetch("/api/skills");
+      const response = await apiFetch("/api/skills");
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const data = (await response.json()) as SkillInfo[];
       setAvailableSkills(data);
@@ -847,6 +1101,21 @@ export default function HomePage() {
     eventSourcesRef.current = [];
   }
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void initializeAuthState();
+      void loadModels();
+      void loadSkills();
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // 首屏初始化只执行一次，内部函数会读当前存储和服务端登录态。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    return () => closeAllSources();
+  }, []);
+
   function toggleModel(key: string) {
     setSelectedModelKeys((current) => {
       const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
@@ -871,6 +1140,11 @@ export default function HomePage() {
     }
     if (selectedModelKeys.length === 0) {
       setFileError("请至少选择一个模型");
+      return;
+    }
+    if (!authUser) {
+      setFileError("请先登录后再创建页面");
+      setIsAuthModalOpen(true);
       return;
     }
     if (isGenerating) {
@@ -912,7 +1186,10 @@ export default function HomePage() {
         if (continueBase) formData.append("base_page_id", continueBase.pageId);
       }
 
-      const response = await fetch("/api/generations", { method: "POST", body: formData });
+      const response = await apiFetch("/api/generations", { method: "POST", body: formData });
+      if (response.status === 401) {
+        setIsAuthModalOpen(true);
+      }
       if (!response.ok) throw new Error(await readErrorMessage(response));
 
       const data = (await response.json()) as CreateGenerationResponse;
@@ -939,7 +1216,7 @@ export default function HomePage() {
   }
 
   function connectRun(taskId: string) {
-    const source = new EventSource(`/api/generations/${taskId}/events`);
+    const source = new EventSource(`/api/generations/${taskId}/events`, { withCredentials: true });
     eventSourcesRef.current.push(source);
 
     const patch = (updater: (run: RunState) => RunState) => {
@@ -1054,7 +1331,11 @@ export default function HomePage() {
   async function restoreHistoryItem(item: HistoryItem) {
     closeAllSources();
     try {
-      const response = await fetch(`/api/conversations/${item.id}`);
+      const response = await apiFetch(`/api/conversations/${item.id}`);
+      if (response.status === 401) {
+        setIsAuthModalOpen(true);
+        return;
+      }
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const detail = (await response.json()) as ConversationDetailResponse;
       const session = buildSessionFromDetail(detail);
@@ -1105,11 +1386,15 @@ export default function HomePage() {
     );
 
     try {
-      const response = await fetch(`/api/conversations/${item.id}`, {
+      const response = await apiFetch(`/api/conversations/${item.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_favorite: nextFavorite }),
       });
+      if (response.status === 401) {
+        setIsAuthModalOpen(true);
+        return;
+      }
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const data = (await response.json()) as ConversationListResponseItem;
       const updatedItem = mapConversationHistoryItem(data);
@@ -1129,7 +1414,11 @@ export default function HomePage() {
     if (!window.confirm("删除后这条历史记录将不再显示，确认删除？")) return;
 
     try {
-      const response = await fetch(`/api/conversations/${item.id}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/conversations/${item.id}`, { method: "DELETE" });
+      if (response.status === 401) {
+        setIsAuthModalOpen(true);
+        return;
+      }
       if (!response.ok) throw new Error(await readErrorMessage(response));
       setHistoryItems((current) => current.filter((historyItem) => historyItem.id !== item.id));
       if (item.id === conversationId) {
@@ -1332,71 +1621,103 @@ export default function HomePage() {
         )}
 
         <div className="history-content" aria-hidden={isSidebarCollapsed}>
-          <div className="history-title-row">
-            <div className="history-title">{historyScope === "favorite" ? "收藏记录" : "历史创建"}</div>
-            {historySearch && (
-              <button className="history-clear-search" type="button" onClick={clearHistorySearch} aria-label="清空检索">
-                <CloseIcon />
-              </button>
-            )}
-          </div>
-          <label className="history-search">
-            <span className="history-search-icon"><SearchIcon /></span>
-            <input
-              type="search"
-              value={historySearch}
-              onChange={handleHistorySearchChange}
-              placeholder={historyScope === "favorite" ? "检索收藏记录" : "检索历史记录"}
-            />
-          </label>
-          <div className="history-list">
-            {isHistoryLoading ? (
-              <p className="history-empty">正在加载...</p>
-            ) : historyItems.length === 0 ? (
-              <p className="history-empty">{historySearch ? "未找到匹配记录" : historyScope === "favorite" ? "暂无收藏" : "暂无历史"}</p>
-            ) : (
-              historyItems.map((item) => (
-                <div
-                  className={`history-item ${item.id === conversationId ? "active" : ""} ${item.isFavorite ? "is-favorite" : ""}`}
-                  key={item.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => restoreHistoryItem(item)}
-                  onKeyDown={(event) => handleHistoryItemKeyDown(event, item)}
-                  aria-current={item.id === conversationId ? "page" : undefined}
-                >
-                  <span className="history-item-main">
-                    <span className="history-item-title">{item.title}</span>
-                    <small>
-                      {item.modelKeys.length > 1 ? `${item.modelKeys.length} 模型 · ` : ""}
-                      {formatHistoryTime(item.updatedAt)}
-                    </small>
-                  </span>
-                  <span className="history-item-actions">
-                    <button
-                      className={`history-action-button favorite ${item.isFavorite ? "is-active" : ""}`}
-                      type="button"
-                      onClick={(event) => toggleHistoryFavorite(event, item)}
-                      title={item.isFavorite ? "取消收藏" : "收藏"}
-                      aria-label={item.isFavorite ? `取消收藏 ${item.title}` : `收藏 ${item.title}`}
-                      aria-pressed={item.isFavorite}
+          {authUser ? (
+            <>
+              <div className="history-title-row">
+                <div className="history-title">{historyScope === "favorite" ? "收藏记录" : "历史创建"}</div>
+                {historySearch && (
+                  <button className="history-clear-search" type="button" onClick={clearHistorySearch} aria-label="清空检索">
+                    <CloseIcon />
+                  </button>
+                )}
+              </div>
+              <label className="history-search">
+                <span className="history-search-icon"><SearchIcon /></span>
+                <input
+                  type="search"
+                  value={historySearch}
+                  onChange={handleHistorySearchChange}
+                  placeholder={historyScope === "favorite" ? "检索收藏记录" : "检索历史记录"}
+                />
+              </label>
+              <div className="history-list">
+                {isHistoryLoading ? (
+                  <p className="history-empty">正在加载...</p>
+                ) : historyItems.length === 0 ? (
+                  <p className="history-empty">{historySearch ? "未找到匹配记录" : historyScope === "favorite" ? "暂无收藏" : "暂无历史"}</p>
+                ) : (
+                  historyItems.map((item) => (
+                    <div
+                      className={`history-item ${item.id === conversationId ? "active" : ""} ${item.isFavorite ? "is-favorite" : ""}`}
+                      key={item.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => restoreHistoryItem(item)}
+                      onKeyDown={(event) => handleHistoryItemKeyDown(event, item)}
+                      aria-current={item.id === conversationId ? "page" : undefined}
                     >
-                      <StarIcon filled={item.isFavorite} />
-                    </button>
-                    <button
-                      className="history-action-button danger"
-                      type="button"
-                      onClick={(event) => deleteHistoryItem(event, item)}
-                      title="删除"
-                      aria-label={`删除 ${item.title}`}
-                    >
-                      <TrashIcon />
-                    </button>
-                  </span>
-                </div>
-              ))
+                      <span className="history-item-main">
+                        <span className="history-item-title">{item.title}</span>
+                        <small>
+                          {item.modelKeys.length > 1 ? `${item.modelKeys.length} 模型 · ` : ""}
+                          {formatHistoryTime(item.updatedAt)}
+                        </small>
+                      </span>
+                      <span className="history-item-actions">
+                        <button
+                          className={`history-action-button favorite ${item.isFavorite ? "is-active" : ""}`}
+                          type="button"
+                          onClick={(event) => toggleHistoryFavorite(event, item)}
+                          title={item.isFavorite ? "取消收藏" : "收藏"}
+                          aria-label={item.isFavorite ? `取消收藏 ${item.title}` : `收藏 ${item.title}`}
+                          aria-pressed={item.isFavorite}
+                        >
+                          <StarIcon filled={item.isFavorite} />
+                        </button>
+                        <button
+                          className="history-action-button danger"
+                          type="button"
+                          onClick={(event) => deleteHistoryItem(event, item)}
+                          title="删除"
+                          aria-label={`删除 ${item.title}`}
+                        >
+                          <TrashIcon />
+                        </button>
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="history-login-empty">
+              <strong>{isAuthLoading ? "正在检查登录态" : "登录后查看历史"}</strong>
+              <p>历史创建会按手机号账号保存，换设备也能继续查看。</p>
+              <button type="button" onClick={() => setIsAuthModalOpen(true)}>登录 / 注册</button>
+            </div>
+          )}
+        </div>
+        <div className="sidebar-user-footer">
+          <button
+            className="sidebar-user-button"
+            type="button"
+            onClick={() => (authUser ? undefined : setIsAuthModalOpen(true))}
+            title={authUser ? authUser.phone : "登录 / 注册"}
+            aria-label={authUser ? `当前用户 ${authUser.phone}` : "登录 / 注册"}
+          >
+            <span className="sidebar-icon"><UserIcon /></span>
+            {!isSidebarCollapsed && (
+              <span className="sidebar-user-text">
+                <strong>{authUser ? maskPhone(authUser.phone) : isAuthLoading ? "检查登录态" : "登录 / 注册"}</strong>
+                <small>{authUser ? "手机号账号" : "同步历史记录"}</small>
+              </span>
             )}
-          </div>
+          </button>
+          {authUser && !isSidebarCollapsed && (
+            <button className="sidebar-logout-button" type="button" onClick={() => void handleLogout()}>
+              退出
+            </button>
+          )}
         </div>
       </nav>
     );
@@ -1680,6 +2001,16 @@ export default function HomePage() {
           </section>
         </main>
       )}
+      {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
+      {showPasswordPrompt && authUser && !authUser.has_password && (
+        <PasswordPromptModal
+          onClose={() => setShowPasswordPrompt(false)}
+          onSaved={(user) => {
+            setAuthUser(user);
+            setShowPasswordPrompt(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1874,6 +2205,11 @@ function formatHistoryTime(value: string): string {
   });
 }
 
+function maskPhone(phone: string): string {
+  if (phone.length < 7) return phone;
+  return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+}
+
 function updateProgressSteps(current: ProgressStep[], payload: SsePayload): ProgressStep[] {
   if (!payload.step || !payload.status) return current;
 
@@ -1954,15 +2290,22 @@ function resizePromptTextarea(textarea: HTMLTextAreaElement): void {
   textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
 }
 
-async function readErrorMessage(response: Response): Promise<string> {
+function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    credentials: init.credentials ?? "include",
+  });
+}
+
+async function readErrorMessage(response: Response, fallback = "请求失败"): Promise<string> {
   try {
     const payload = (await response.json()) as { detail?: unknown };
     if (typeof payload.detail === "string") return payload.detail;
   } catch {
-    return "创建生成任务失败";
+    return fallback;
   }
 
-  return "创建生成任务失败";
+  return fallback;
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
