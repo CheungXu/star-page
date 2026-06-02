@@ -334,10 +334,46 @@ const BranchIcon = () => (
   </svg>
 );
 
+const ExpandIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M8 3H3v5" />
+    <path d="M16 3h5v5" />
+    <path d="M21 16v5h-5" />
+    <path d="M3 16v5h5" />
+    <path d="M3 3l6 6" />
+    <path d="M21 3l-6 6" />
+    <path d="M21 21l-6-6" />
+    <path d="M3 21l6-6" />
+  </svg>
+);
+
+const ExternalLinkIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 3h7v7" />
+    <path d="M10 14 21 3" />
+    <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+  </svg>
+);
+
+const CopyIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
 const UserIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M20 21a8 8 0 0 0-16 0" />
     <circle cx="12" cy="8" r="4" />
+  </svg>
+);
+
+const LogoutIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
   </svg>
 );
 
@@ -525,18 +561,18 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
    ========================================================================== */
 function PreviewCell({
   run,
-  multi,
-  focused,
-  onToggleFocus,
+  onOpenPreview,
   onContinue,
   canContinue,
+  selectedAsBase,
+  dimmedByBase,
 }: {
   run: RunState;
-  multi: boolean;
-  focused: boolean;
-  onToggleFocus: () => void;
+  onOpenPreview: () => void;
   onContinue: () => void;
   canContinue: boolean;
+  selectedAsBase: boolean;
+  dimmedByBase: boolean;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -554,9 +590,9 @@ function PreviewCell({
     const stage = stageRef.current;
     if (!stage) return;
 
-    const availableWidth = Math.max(stage.clientWidth - 28, 280);
+    const availableWidth = Math.max(stage.clientWidth - 16, 280);
     const scale = Math.min(1, availableWidth / PREVIEW_VIEWPORT_WIDTH);
-    const availableHeight = Math.max(stage.clientHeight - 28, PREVIEW_DEFAULT_HEIGHT * scale);
+    const availableHeight = Math.max(stage.clientHeight - 16, PREVIEW_DEFAULT_HEIGHT * scale);
     const contentHeight = Math.max(PREVIEW_DEFAULT_HEIGHT, Math.round(availableHeight / scale));
     setMetrics({ viewportWidth: PREVIEW_VIEWPORT_WIDTH, contentHeight, scale });
   }
@@ -571,7 +607,7 @@ function PreviewCell({
       window.removeEventListener("resize", handleResize);
       window.clearTimeout(timer);
     };
-  }, [run.status, absoluteUrl, focused]);
+  }, [run.status, absoluteUrl]);
 
   function handlePreviewLoad() {
     recomputeMetrics();
@@ -604,36 +640,22 @@ function PreviewCell({
     transform: `scale(${metrics.scale})`,
   };
 
-  const statusLabel =
-    run.status === "completed" ? "已生成" : run.status === "failed" ? "生成失败" : run.status === "creating" ? "创建中" : "思考中";
+  const statusLabel = run.status === "failed" ? "生成失败" : run.status === "creating" ? "创建中" : "思考中";
 
   return (
-    <article className={`preview-cell ${focused ? "is-focused" : ""}`}>
+    <article className={`preview-cell ${selectedAsBase ? "is-continue-base" : ""} ${dimmedByBase ? "is-dimmed-by-base" : ""}`}>
       <header className="preview-cell-head">
         <span
           className={`dot ${run.status === "completed" ? "ready" : run.status === "failed" ? "failed" : "loading"}`}
           aria-hidden="true"
         />
         <strong className="preview-cell-model" title={run.modelLabel}>{run.modelLabel}</strong>
-        <span className={`run-status-chip is-${run.status}`}>{statusLabel}</span>
-        {multi && (
-          <button className="cell-action focus-toggle" type="button" onClick={onToggleFocus}>
-            {focused ? "退出聚焦" : "聚焦"}
-          </button>
-        )}
+        {run.status !== "completed" && <span className={`run-status-chip is-${run.status}`}>{statusLabel}</span>}
       </header>
 
       {run.status === "completed" && absoluteUrl ? (
         <>
           <div className="preview-window">
-            <div className="preview-window-bar" aria-hidden="true">
-              <span className="win-dots">
-                <span className="win-dot win-dot-red" />
-                <span className="win-dot win-dot-amber" />
-                <span className="win-dot win-dot-green" />
-              </span>
-              <span className="preview-window-url">{absoluteUrl}</span>
-            </div>
             <div className="preview-viewport" ref={stageRef}>
               <div className="preview-scale-shell" style={shellStyle}>
                 <iframe
@@ -646,18 +668,26 @@ function PreviewCell({
                 />
               </div>
             </div>
+            <button className="preview-hover-zoom" type="button" onClick={onOpenPreview} aria-label={`放大预览 ${run.modelLabel} 生成页面`}>
+              <span className="button-icon" aria-hidden="true"><ExpandIcon /></span>
+              放大预览
+            </button>
           </div>
           <div className="link-actions">
-            <a href={absoluteUrl} target="_blank" rel="noreferrer">
-              打开页面
-            </a>
-            <button className={copied ? "copied" : ""} type="button" onClick={copyUrl}>
-              {copied ? "复制成功" : copyFeedback || "复制链接"}
-            </button>
+            <div className="link-secondary-actions">
+              <a className="link-icon-button" href={absoluteUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${run.modelLabel} 生成页面`} title="打开页面">
+                <ExternalLinkIcon />
+                <span>打开</span>
+              </a>
+              <button className={`link-icon-button ${copied ? "copied" : ""}`} type="button" onClick={copyUrl} aria-label={`复制 ${run.modelLabel} 页面链接`} title="复制链接">
+                <CopyIcon />
+                <span>{copied ? "已复制" : copyFeedback || "复制"}</span>
+              </button>
+            </div>
             {canContinue && (
-              <button className="continue-button" type="button" onClick={onContinue}>
+              <button className="continue-button" type="button" onClick={onContinue} aria-pressed={selectedAsBase}>
                 <span className="button-icon" aria-hidden="true"><BranchIcon /></span>
-                以此结果继续
+                {selectedAsBase ? "已选为基础" : "以此结果继续"}
               </button>
             )}
           </div>
@@ -689,6 +719,56 @@ function PreviewCell({
         </div>
       )}
     </article>
+  );
+}
+
+function FullscreenPreviewModal({ run, onClose }: { run: RunState; onClose: () => void }) {
+  const absoluteUrl = useMemo(() => toAbsoluteUrl(run.pageUrl), [run.pageUrl]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="preview-modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" onClick={(event) => event.stopPropagation()}>
+        <header className="preview-modal-head">
+          <div className="preview-modal-title">
+            <span className="dot ready" aria-hidden="true" />
+            <div>
+              <h2 id="preview-modal-title">{run.modelLabel} · 全屏预览</h2>
+              <p>{absoluteUrl}</p>
+            </div>
+          </div>
+          <div className="preview-modal-actions">
+            <a href={absoluteUrl} target="_blank" rel="noreferrer">
+              <ExternalLinkIcon />
+              打开页面
+            </a>
+            <button type="button" onClick={onClose}>
+              关闭
+            </button>
+          </div>
+        </header>
+        <div className="preview-modal-body">
+          <iframe
+            title={`${run.modelLabel} 生成页面全屏预览`}
+            src={absoluteUrl}
+            sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+          />
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -891,7 +971,7 @@ export default function HomePage() {
   const [fileError, setFileError] = useState("");
   const [runs, setRuns] = useState<RunState[]>([]);
   const [activeModelKey, setActiveModelKey] = useState("");
-  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  const [fullscreenRun, setFullscreenRun] = useState<RunState | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
@@ -1168,7 +1248,7 @@ export default function HomePage() {
       setSubmittedFileNames(fileNames);
       setRuns(pendingRuns);
       setActiveModelKey(pendingRuns[0]?.modelKey ?? "");
-      setFocusedTaskId(null);
+      setFullscreenRun(null);
       setThinkingExpanded(true);
       setFileError("");
       setPrompt("");
@@ -1320,7 +1400,7 @@ export default function HomePage() {
       setFileError("");
       setRuns([]);
       setActiveModelKey("");
-      setFocusedTaskId(null);
+      setFullscreenRun(null);
       setThinkingExpanded(true);
       setRoundIndex(0);
       setContinueBase(null);
@@ -1437,7 +1517,7 @@ export default function HomePage() {
     setSubmittedFileNames(session.fileNames ?? []);
     setRuns(session.runs ?? []);
     setActiveModelKey(session.runs?.[0]?.modelKey ?? "");
-    setFocusedTaskId(null);
+    setFullscreenRun(null);
     setSelectedFiles([]);
     setFileError("");
     setPrompt("");
@@ -1492,10 +1572,12 @@ export default function HomePage() {
   const isLongPrompt = submittedPrompt.length > 260;
   const overallStatus = computeOverallStatus(runs);
   const isMulti = runs.length > 1;
-  const visibleRuns = focusedTaskId ? runs.filter((run) => run.taskId === focusedTaskId) : runs;
   const activeRun = runs.find((run) => run.modelKey === activeModelKey) ?? runs[0] ?? null;
+  const fullscreenPreviewRun = fullscreenRun
+    ? (runs.find((run) => (fullscreenRun.taskId && run.taskId === fullscreenRun.taskId) || (fullscreenRun.pageId && run.pageId === fullscreenRun.pageId)) ?? fullscreenRun)
+    : null;
   const previewGridStyle = {
-    gridTemplateColumns: focusedTaskId ? "1fr" : `repeat(${Math.min(Math.max(runs.length, 1), 2)}, minmax(0, 1fr))`,
+    gridTemplateColumns: `repeat(${Math.min(Math.max(runs.length, 1), 2)}, minmax(0, 1fr))`,
   };
   const availableSelectableModels = availableModels.filter((model) => model.available);
 
@@ -1705,17 +1787,23 @@ export default function HomePage() {
             title={authUser ? authUser.phone : "登录 / 注册"}
             aria-label={authUser ? `当前用户 ${authUser.phone}` : "登录 / 注册"}
           >
-            <span className="sidebar-icon"><UserIcon /></span>
+            <span className="sidebar-user-avatar"><UserIcon /></span>
             {!isSidebarCollapsed && (
               <span className="sidebar-user-text">
                 <strong>{authUser ? maskPhone(authUser.phone) : isAuthLoading ? "检查登录态" : "登录 / 注册"}</strong>
-                <small>{authUser ? "手机号账号" : "同步历史记录"}</small>
+                <small>{authUser ? "已登录" : "同步历史记录"}</small>
               </span>
             )}
           </button>
           {authUser && !isSidebarCollapsed && (
-            <button className="sidebar-logout-button" type="button" onClick={() => void handleLogout()}>
-              退出
+            <button
+              className="sidebar-logout-button"
+              type="button"
+              onClick={() => void handleLogout()}
+              title="退出登录"
+              aria-label="退出登录"
+            >
+              <LogoutIcon />
             </button>
           )}
         </div>
@@ -1729,15 +1817,10 @@ export default function HomePage() {
         {compact && continueBase && (
           <div className="continue-indicator">
             <span className="continue-indicator-icon" aria-hidden="true"><BranchIcon /></span>
-            基于「{continueBase.modelLabel}」结果分支继续
+            将基于「{continueBase.modelLabel}」的结果进行修改
             <button type="button" onClick={() => setContinueBase(null)} aria-label="取消继续">
               <CloseIcon />
             </button>
-          </div>
-        )}
-        {compact && !continueBase && runs.length > 0 && (
-          <div className="continue-hint">
-            发送将让 {runs.length} 个模型各自基于上一轮结果并行继续；如需以某个结果为基础，点其卡片上的「以此结果继续」。
           </div>
         )}
         <form className={`prompt-card ${compact ? "compact-prompt" : "hero-prompt"}`} onSubmit={handleSubmit}>
@@ -1967,31 +2050,25 @@ export default function HomePage() {
 
             <section className="preview-pane">
               <article className="panel preview-panel workspace-preview" data-anim-stagger>
-                <div className="panel-heading">
-                  <span
-                    className={`dot ${overallStatus === "completed" ? "ready" : overallStatus === "failed" ? "failed" : "loading"}`}
-                    aria-hidden="true"
-                  />
-                  <h2>页面预览{isMulti ? ` · 对比 ${runs.length} 个模型` : ""}</h2>
-                  <span className="preview-status-text">
-                    {overallStatus === "completed" ? "已生成" : overallStatus === "failed" ? "生成失败" : "生成中"}
-                  </span>
-                  {focusedTaskId && (
-                    <button className="exit-focus-button" type="button" onClick={() => setFocusedTaskId(null)}>
-                      返回对比
-                    </button>
+                <div className="panel-heading preview-heading">
+                  <h2>结果预览</h2>
+                  {isMulti && <span className="preview-count">{runs.length} 个版本</span>}
+                  {overallStatus !== "completed" && (
+                    <span className="preview-status-text">
+                      {overallStatus === "failed" ? "生成失败" : "生成中"}
+                    </span>
                   )}
                 </div>
 
                 <div className="preview-grid" style={previewGridStyle}>
-                  {visibleRuns.map((run) => (
+                  {runs.map((run) => (
                     <PreviewCell
                       key={run.taskId || run.modelKey}
                       run={run}
-                      multi={isMulti}
-                      focused={focusedTaskId === run.taskId}
                       canContinue={!isGenerating && Boolean(run.pageId)}
-                      onToggleFocus={() => setFocusedTaskId((current) => (current === run.taskId ? null : run.taskId))}
+                      selectedAsBase={continueBase?.pageId === run.pageId}
+                      dimmedByBase={continueBase ? continueBase.pageId !== run.pageId : false}
+                      onOpenPreview={() => setFullscreenRun(run)}
                       onContinue={() => startContinueFrom(run)}
                     />
                   ))}
@@ -2001,6 +2078,7 @@ export default function HomePage() {
           </section>
         </main>
       )}
+      {fullscreenPreviewRun && <FullscreenPreviewModal run={fullscreenPreviewRun} onClose={() => setFullscreenRun(null)} />}
       {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
       {showPasswordPrompt && authUser && !authUser.has_password && (
         <PasswordPromptModal
