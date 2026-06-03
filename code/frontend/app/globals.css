@@ -267,7 +267,7 @@ h1 {
 }
 
 .hero-wrap {
-  margin-top: 24px;
+  margin-top: 28px;
 }
 
 .compact-wrap {
@@ -299,6 +299,178 @@ h1 {
     transform 0.2s ease;
 }
 
+.prompt-card.is-attention {
+  animation: prompt-attention-pulse 0.32s ease;
+}
+
+@keyframes prompt-attention-pulse {
+  0%, 100% {
+    box-shadow:
+      0 4px 6px -1px rgba(15, 23, 42, 0.05),
+      0 10px 15px -3px rgba(15, 23, 42, 0.05),
+      var(--shadow-focus);
+  }
+  50% {
+    box-shadow:
+      0 4px 6px -1px rgba(15, 23, 42, 0.05),
+      0 10px 15px -3px rgba(15, 23, 42, 0.05),
+      0 0 0 4px rgba(53, 99, 233, 0.28);
+  }
+}
+
+.prompt-card.is-drag-over {
+  border-color: var(--color-primary);
+  box-shadow:
+    0 4px 6px -1px rgba(15, 23, 42, 0.05),
+    0 10px 15px -3px rgba(15, 23, 42, 0.05),
+    var(--shadow-focus);
+}
+
+.prompt-drag-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: rgba(53, 99, 233, 0.1);
+  color: var(--color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* 卡片内快捷入口：轻量 Tag/Pill，明确可点击 */
+.prompt-presets-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 6px;
+  padding: 0 12px;
+}
+
+.prompt-preset-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: #f1f5f9;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.prompt-preset-pill:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+  border-color: rgba(53, 99, 233, 0.2);
+  color: var(--color-primary);
+}
+
+.prompt-preset-pill:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.prompt-preset-pill .preset-emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* 高级设置栏：成组展示，权重低于输入卡片 */
+.prompt-advanced-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.advanced-setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+}
+
+.advanced-setting-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.advanced-bar-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+.model-selection-hint {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.advanced-setting-group .skill-select {
+  width: 100%;
+  max-width: none;
+}
+
+.skill-select {
+  min-width: 168px;
+  max-width: 220px;
+  height: 36px;
+  padding: 0 32px 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background:
+    var(--color-surface)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.skill-select:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background-color: var(--color-surface-soft);
+  color: var(--color-text-primary);
+}
+
+.skill-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+}
+
+.skill-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .prompt-card:focus-within {
   border-color: var(--color-primary);
   box-shadow:
@@ -308,12 +480,12 @@ h1 {
 }
 
 .hero-prompt {
-  min-height: 168px;
+  min-height: 160px;
 }
 
 .prompt-card textarea {
   width: 100%;
-  min-height: 96px;
+  min-height: 88px;
   max-height: 220px;
   resize: none;
   overflow-y: auto;
@@ -334,6 +506,33 @@ h1 {
   font-weight: 400;
 }
 
+/* 卡片底部：上传与创建两端对齐 */
+.prompt-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.prompt-card-footer.is-compact {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 0;
+}
+
+.prompt-footer-left {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 工作区 compact 仍沿用 footer 类名 */
 .prompt-toolbar {
   display: flex;
   align-items: center;
@@ -561,19 +760,36 @@ h1 {
     opacity 0.15s ease;
 }
 
-.submit-button:hover:not(:disabled) {
+.submit-button:hover:not(:disabled):not(.is-empty) {
   background: var(--color-primary-hover);
   box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
-.submit-button:active:not(:disabled) {
+.submit-button:active:not(:disabled):not(.is-empty) {
   background: var(--color-primary-active);
   transform: translateY(0);
 }
 
-.submit-button:disabled {
+.submit-button:disabled:not(.is-empty) {
   cursor: not-allowed;
   opacity: 0.55;
+  box-shadow: none;
+}
+
+/* 空态不可提交：明确灰色禁用，避免半透明蓝像「残废」 */
+.submit-button.is-empty {
+  background: #e2e8f0;
+  color: #94a3b8;
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.submit-button.is-empty:hover {
+  background: #e2e8f0;
+  color: #94a3b8;
+  transform: none;
   box-shadow: none;
 }
 
@@ -628,6 +844,11 @@ h1 {
   padding: 4px 6px;
   font-size: 14px;
   line-height: 1.55;
+}
+
+.compact-prompt .prompt-card-footer.is-compact {
+  margin-top: 4px;
+  padding-top: 4px;
 }
 
 .compact-prompt .prompt-toolbar {
@@ -870,6 +1091,59 @@ h1 {
   color: #fff;
   box-shadow: 0 4px 10px -4px rgba(53, 99, 233, 0.5);
   position: relative;
+}
+
+/* 收起态：首页 idle 仅新对话浅底 Active；工作区新对话与收藏/历史同级 */
+.history-sidebar.collapsed .new-chat-button {
+  background: transparent;
+  color: var(--color-text-secondary);
+  box-shadow: none;
+}
+
+.history-sidebar.collapsed .new-chat-button .sidebar-icon,
+.history-sidebar.collapsed .new-chat-button .sidebar-label {
+  color: inherit;
+}
+
+.history-sidebar.collapsed .new-chat-button.is-active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(53, 99, 233, 0.18);
+}
+
+.history-sidebar.collapsed .new-chat-button.is-active::after {
+  display: none;
+}
+
+.history-sidebar.collapsed .new-chat-button.is-active .sidebar-icon,
+.history-sidebar.collapsed .new-chat-button.is-active .sidebar-label {
+  color: var(--color-primary);
+}
+
+.history-sidebar.collapsed .new-chat-button:hover:not(.is-active) {
+  background: var(--color-surface-soft);
+  color: var(--color-text-primary);
+}
+
+.history-sidebar.collapsed .new-chat-button.is-active:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+/* 展开态工作区：新对话恢复实心蓝 CTA */
+.history-sidebar:not(.collapsed) .new-chat-button:not(.is-active) {
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow: 0 4px 10px -4px rgba(53, 99, 233, 0.5);
+}
+
+.history-sidebar:not(.collapsed) .new-chat-button:not(.is-active) .sidebar-icon,
+.history-sidebar:not(.collapsed) .new-chat-button:not(.is-active) .sidebar-label {
+  color: #fff;
+}
+
+.history-sidebar:not(.collapsed) .new-chat-button:not(.is-active):hover {
+  background: var(--color-primary-hover);
 }
 
 .new-chat-button:hover {
@@ -2234,6 +2508,15 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .prompt-card-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .prompt-card-footer .submit-button {
+    width: 100%;
+  }
+
   .prompt-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -2285,17 +2568,16 @@ h1 {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 14px;
+}
+
+.model-picker-compact {
+  margin-top: 0;
 }
 
 .model-picker-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text-tertiary);
-}
-
-.skill-picker {
-  margin-top: 10px;
 }
 
 .applied-skill-badge {
@@ -2320,10 +2602,10 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
+  min-height: 36px;
   padding: 0 14px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text-secondary);
   font-size: 13px;

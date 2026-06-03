@@ -411,11 +411,53 @@ Chip 作为可点击卡片按钮，hover 反馈不能只用 `transform: -1px + v
 - hover 时 alpha `0.22 → 0.42`，明确"可拖拽"反馈。
 - 容器 `padding-right: 4px / margin-right: -2px`：让 thumb 不紧贴右边缘，又不增加 list 占位。
 
-## 12. 适用范围
+## 13. 首页对话式精修（第四轮：意图优先 + 多模型集合）
+
+在「标签海」重构为三层结构之后，仍要避免次级控件抢主路径。可复用原则：
+
+### 主 CTA 三态（禁止半透明盖蓝）
+
+空态不要用 `opacity` 把实心蓝按钮洗淡——用户会误判为「可点但发虚」。应拆成独立 class：
+
+| 状态 | class | 视觉 |
+|------|-------|------|
+| 不可提交 | `.submit-button.is-empty` | 灰底 `#e2e8f0`、字 `#94a3b8`、无阴影 |
+| 可提交 | 默认 | `--color-primary` 实心 + `--shadow-sm`，hover `translateY(-1px)` |
+| 处理中 | `.is-loading` | 浅蓝底 + 主题色字 + spinner |
+
+空态若需点击反馈（聚焦输入框），用 `type="button"` + `is-empty`，勿与 `disabled` 混用导致无法触发。
+
+### 快捷场景：空态 Tag，非幽灵链
+
+空态推荐场景用 `.prompt-preset-pill`（`#f1f5f9` 底、`--radius-md`），输入后隐藏。幽灵文字链在 AI 首页上点击率偏低。
+
+### 卡片内 footer 网格
+
+```
+textarea → presets（空态）→ .prompt-card-footer（border-top + space-between）
+  左：上传（hint 放 title，勿占行宽）
+  右：创建
+```
+
+### 多模型 = Chip 集合，禁止 VS
+
+并行对比卖点由 **副标题文案** + **「已选 N 个 · 将并排生成」** 承担，不要在 Chip 间插 `VS`（强化 1v1 错觉、不可扩展 N 个）。Chip 用 `--radius-md` 矩形，与下拉等同高（36px），放进 `.advanced-setting-group` 浅底块。
+
+### 侧边栏：单一 Active
+
+- 品牌区 = 展开/收起，**不做** Tab 选中高亮
+- 首页 idle：仅「新对话」`is-active`（收起浅底描边，展开可保留柔光环）
+- 工作区：「新对话」恢复实心蓝 CTA
+
+### 进阶选项是否外露
+
+若产品选择「技能/模板全自动」，首页可去掉手动选择器，仅在工作区展示后端 `appliedSkill` 徽章；提交时不传 `skill_keys` 即走自动路由。
+
+## 14. 适用范围
 
 适合 AI 输入类首页（ChatGPT 风、Claude 风、Gemini 风、Perplexity 风、各类内部 AI 工具）。对内容浏览类（资讯流、电商）不直接适用，但 token 体系 + Aurora 背景 + 双语品牌文案 + 视觉节奏 2:1 部分通用。
 
-## 6. 落地清单
+## 15. 落地清单
 
 在新项目中应用这套设计 token 时：
 

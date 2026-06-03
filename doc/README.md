@@ -25,6 +25,7 @@
 - `20260602/generated-page-js-css-sandbox-record.md`：为展示页安全放开 CSS/JS 的实施记录。安全范式从"清洗掉 JS"切换为"隔离优先"（沙箱 CSP + sandboxed iframe + `connect-src 'none'` 默认禁网 + 可信 CDN 白名单）；顺带把页面访问链接升级为 `/p/{conversation_id}/{page_id}` 并修复删会话后页面仍可访问。
 - `20260602/generated_page_js_sandbox.plan.md`：上述实施对应的方案归档（plan 同步留档便于回溯）。
 - `20260602/page-skills-injection-record.md`：网页制作技能（page-skills）发现与注入实施记录。方案 B（技能目录扫描 + 轻量 LLM 路由 + 全量注入 + 持久化延用，选择器抽象预留演进到 Agentic 方案 C）；含默认开启/未选由模型自动选/可手动覆盖与显式关闭、续写延用 parent 链路、batch 级一次路由、路由短超时+关键词兜底、技能目录不在后端构建上下文的部署注意点。
+- `20260604/frontend-homepage-ux-round2-record.md`：首页 UX 第二轮精修（创建三态、preset pill、高级设置成组去 VS、侧边栏单一 Active、移除首页页面模板选择）。
 
 ## 使用约定
 

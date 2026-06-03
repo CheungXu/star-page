@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChangeEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
+import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
@@ -12,12 +12,6 @@ type ModelInfo = {
   provider: string;
   is_default: boolean;
   available: boolean;
-};
-
-type SkillInfo = {
-  key: string;
-  name: string;
-  description: string;
 };
 
 type AuthUser = {
@@ -231,15 +225,14 @@ const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
 const SELECTED_MODELS_KEY = "star-page-selected-models";
-const SELECTED_SKILL_KEY = "star-page-selected-skill";
-// 技能选择特殊值：空串=自动（由模型选择）；__none__=显式不使用技能。
+// 技能：空串=自动（由后端路由），首页不再展示手动选择。
 const SKILL_AUTO_VALUE = "";
-const SKILL_NONE_VALUE = "__none__";
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 3;
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const MAX_TOTAL_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+const FILE_UPLOAD_TITLE = "支持 docx · pptx · xlsx · pdf · txt · md · html，最多 3 个，总计 ≤ 50MB";
 
 const HistoryIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -980,14 +973,17 @@ export default function HomePage() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModelKeys, setSelectedModelKeys] = useState<string[]>([]);
-  const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([]);
   const [selectedSkillKey, setSelectedSkillKey] = useState<string>(SKILL_AUTO_VALUE);
   const [appliedSkill, setAppliedSkill] = useState<{ key: string; name: string } | null>(null);
   const [roundIndex, setRoundIndex] = useState(0);
   const [continueBase, setContinueBase] = useState<{ pageId: string; modelLabel: string } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [isPromptAttention, setIsPromptAttention] = useState(false);
 
   const eventSourcesRef = useRef<EventSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const dragCounterRef = useRef(0);
   const hasHydratedRef = useRef(false);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const motionRef = useRef<MotionLib | null>(null);
@@ -1151,31 +1147,6 @@ export default function HomePage() {
     }
   }
 
-  async function loadSkills(): Promise<void> {
-    try {
-      const response = await apiFetch("/api/skills");
-      if (!response.ok) throw new Error(await readErrorMessage(response));
-      const data = (await response.json()) as SkillInfo[];
-      setAvailableSkills(data);
-
-      // 恢复上次选择；失效则回退到"自动"。__none__ 始终合法。
-      const stored = readSelectedSkill();
-      const validKeys = new Set(data.map((skill) => skill.key));
-      if (stored && stored !== SKILL_NONE_VALUE && !validKeys.has(stored)) {
-        setSelectedSkillKey(SKILL_AUTO_VALUE);
-      } else if (stored !== null) {
-        setSelectedSkillKey(stored);
-      }
-    } catch {
-      setAvailableSkills([]);
-    }
-  }
-
-  function handleSkillChange(value: string) {
-    setSelectedSkillKey(value);
-    writeSelectedSkill(value);
-  }
-
   function closeAllSources() {
     eventSourcesRef.current.forEach((source) => source.close());
     eventSourcesRef.current = [];
@@ -1185,7 +1156,6 @@ export default function HomePage() {
     const timer = window.setTimeout(() => {
       void initializeAuthState();
       void loadModels();
-      void loadSkills();
     }, 0);
     return () => window.clearTimeout(timer);
     // 首屏初始化只执行一次，内部函数会读当前存储和服务端登录态。
@@ -1405,6 +1375,7 @@ export default function HomePage() {
       setRoundIndex(0);
       setContinueBase(null);
       setAppliedSkill(null);
+      setSelectedSkillKey(SKILL_AUTO_VALUE);
     });
   }
 
@@ -1568,7 +1539,41 @@ export default function HomePage() {
     setPrompt(preset.prompt);
   }
 
+  function handleEmptySubmitHint() {
+    promptTextareaRef.current?.focus();
+    setIsPromptAttention(true);
+    window.setTimeout(() => setIsPromptAttention(false), 320);
+  }
+
+  function handlePromptDragEnter(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    dragCounterRef.current += 1;
+    if (event.dataTransfer.types.includes("Files")) setIsDragOver(true);
+  }
+
+  function handlePromptDragOver(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+  }
+
+  function handlePromptDragLeave(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragOver(false);
+    }
+  }
+
+  function handlePromptDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    if (isGenerating) return;
+    handleFileChange(event.dataTransfer.files);
+  }
+
   const isGenerating = runs.some((run) => run.status === "thinking" || run.status === "creating");
+  const canSubmit = Boolean(prompt.trim()) || selectedFiles.length > 0;
   const isLongPrompt = submittedPrompt.length > 260;
   const overallStatus = computeOverallStatus(runs);
   const isMulti = runs.length > 1;
@@ -1581,63 +1586,42 @@ export default function HomePage() {
   };
   const availableSelectableModels = availableModels.filter((model) => model.available);
 
-  function renderModelPicker() {
-    if (availableModels.length === 0) return null;
-    return (
-      <div className="model-picker" role="group" aria-label="选择生成模型" data-anim-stagger>
-        <span className="model-picker-label">并行模型</span>
-        <div className="model-picker-options">
-          {availableModels.map((model) => {
-            const active = selectedModelKeys.includes(model.key);
-            return (
-              <button
-                key={model.key}
-                type="button"
-                className={`model-option ${active ? "is-active" : ""}`}
-                onClick={() => model.available && toggleModel(model.key)}
-                disabled={!model.available || isGenerating}
-                aria-pressed={active}
-                title={model.available ? model.label : `${model.label}（未配置密钥，暂不可用）`}
-              >
-                <span className="model-check" aria-hidden="true">{active ? "✓" : ""}</span>
-                {model.label}
-                {!model.available && <span className="model-unavailable">未配置</span>}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
+  function renderModelPickerOptions() {
+    return availableModels.map((model) => {
+      const active = selectedModelKeys.includes(model.key);
+      return (
+        <button
+          key={model.key}
+          type="button"
+          className={`model-option ${active ? "is-active" : ""}`}
+          onClick={() => model.available && toggleModel(model.key)}
+          disabled={!model.available || isGenerating}
+          aria-pressed={active}
+          title={model.available ? model.label : `${model.label}（未配置密钥，暂不可用）`}
+        >
+          <span className="model-check" aria-hidden="true">{active ? "✓" : ""}</span>
+          {model.label}
+          {!model.available && <span className="model-unavailable">未配置</span>}
+        </button>
+      );
+    });
   }
 
-  function renderSkillPicker() {
-    if (availableSkills.length === 0) return null;
-    const options = [
-      { key: SKILL_AUTO_VALUE, label: "自动", hint: "由模型自动匹配最合适的网页技能" },
-      ...availableSkills.map((skill) => ({ key: skill.key, label: skill.name, hint: skill.description })),
-      { key: SKILL_NONE_VALUE, label: "不使用", hint: "本次不应用任何网页技能" },
-    ];
+  function renderAdvancedBar() {
+    if (availableModels.length === 0) return null;
+    const selectedCount = selectedModelKeys.length;
     return (
-      <div className="model-picker skill-picker" role="group" aria-label="选择网页技能" data-anim-stagger>
-        <span className="model-picker-label">网页技能</span>
-        <div className="model-picker-options">
-          {options.map((option) => {
-            const active = selectedSkillKey === option.key;
-            return (
-              <button
-                key={option.key || "auto"}
-                type="button"
-                className={`model-option ${active ? "is-active" : ""}`}
-                onClick={() => handleSkillChange(option.key)}
-                disabled={isGenerating}
-                aria-pressed={active}
-                title={option.hint}
-              >
-                <span className="model-check" aria-hidden="true">{active ? "✓" : ""}</span>
-                {option.label}
-              </button>
-            );
-          })}
+      <div className="prompt-advanced-bar" data-anim-stagger>
+        <div className="advanced-setting-group" role="group" aria-label="选择生成模型">
+          <div className="advanced-setting-group-header">
+            <span className="advanced-bar-label">生成模型</span>
+            {selectedCount >= 2 && (
+              <span className="model-selection-hint">
+                已选 {selectedCount} 个 · 将并排生成，便于对比
+              </span>
+            )}
+          </div>
+          <div className="model-picker-options">{renderModelPickerOptions()}</div>
         </div>
       </div>
     );
@@ -1812,6 +1796,10 @@ export default function HomePage() {
   }
 
   function renderPromptForm(compact = false) {
+    const submitBlocked = isGenerating || Boolean(fileError) || selectedModelKeys.length === 0;
+    const submitDisabled = submitBlocked || !canSubmit;
+    const isEmptySubmit = !compact && !canSubmit && !isGenerating && !submitBlocked;
+
     return (
       <div className={`prompt-form-wrap ${compact ? "compact-wrap" : "hero-wrap"}`}>
         {compact && continueBase && (
@@ -1823,17 +1811,47 @@ export default function HomePage() {
             </button>
           </div>
         )}
-        <form className={`prompt-card ${compact ? "compact-prompt" : "hero-prompt"}`} onSubmit={handleSubmit}>
+        <form
+          className={`prompt-card ${compact ? "compact-prompt" : "hero-prompt"} ${isDragOver ? "is-drag-over" : ""} ${isPromptAttention ? "is-attention" : ""}`}
+          onSubmit={handleSubmit}
+          onDragEnter={handlePromptDragEnter}
+          onDragOver={handlePromptDragOver}
+          onDragLeave={handlePromptDragLeave}
+          onDrop={handlePromptDrop}
+        >
+          {isDragOver && (
+            <div className="prompt-drag-overlay" aria-hidden="true">
+              松开即可上传资料
+            </div>
+          )}
           <textarea
+            ref={promptTextareaRef}
             value={prompt}
             onChange={handlePromptChange}
             placeholder={compact ? "继续描述你想调整的方向…" : "说说你想做的页面，例如「面向客户的产品介绍页」"}
             rows={compact ? 1 : 3}
             disabled={isGenerating}
           />
-          <div className="prompt-toolbar">
-            <div className="prompt-tool-group">
-              <label className="file-upload-button" title="上传文档作为生成参考">
+          {!compact && !prompt.trim() && (
+            <div className="prompt-presets-inline" role="list" aria-label="推荐场景">
+              {PROMPT_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  role="listitem"
+                  className="prompt-preset-pill"
+                  onClick={() => handlePresetClick(preset)}
+                  disabled={isGenerating}
+                >
+                  <span className="preset-emoji" aria-hidden="true">{preset.emoji}</span>
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className={`prompt-card-footer ${compact ? "is-compact" : ""}`}>
+            <div className="prompt-footer-left">
+              <label className="file-upload-button" title={FILE_UPLOAD_TITLE}>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1845,7 +1863,7 @@ export default function HomePage() {
                 <span className="button-icon" aria-hidden="true"><AttachmentIcon /></span>
                 上传资料
               </label>
-              {selectedFiles.length > 0 ? (
+              {selectedFiles.length > 0 && (
                 <div className="selected-files" aria-label="已选择文件">
                   {selectedFiles.map((file, index) => (
                     <span className="selected-file" key={`${file.name}-${file.size}-${index}`}>
@@ -1857,14 +1875,20 @@ export default function HomePage() {
                     清空
                   </button>
                 </div>
-              ) : !compact ? (
-                <span className="file-hint">docx · pptx · xlsx · pdf · txt · md · html，最多 3 个，总计 ≤ 50MB</span>
-              ) : null}
+              )}
             </div>
             <button
-              className={`submit-button ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""}`}
-              type="submit"
-              disabled={isGenerating || Boolean(fileError) || selectedModelKeys.length === 0}
+              className={`submit-button ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""} ${isEmptySubmit ? "is-empty" : ""}`}
+              type={isEmptySubmit ? "button" : "submit"}
+              disabled={compact ? submitDisabled : submitBlocked}
+              onClick={
+                isEmptySubmit
+                  ? (event) => {
+                      event.preventDefault();
+                      handleEmptySubmitHint();
+                    }
+                  : undefined
+              }
               aria-label={isGenerating ? "正在生成" : compact ? "发送修改" : "创建页面"}
               aria-busy={isGenerating}
             >
@@ -1887,25 +1911,7 @@ export default function HomePage() {
             </button>
           </div>
         </form>
-        {!compact && renderModelPicker()}
-        {!compact && renderSkillPicker()}
-        {!compact && (
-          <div className="prompt-chip-row" role="list" aria-label="推荐场景" data-anim-stagger>
-            {PROMPT_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                role="listitem"
-                className="prompt-chip"
-                onClick={() => handlePresetClick(preset)}
-                disabled={isGenerating}
-              >
-                <span className="chip-emoji" aria-hidden="true">{preset.emoji}</span>
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        )}
+        {!compact && renderAdvancedBar()}
         {fileError && (
           <div className="prompt-meta-row">
             <span className="file-error">{fileError}</span>
@@ -2157,22 +2163,6 @@ function readSelectedModels(): string[] | null {
 function writeSelectedModels(keys: string[]): void {
   try {
     localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(keys));
-  } catch {
-    // 忽略存储异常
-  }
-}
-
-function readSelectedSkill(): string | null {
-  try {
-    return localStorage.getItem(SELECTED_SKILL_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeSelectedSkill(value: string): void {
-  try {
-    localStorage.setItem(SELECTED_SKILL_KEY, value);
   } catch {
     // 忽略存储异常
   }

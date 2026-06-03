@@ -28,7 +28,10 @@
 - **Hero 副标题品牌词高亮**：副标题中"星页 StarPage"使用 `<strong className="brand-inline">` 包裹，主题蓝 `var(--color-primary)` + `font-weight: 600`，在长串灰色副标题里形成"一眼锁定"的视觉聚焦点。
 - **背景光晕（Hero Aurora）**：固定层叠 3 个 `radial-gradient` 色块（品牌蓝/紫罗兰/天蓝）+ 极淡网格 `mask-image`，搭配缓慢的 `aurora-float-*` 动画，营造专业的空间感；网格通过 `mask-image` 在视觉焦点向外淡出，避免画面"飘"。受 `prefers-reduced-motion` 控制。
 - **Prompt Card**：使用半透明白底 + `backdrop-filter: blur(14px) saturate(140%)` 形成玻璃质感浮在光晕之上；阴影改为多层弥散 `0 4px 6px -1px / 0 10px 15px -3px / inset 1px 高光`，比单层 `--shadow-lg` 更轻盈现代。`textarea padding: 12px 12px 10px` 让 placeholder 距卡顶/卡左 30+px，文字"坐"在卡里有呼吸感。底部工具栏只保留"上传资料"按钮和文件类型提示 + 右侧"创建"主 CTA。
-- **Prompt Chips**：emoji（🚀 / 📊 / 👤 / 🎉）+ 浅蓝白底圆角卡片按钮，左右 padding `9px 18px`、内部 gap 8px；hover 上浮 -2px、双层阴影（近距品牌蓝 + 远距中性色）；新增 `:active` 反馈让按下感真实。emoji 选择面向年轻白领与学生群体的活泼调性。
+- **Prompt 快捷入口**：卡片内空态展示 emoji + 文案的轻量 Tag（`#f1f5f9` 底、12px 圆角），hover 变品牌浅蓝；输入后自动隐藏。
+- **创建按钮三态**：空态灰底 `#e2e8f0`（`is-empty`）；可提交时品牌蓝实心 + hover 上浮；生成中浅蓝 + spinner。
+- **高级设置**：`advanced-setting-group` 浅底块，仅保留「生成模型」多选 Chip（圆角矩形、可扩展 N 个）；≥2 个时提示「已选 N 个 · 将并排生成」。页面技能由后端自动路由，首页不提供手动选择。
+- **侧边栏导航**：首页 idle 仅「新对话」Active（收起浅底 / 展开柔光环）；品牌 logo 始终中性，不做 Tab 选中。
 - **文件类型提示对比度**：`.file-hint` 颜色从 `--color-text-tertiary` 提到 `--color-text-secondary` (#475569)，强光环境下也清晰可读，达到 WCAG AA。
 - **侧边栏垂直节奏**：展开态品牌区与"+ 新对话"操作区间距 ~24px；收起态形成 `[logo] 12px [+] 6px [⌚]` 的 12 : 6 = 2 : 1 黄金分组节奏，把"新建+历史"绑定为紧凑操作组，与品牌锚点自然分层。
 - **侧边栏 Active 状态**：当用户处于"新对话"空态时，`.new-chat-button.is-active` 在原本实心蓝色 CTA 之上叠加一圈柔和发光环和脉冲动画 `new-chat-pulse`，明确告诉用户"你在这里"；历史项 active 使用浅品牌色背景 + 左侧 3px 竖条强化定位。
