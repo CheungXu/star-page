@@ -292,6 +292,20 @@ const SpinnerIcon = () => (
   </svg>
 );
 
+/* 小三角：模型选择器收/展指示 */
+const ChevronIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+);
+
+/* 精致细勾：模型选中态用，比裸 ✓ 更克制现代 */
+const CheckIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
 /* 关闭/清空小图标：让"清空"从纯文本升级为带图标的次级按钮 */
 const CloseIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -369,6 +383,18 @@ const LogoutIcon = () => (
     <line x1="21" y1="12" x2="9" y2="12" />
   </svg>
 );
+
+/* 模型标识色：给每个模型一个稳定的品牌色圆点，提升识别度与精致感。
+   通过 key 做哈希映射到一组精选高级色，保证同一模型颜色稳定。 */
+const MODEL_ACCENTS = ["#3563e9", "#8b5cf6", "#0ea5e9", "#f97316", "#14b8a6", "#ec4899"];
+
+function modelAccent(key: string): string {
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+  }
+  return MODEL_ACCENTS[hash % MODEL_ACCENTS.length];
+}
 
 /* Chip 用 emoji：面向年轻白领与学生群体，emoji 比单色线性图标更活泼亲切 */
 type PromptPreset = { id: string; emoji: string; label: string; prompt: string };
@@ -979,6 +1005,8 @@ export default function HomePage() {
   const [continueBase, setContinueBase] = useState<{ pageId: string; modelLabel: string } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPromptAttention, setIsPromptAttention] = useState(false);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
 
   const eventSourcesRef = useRef<EventSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1165,6 +1193,25 @@ export default function HomePage() {
   useEffect(() => {
     return () => closeAllSources();
   }, []);
+
+  // 点击浮层外部或按 Esc 关闭模型选择 popover
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+    const handlePointer = (event: globalThis.MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
+        setIsModelMenuOpen(false);
+      }
+    };
+    const handleKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setIsModelMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [isModelMenuOpen]);
 
   function toggleModel(key: string) {
     setSelectedModelKeys((current) => {
@@ -1586,43 +1633,62 @@ export default function HomePage() {
   };
   const availableSelectableModels = availableModels.filter((model) => model.available);
 
-  function renderModelPickerOptions() {
-    return availableModels.map((model) => {
-      const active = selectedModelKeys.includes(model.key);
-      return (
-        <button
-          key={model.key}
-          type="button"
-          className={`model-option ${active ? "is-active" : ""}`}
-          onClick={() => model.available && toggleModel(model.key)}
-          disabled={!model.available || isGenerating}
-          aria-pressed={active}
-          title={model.available ? model.label : `${model.label}（未配置密钥，暂不可用）`}
-        >
-          <span className="model-check" aria-hidden="true">{active ? "✓" : ""}</span>
-          {model.label}
-          {!model.available && <span className="model-unavailable">未配置</span>}
-        </button>
-      );
-    });
-  }
-
-  function renderAdvancedBar() {
+  // 模型选择收成紧凑的弹出选择器：常态只占一个 pill，点击向上弹出浮层多选，
+  // 让输入卡片保持轻盈，不被一整条模型列表撑臃肿。
+  function renderModelPicker() {
     if (availableModels.length === 0) return null;
-    const selectedCount = selectedModelKeys.length;
+    const selected = availableModels.filter((model) => selectedModelKeys.includes(model.key));
+    const triggerLabel = selected.length === 1 ? selected[0].label : `${selected.length} 个模型`;
     return (
-      <div className="prompt-advanced-bar" data-anim-stagger>
-        <div className="advanced-setting-group" role="group" aria-label="选择生成模型">
-          <div className="advanced-setting-group-header">
-            <span className="advanced-bar-label">生成模型</span>
-            {selectedCount >= 2 && (
-              <span className="model-selection-hint">
-                已选 {selectedCount} 个 · 将并排生成，便于对比
-              </span>
-            )}
+      <div className={`model-picker ${isModelMenuOpen ? "is-open" : ""}`} ref={modelMenuRef}>
+        <button
+          type="button"
+          className="model-picker-trigger"
+          onClick={() => setIsModelMenuOpen((value) => !value)}
+          disabled={isGenerating}
+          aria-haspopup="menu"
+          aria-expanded={isModelMenuOpen}
+          title="选择生成模型"
+        >
+          <span className="model-picker-dots" aria-hidden="true">
+            {selected.slice(0, 3).map((model) => (
+              <span key={model.key} className="model-dot" style={{ background: modelAccent(model.key) }} />
+            ))}
+          </span>
+          <span className="model-picker-text">{triggerLabel}</span>
+          <span className="model-picker-caret" aria-hidden="true"><ChevronIcon /></span>
+        </button>
+
+        {isModelMenuOpen && (
+          <div className="model-menu" role="menu" aria-label="选择生成模型">
+            <div className="model-menu-head">
+              <strong>生成模型</strong>
+              <span>可多选 · 并排生成便于对比</span>
+            </div>
+            <div className="model-menu-list">
+              {availableModels.map((model) => {
+                const active = selectedModelKeys.includes(model.key);
+                return (
+                  <button
+                    key={model.key}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={active}
+                    className={`model-menu-item ${active ? "is-active" : ""}`}
+                    onClick={() => model.available && toggleModel(model.key)}
+                    disabled={!model.available}
+                    title={model.available ? model.label : `${model.label}（未配置密钥，暂不可用）`}
+                  >
+                    <span className="model-dot" aria-hidden="true" style={{ background: modelAccent(model.key) }} />
+                    <span className="model-menu-item-label">{model.label}</span>
+                    {!model.available && <span className="model-unavailable">未配置</span>}
+                    <span className="model-menu-check" aria-hidden="true">{active && <CheckIcon />}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="model-picker-options">{renderModelPickerOptions()}</div>
-        </div>
+        )}
       </div>
     );
   }
@@ -1829,29 +1895,29 @@ export default function HomePage() {
             value={prompt}
             onChange={handlePromptChange}
             placeholder={compact ? "继续描述你想调整的方向…" : "说说你想做的页面，例如「面向客户的产品介绍页」"}
-            rows={compact ? 1 : 3}
+            rows={compact ? 1 : 2}
             disabled={isGenerating}
           />
-          {!compact && !prompt.trim() && (
-            <div className="prompt-presets-inline" role="list" aria-label="推荐场景">
-              {PROMPT_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  role="listitem"
-                  className="prompt-preset-pill"
-                  onClick={() => handlePresetClick(preset)}
-                  disabled={isGenerating}
-                >
-                  <span className="preset-emoji" aria-hidden="true">{preset.emoji}</span>
-                  {preset.label}
-                </button>
+          {selectedFiles.length > 0 && (
+            <div className="selected-files" aria-label="已选择文件">
+              {selectedFiles.map((file, index) => (
+                <span className="selected-file" key={`${file.name}-${file.size}-${index}`}>
+                  {file.name} · {formatFileSize(file.size)}
+                </span>
               ))}
+              <button className="clear-files-button" type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
+                <span className="button-icon" aria-hidden="true"><CloseIcon /></span>
+                清空
+              </button>
             </div>
           )}
-          <div className={`prompt-card-footer ${compact ? "is-compact" : ""}`}>
-            <div className="prompt-footer-left">
-              <label className="file-upload-button" title={FILE_UPLOAD_TITLE}>
+          <div className={`composer-toolbar ${compact ? "is-compact" : ""}`}>
+            <div className="composer-tools">
+              <label
+                className={`composer-upload ${compact ? "is-compact" : ""}`}
+                title={FILE_UPLOAD_TITLE}
+                aria-label="上传文件"
+              >
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1860,25 +1926,13 @@ export default function HomePage() {
                   disabled={isGenerating}
                   onChange={(event) => handleFileChange(event.target.files)}
                 />
-                <span className="button-icon" aria-hidden="true"><AttachmentIcon /></span>
-                上传资料
+                <span className="composer-upload-icon" aria-hidden="true"><AttachmentIcon /></span>
+                {compact ? <span className="composer-upload-text">上传</span> : <span className="composer-upload-text">上传文件</span>}
               </label>
-              {selectedFiles.length > 0 && (
-                <div className="selected-files" aria-label="已选择文件">
-                  {selectedFiles.map((file, index) => (
-                    <span className="selected-file" key={`${file.name}-${file.size}-${index}`}>
-                      {file.name} · {formatFileSize(file.size)}
-                    </span>
-                  ))}
-                  <button className="clear-files-button" type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
-                    <span className="button-icon" aria-hidden="true"><CloseIcon /></span>
-                    清空
-                  </button>
-                </div>
-              )}
+              {!compact && renderModelPicker()}
             </div>
             <button
-              className={`submit-button ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""} ${isEmptySubmit ? "is-empty" : ""}`}
+              className={`composer-send ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""} ${isEmptySubmit ? "is-empty" : ""}`}
               type={isEmptySubmit ? "button" : "submit"}
               disabled={compact ? submitDisabled : submitBlocked}
               onClick={
@@ -1893,25 +1947,35 @@ export default function HomePage() {
               aria-busy={isGenerating}
             >
               {isGenerating ? (
-                <>
-                  <span className="button-icon" aria-hidden="true"><SpinnerIcon /></span>
-                  生成中
-                </>
+                <SpinnerIcon />
               ) : compact ? (
-                <>
-                  发送
-                  <span className="button-icon" aria-hidden="true"><SendIcon /></span>
-                </>
+                <SendIcon />
               ) : (
-                <>
-                  创建
-                  <span className="button-icon" aria-hidden="true"><ArrowUpIcon /></span>
-                </>
+                <ArrowUpIcon />
               )}
             </button>
           </div>
         </form>
-        {!compact && renderAdvancedBar()}
+        {/* 灵感建议：置于输入卡片下方并居中，与整体居中布局一致，作为"兜底引导"；
+            一旦开始输入文本即自动隐藏，把焦点还给内容。 */}
+        {!compact && !prompt.trim() && (
+          <div className="prompt-inspirations" role="list" aria-label="灵感建议" data-anim-stagger>
+            <span className="prompt-inspirations-lead" aria-hidden="true">试试</span>
+            {PROMPT_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                role="listitem"
+                className="prompt-inspiration-chip"
+                onClick={() => handlePresetClick(preset)}
+                disabled={isGenerating}
+              >
+                <span className="preset-emoji" aria-hidden="true">{preset.emoji}</span>
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        )}
         {fileError && (
           <div className="prompt-meta-row">
             <span className="file-error">{fileError}</span>
@@ -1945,7 +2009,7 @@ export default function HomePage() {
               </div>
               <h1 data-anim-stagger>想做什么页面？</h1>
               <p className="subtitle" data-anim-stagger>
-                说说你的想法，<strong className="brand-inline">星页 StarPage</strong> 帮你同时调用多个模型生成可对比的网页。
+                说说你的想法，或上传文件，<strong className="brand-inline">星页 StarPage</strong> 帮你生成可对比的网页。
               </p>
 
               {renderPromptForm()}
