@@ -416,6 +416,16 @@ class GenerationService:
                 "progress",
                 {
                     "type": "progress",
+                    "step": "upload_file",
+                    "status": "completed",
+                    "text": "文件已上传到服务端",
+                },
+            )
+            yield await self._record_event(
+                task.id,
+                "progress",
+                {
+                    "type": "progress",
                     "step": "parse_file",
                     "status": "completed",
                     "text": "文件内容已解析",

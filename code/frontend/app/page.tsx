@@ -214,7 +214,7 @@ function createProgressStep(id: ProgressStepId, status: ProgressStepStatus = "pe
 
 function createInitialProgressSteps(hasFile = false): ProgressStep[] {
   return [
-    ...(hasFile ? [createProgressStep("upload_file", "completed"), createProgressStep("parse_file"), createProgressStep("compress_document")] : []),
+    ...(hasFile ? [createProgressStep("upload_file", "running"), createProgressStep("parse_file"), createProgressStep("compress_document")] : []),
     createProgressStep("model_thinking"),
     createProgressStep("model_output"),
     createProgressStep("deploy"),
@@ -1225,10 +1225,12 @@ export default function HomePage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submitFiles = selectedFiles.length > 0 ? selectedFiles : Array.from(fileInputRef.current?.files ?? []);
     const trimmedPrompt = prompt.trim();
-    const validationError = validateFiles(selectedFiles);
+    const effectivePrompt = trimmedPrompt || (submitFiles.length > 0 ? "请根据我上传的文件生成一个网页。" : "");
+    const validationError = validateFiles(submitFiles);
 
-    if (!trimmedPrompt) {
+    if (!effectivePrompt) {
       return;
     }
     if (validationError) {
@@ -1253,7 +1255,7 @@ export default function HomePage() {
     //  - 未选中 -> 每个模型各自接上自己上一轮结果，并行继续。
     // 首页(idle)提交则新建会话。
     const inConversation = phase === "active" && Boolean(conversationId);
-    const fileNames = selectedFiles.map((file) => file.name);
+    const fileNames = submitFiles.map((file) => file.name);
     const hasFile = fileNames.length > 0;
     closeAllSources();
 
@@ -1261,7 +1263,7 @@ export default function HomePage() {
 
     playTransition(() => {
       setPhase("active");
-      setSubmittedPrompt(trimmedPrompt);
+      setSubmittedPrompt(effectivePrompt);
       setSubmittedFileNames(fileNames);
       setRuns(pendingRuns);
       setActiveModelKey(pendingRuns[0]?.modelKey ?? "");
@@ -1273,8 +1275,8 @@ export default function HomePage() {
 
     try {
       const formData = new FormData();
-      formData.append("prompt", trimmedPrompt);
-      selectedFiles.forEach((file) => formData.append("files", file));
+      formData.append("prompt", effectivePrompt);
+      submitFiles.forEach((file) => formData.append("files", file));
       selectedModelKeys.forEach((key) => formData.append("models", key));
       // 技能：空串=自动（不透传，由后端路由或续写延用）；具体 key 或 __none__ 则显式透传。
       if (selectedSkillKey) formData.append("skill_keys", selectedSkillKey);
