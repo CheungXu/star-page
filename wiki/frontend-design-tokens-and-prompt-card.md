@@ -457,7 +457,30 @@ textarea → presets（空态）→ .prompt-card-footer（border-top + space-bet
 
 适合 AI 输入类首页（ChatGPT 风、Claude 风、Gemini 风、Perplexity 风、各类内部 AI 工具）。对内容浏览类（资讯流、电商）不直接适用，但 token 体系 + Aurora 背景 + 双语品牌文案 + 视觉节奏 2:1 部分通用。
 
-## 15. 落地清单
+## 15. 向下弹出浮层与相邻 Chips 的层叠冲突
+
+当工具栏在输入卡片**底部**、模型选择器**向下弹出**、且卡片下方还有灵感 chips 等辅助内容时，浮层会自然覆盖 chips——这是「不挡输入框」的取舍带来的副作用，不能仅靠 `z-index` 解决。
+
+可复用处理：
+
+1. **保持向下弹**：向上弹会挡 textarea，优先保证主输入路径。
+2. **状态驱动预留空间**：菜单打开时给外层容器加状态类（如 `hero-wrap.model-menu-open`），给下方 chips 增加 `margin-top`（约等于浮层高度，StarPage 当前约 `230px`）。
+3. **过渡要短**：`margin-top` 加 `transition: margin-top 0.18s ease`，避免 chips 突然跳动。
+4. **备选方案**（未采用）：改为向上弹、Portal 到 body、或菜单打开时隐藏 chips——都会牺牲输入体验或可发现性。
+
+```css
+.prompt-inspirations {
+  transition: margin-top 0.18s ease;
+}
+
+.hero-wrap.model-menu-open .prompt-inspirations {
+  margin-top: 230px;
+}
+```
+
+排查口诀：模型菜单与 chips 重叠 → 先看浮层弹出方向与下方 DOM 邻接关系，再决定是预留空间还是改布局，而不是只调 `z-index`。
+
+## 16. 落地清单
 
 在新项目中应用这套设计 token 时：
 

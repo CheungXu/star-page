@@ -432,6 +432,11 @@ h1 {
   gap: 8px;
   margin-top: 16px;
   padding: 0 4px;
+  transition: margin-top 0.18s ease;
+}
+
+.hero-wrap.model-menu-open .prompt-inspirations {
+  margin-top: 230px;
 }
 
 /* 入场错峰浮现：引导词「试试」+ 四个灵感 chip 依次自下而上淡入，

@@ -1909,9 +1909,12 @@ export default function HomePage() {
     const submitBlocked = isGenerating || Boolean(fileError) || selectedModelKeys.length === 0;
     const submitDisabled = submitBlocked || !canSubmit;
     const isEmptySubmit = !compact && !canSubmit && !isGenerating && !submitBlocked;
+    const promptWrapClassName = compact
+      ? "prompt-form-wrap compact-wrap"
+      : `prompt-form-wrap hero-wrap ${isModelMenuOpen ? "model-menu-open" : ""}`;
 
     return (
-      <div className={`prompt-form-wrap ${compact ? "compact-wrap" : "hero-wrap"}`}>
+      <div className={promptWrapClassName}>
         {compact && continueBase && (
           <div className="continue-indicator">
             <span className="continue-indicator-icon" aria-hidden="true"><BranchIcon /></span>
