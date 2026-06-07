@@ -2281,9 +2281,18 @@ function computeOverallStatus(runs: RunState[]): GenerationStatus {
 
 function toAbsoluteUrl(pageUrl: string): string {
   if (!pageUrl) return "";
-  if (pageUrl.startsWith("http://") || pageUrl.startsWith("https://")) return pageUrl;
   if (typeof window === "undefined") return pageUrl;
-  return `${window.location.origin}${pageUrl}`;
+
+  try {
+    const url = new URL(pageUrl, window.location.origin);
+    if (url.pathname.startsWith("/p/")) {
+      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`;
+    }
+    return url.toString();
+  } catch {
+    if (pageUrl.startsWith("/")) return `${window.location.origin}${pageUrl}`;
+    return pageUrl;
+  }
 }
 
 function readCurrentSession(): StoredSession | null {

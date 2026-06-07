@@ -32,6 +32,28 @@
 - 前端改动需要先 `next build` 再重启（见上一节静态资源教训）。
 - 排查口诀：行为没变先看进程启动时间，而不是反复怀疑代码。
 
+## 域名与生成页预览同源
+
+生成页访问统一走后端 `/p/{conversation_id}/{page_id}` 网关。该响应会带 `Content-Security-Policy: ... frame-ancestors 'self'`，目的是只允许同源主站把生成页嵌入 iframe，避免页面被第三方站点套壳。
+
+因此域名上线后，后端服务里的公开地址必须同步从 IP 切到主域名，例如：
+
+```ini
+Environment=PUBLIC_BASE_URL=http://stars-page.com
+Environment=FRONTEND_ORIGIN=http://stars-page.com
+```
+
+如果仍保留 `PUBLIC_BASE_URL=http://8.138.118.232`，用户通过 `http://stars-page.com/` 或 `http://www.stars-page.com/` 打开主站时，前端 iframe 会加载 `http://8.138.118.232/p/...`，浏览器会把父页面和预览页判定为不同源，表现为“拒绝连接”或预览灰屏，但后端日志里 `/p/...` 可能仍是 `200 OK`。
+
+前端也应把 `/p/...` 类型的生成页链接归一到当前浏览器 origin，再用于 iframe 预览。这样用户从 `stars-page.com` 访问就预览 `stars-page.com/p/...`，从 `www.stars-page.com` 访问就预览 `www.stars-page.com/p/...`；“复制/打开页面”也不会被旧 IP 链接拖回不同源。
+
+排查顺序：
+
+- 看浏览器地址栏当前 origin 和 iframe `src` 是否一致。
+- 看 `/p/...` 响应头是否含 `frame-ancestors 'self'`。
+- 用 `curl -D - http://域名/p/...` 验证后端是否能返回 HTML；若返回 `200` 但浏览器预览失败，优先怀疑同源/CSP，而不是模型生成失败。
+- 修改 systemd 单元里的 `PUBLIC_BASE_URL` / `FRONTEND_ORIGIN` 后，必须 `systemctl daemon-reload` 并重启后端；前端 URL 归一化代码变更则需要 `npm run build` 后重启前端。
+
 ## SSE / 长连接与停止超时
 
 后端有 SSE 长连接（生成过程事件流）。uvicorn 收到 SIGTERM 会**优雅关闭、等连接断开**；若客户端连接还挂着，systemd 会等到默认 `TimeoutStopSec`（90s）才 SIGKILL，导致 `systemctl restart` 长时间卡住。
