@@ -134,6 +134,7 @@ OpenAI-compatible 流式响应在 `stream_options.include_usage=true` 时，末 
 - 计算：`code/backend/app/services/llm/cost.py` 的 `estimate_llm_cost(model_key, usage)`。
 - 持久化：`page_versions` 的 token 与 `*_cost_cny` 字段（迁移 `008_llm_usage_cost.sql`）。
 - 展示：SSE `progress`（model_output 完成）与 `completed` 携带 `usage` + `cost`；前端进度区下方摘要卡片。
+- 恢复：会话详情接口也应从当前 `page_versions` 返回 `usage` + `cost`，否则刷新页面或从历史进入时，前端只能恢复页面链接，无法恢复 token 与费用摘要。
 
 官方调价时只改 `llm.models.json` 的 `pricing`，无需改代码。
 

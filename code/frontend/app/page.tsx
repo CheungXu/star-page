@@ -44,6 +44,22 @@ type GenerationRunResponse = {
   status: string;
 };
 
+type ApiUsagePayload = {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
+};
+
+type ApiCostPayload = {
+  currency?: string;
+  tier_label?: string;
+  input?: number;
+  output?: number;
+  total?: number;
+};
+
 type SsePayload = {
   type: string;
   text?: string;
@@ -59,20 +75,8 @@ type SsePayload = {
   cached_input_tokens?: number;
   reasoning_tokens?: number;
   token_source?: "actual" | "estimated";
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-    total_tokens?: number;
-    cached_input_tokens?: number;
-    reasoning_tokens?: number;
-  };
-  cost?: {
-    currency?: string;
-    tier_label?: string;
-    input?: number;
-    output?: number;
-    total?: number;
-  };
+  usage?: ApiUsagePayload;
+  cost?: ApiCostPayload;
 };
 
 type UsageCostSummary = {
@@ -174,6 +178,8 @@ type ConversationNodeResponse = {
   page_status: string;
   generation_status?: string | null;
   page_url: string;
+  usage?: ApiUsagePayload | null;
+  cost?: ApiCostPayload | null;
 };
 
 type ConversationBatchResponse = {
@@ -2363,6 +2369,7 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
 
   const runs: RunState[] = (baseBatch?.nodes ?? []).map((node) => {
     const status = mapNodeStatus(node.page_status, node.generation_status);
+    const usageSummary = buildUsageSummaryFromDetail(node.usage, node.cost);
     return {
       taskId: node.task_id ?? "",
       pageId: node.page_id,
@@ -2376,7 +2383,16 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
       progressSteps: createInitialProgressSteps(hasFile).map((step) => ({
         ...step,
         status: status === "completed" ? "completed" : step.status,
+        outputTokens:
+          step.id === "model_output" && usageSummary
+            ? usageSummary.outputTokens
+            : step.outputTokens,
+        tokenSource:
+          step.id === "model_output" && usageSummary
+            ? "actual"
+            : step.tokenSource,
       })),
+      usageSummary,
     };
   });
 
@@ -2470,6 +2486,27 @@ function buildUsageSummary(payload: SsePayload): UsageCostSummary | undefined {
     costInputCny: payload.cost?.input,
     costOutputCny: payload.cost?.output,
     tierLabel: payload.cost?.tier_label,
+  };
+}
+
+function buildUsageSummaryFromDetail(
+  usage?: ApiUsagePayload | null,
+  cost?: ApiCostPayload | null,
+): UsageCostSummary | undefined {
+  if (usage?.input_tokens === undefined || usage.output_tokens === undefined) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    totalTokens: usage.total_tokens,
+    cachedInputTokens: usage.cached_input_tokens,
+    reasoningTokens: usage.reasoning_tokens,
+    costTotalCny: cost?.total ?? 0,
+    costInputCny: cost?.input,
+    costOutputCny: cost?.output,
+    tierLabel: cost?.tier_label,
   };
 }
 

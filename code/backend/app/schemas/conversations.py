@@ -22,6 +22,22 @@ class ConversationUpdate(BaseModel):
     is_favorite: bool
 
 
+class ConversationUsage(BaseModel):
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+
+
+class ConversationCost(BaseModel):
+    currency: str = "CNY"
+    input: float | None = None
+    output: float | None = None
+    total: float | None = None
+    tier_label: str | None = None
+
+
 class ConversationNode(BaseModel):
     page_id: UUID
     task_id: UUID | None
@@ -32,6 +48,8 @@ class ConversationNode(BaseModel):
     page_status: str
     generation_status: str | None
     page_url: str
+    usage: ConversationUsage | None = None
+    cost: ConversationCost | None = None
 
 
 class ConversationBatch(BaseModel):

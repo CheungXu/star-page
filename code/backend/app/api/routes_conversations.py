@@ -12,14 +12,16 @@ from app.core.config import get_model_registry, get_settings
 from app.core.auth import get_current_user
 from app.core.database import AsyncSessionLocal
 from app.core.urls import build_page_url
-from app.models.entities import Conversation, GenerationBatch, GenerationTask, Page
+from app.models.entities import Conversation, GenerationBatch, GenerationTask, Page, PageVersion
 from app.schemas.conversations import (
     ConversationBatch as ConversationBatchSchema,
 )
 from app.schemas.conversations import (
     ConversationDetail,
     ConversationListItem,
+    ConversationCost,
     ConversationNode,
+    ConversationUsage,
     ConversationUpdate,
 )
 from app.schemas.generation import ModelInfo
@@ -143,6 +145,15 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
             if page.batch_id is not None:
                 pages_by_batch[page.batch_id].append(page)
 
+        versions_by_page: dict[uuid.UUID, PageVersion] = {}
+        current_version_ids = [page.current_version_id for page in pages if page.current_version_id is not None]
+        if current_version_ids:
+            versions_result = await session.execute(
+                select(PageVersion).where(PageVersion.id.in_(current_version_ids))
+            )
+            for version in versions_result.scalars().all():
+                versions_by_page[version.page_id] = version
+
         tasks_by_page: dict[uuid.UUID, GenerationTask] = {}
         page_ids = [page.id for page in pages]
         if page_ids:
@@ -162,6 +173,7 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
             for page in batch_pages:
                 task = tasks_by_page.get(page.id)
                 model = registry.get(page.model_key) if page.model_key else None
+                version = versions_by_page.get(page.id)
                 nodes.append(
                     ConversationNode(
                         page_id=page.id,
@@ -173,6 +185,8 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
                         page_status=page.status,
                         generation_status=task.status if task else None,
                         page_url=build_page_url(settings, page.conversation_id, page.id),
+                        usage=_build_usage(version),
+                        cost=_build_cost(version),
                     )
                 )
 
@@ -205,6 +219,32 @@ def _model_order(model_key: str | None, selected: list[str]) -> int:
     if model_key and model_key in selected:
         return selected.index(model_key)
     return len(selected)
+
+
+def _build_usage(version: PageVersion | None) -> ConversationUsage | None:
+    if version is None:
+        return None
+    if version.input_tokens is None and version.output_tokens is None:
+        return None
+    return ConversationUsage(
+        input_tokens=version.input_tokens,
+        output_tokens=version.output_tokens,
+        total_tokens=version.total_tokens,
+        cached_input_tokens=version.cached_input_tokens,
+        reasoning_tokens=version.reasoning_tokens,
+    )
+
+
+def _build_cost(version: PageVersion | None) -> ConversationCost | None:
+    if version is None:
+        return None
+    if version.input_cost_cny is None and version.output_cost_cny is None and version.total_cost_cny is None:
+        return None
+    return ConversationCost(
+        input=float(version.input_cost_cny) if version.input_cost_cny is not None else None,
+        output=float(version.output_cost_cny) if version.output_cost_cny is not None else None,
+        total=float(version.total_cost_cny) if version.total_cost_cny is not None else None,
+    )
 
 
 async def _build_conversation_list_item(
