@@ -25,6 +25,7 @@ class LlmModelConfig:
     api_key: str
     params: dict[str, Any] = field(default_factory=dict)
     extra_body: dict[str, Any] = field(default_factory=dict)
+    pricing: dict[str, Any] | None = None
     available: bool = False
 
 
@@ -39,6 +40,24 @@ class LlmUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class LlmCostBreakdown:
+    currency: str
+    tier_label: str
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int
+    reasoning_tokens: int
+    input_per_million: float
+    output_per_million: float
+    cache_input_per_million: float | None
+    input_cost_cny: float
+    output_cost_cny: float
+    total_cost_cny: float
 
 
 @dataclass(frozen=True)

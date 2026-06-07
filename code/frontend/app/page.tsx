@@ -54,7 +54,37 @@ type SsePayload = {
   step?: ProgressStepId;
   status?: ProgressStepStatus;
   output_tokens?: number;
+  input_tokens?: number;
+  total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
   token_source?: "actual" | "estimated";
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    cached_input_tokens?: number;
+    reasoning_tokens?: number;
+  };
+  cost?: {
+    currency?: string;
+    tier_label?: string;
+    input?: number;
+    output?: number;
+    total?: number;
+  };
+};
+
+type UsageCostSummary = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  costTotalCny: number;
+  costInputCny?: number;
+  costOutputCny?: number;
+  tierLabel?: string;
 };
 
 type ProgressStepId =
@@ -89,6 +119,7 @@ type RunState = {
   pageUrl: string;
   errorMessage: string;
   progressSteps: ProgressStep[];
+  usageSummary?: UsageCostSummary;
 };
 
 type StoredSession = {
@@ -1361,7 +1392,11 @@ export default function HomePage() {
     source.addEventListener("progress", (event) => {
       const payload = parsePayload(event);
       if (!payload.step || !payload.status) return;
-      patch((run) => ({ ...run, progressSteps: updateProgressSteps(run.progressSteps, payload) }));
+      patch((run) => {
+        const nextRun = { ...run, progressSteps: updateProgressSteps(run.progressSteps, payload) };
+        const summary = buildUsageSummary(payload);
+        return summary ? { ...nextRun, usageSummary: summary } : nextRun;
+      });
     });
 
     source.addEventListener("completed", (event) => {
@@ -1372,6 +1407,7 @@ export default function HomePage() {
         statusText: "页面已创建完成",
         pageUrl: payload.url ?? run.pageUrl,
         pageId: payload.page_id ?? run.pageId,
+        usageSummary: buildUsageSummary(payload) ?? run.usageSummary,
         progressSteps: run.progressSteps.map((step) => ({
           ...step,
           status: step.status === "pending" || step.status === "running" ? "completed" : step.status,
@@ -2089,8 +2125,17 @@ export default function HomePage() {
                             {step.id === "model_output" && (
                               <span className="token-meta">
                                 <span className="token-meta-icon" aria-hidden="true"><BoltIcon /></span>
-                                输出 {step.outputTokens ?? 0} tokens
-                                {step.tokenSource === "estimated" ? "（估算）" : ""}
+                                {activeRun.usageSummary && step.status === "completed" ? (
+                                  <>
+                                    输入 {formatTokenCount(activeRun.usageSummary.inputTokens)} / 输出{" "}
+                                    {formatTokenCount(activeRun.usageSummary.outputTokens)} tokens
+                                  </>
+                                ) : (
+                                  <>
+                                    输出 {step.outputTokens ?? 0} tokens
+                                    {step.tokenSource === "estimated" ? "（估算）" : ""}
+                                  </>
+                                )}
                               </span>
                             )}
                             {step.id === "model_thinking" && thinkingExpanded && (
@@ -2105,6 +2150,33 @@ export default function HomePage() {
                           </div>
                         </div>
                       ))}
+                      {activeRun.usageSummary && (
+                        <div className="usage-summary">
+                          <span className="token-meta-icon" aria-hidden="true"><BoltIcon /></span>
+                          <div className="usage-summary-body">
+                            <span>
+                              输入 {formatTokenCount(activeRun.usageSummary.inputTokens)} / 输出{" "}
+                              {formatTokenCount(activeRun.usageSummary.outputTokens)} tokens
+                              {activeRun.usageSummary.cachedInputTokens
+                                ? ` · 缓存命中 ${formatTokenCount(activeRun.usageSummary.cachedInputTokens)}`
+                                : ""}
+                              {activeRun.usageSummary.reasoningTokens
+                                ? ` · 思考 ${formatTokenCount(activeRun.usageSummary.reasoningTokens)}`
+                                : ""}
+                            </span>
+                            <span className="usage-summary-cost">
+                              {activeRun.usageSummary.costTotalCny > 0 || activeRun.usageSummary.tierLabel ? (
+                                <>
+                                  花费 {formatCostCny(activeRun.usageSummary.costTotalCny)}
+                                  {activeRun.usageSummary.tierLabel ? `（${activeRun.usageSummary.tierLabel}）` : ""}
+                                </>
+                              ) : (
+                                "费用未配置"
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2370,6 +2442,36 @@ function updateProgressSteps(current: ProgressStep[], payload: SsePayload): Prog
 function parsePayload(event: Event): SsePayload {
   const message = event as MessageEvent<string>;
   return JSON.parse(message.data) as SsePayload;
+}
+
+function buildUsageSummary(payload: SsePayload): UsageCostSummary | undefined {
+  const inputTokens = payload.usage?.input_tokens ?? payload.input_tokens;
+  const outputTokens = payload.usage?.output_tokens ?? payload.output_tokens;
+  if (inputTokens === undefined || outputTokens === undefined) {
+    return undefined;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: payload.usage?.total_tokens ?? payload.total_tokens,
+    cachedInputTokens: payload.usage?.cached_input_tokens ?? payload.cached_input_tokens,
+    reasoningTokens: payload.usage?.reasoning_tokens ?? payload.reasoning_tokens,
+    costTotalCny: payload.cost?.total ?? 0,
+    costInputCny: payload.cost?.input,
+    costOutputCny: payload.cost?.output,
+    tierLabel: payload.cost?.tier_label,
+  };
+}
+
+function formatTokenCount(value: number): string {
+  return value.toLocaleString("zh-CN");
+}
+
+function formatCostCny(value: number): string {
+  if (value >= 1) return `¥${value.toFixed(4)}`;
+  if (value >= 0.01) return `¥${value.toFixed(4)}`;
+  return `¥${value.toFixed(6)}`;
 }
 
 function getProgressIcon(status: ProgressStepStatus): ReactNode {

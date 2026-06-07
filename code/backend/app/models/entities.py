@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Identity, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Identity, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -125,6 +125,11 @@ class PageVersion(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    output_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    total_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     page: Mapped[Page] = relationship("Page")

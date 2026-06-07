@@ -95,11 +95,11 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - `status`：普通状态文案。
 - `reasoning_delta`：模型流式返回的 `reasoning_content`。
 - `answer_started`：模型进入正式 HTML 输出阶段，前端开始展示“页面创建中”。
-- `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。
-- `completed`：页面已上传 OSS、数据库已更新，返回可访问链接。
+- `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。`model_output` 完成时携带真实 `input_tokens`/`output_tokens` 及自算 `cost`（元）。
+- `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；可选携带 `usage` 与 `cost` 摘要。
 - `failed`：生成失败。
 
-`model_thinking` 节点承载模型 reasoning 内容，前端默认展开且支持收起；`model_output` 节点会优先使用模型返回的真实 `completion_tokens`，生成中没有真实 usage 时，前端先展示估算 token 数。
+`model_thinking` 节点承载模型 reasoning 内容，前端默认展开且支持收起。`model_output` 生成中优先展示估算 output tokens；完成后展示 API 返回的真实输入/输出 token，并在进度区下方显示费用摘要（按 `llm.models.json` 的 `pricing` 自算，含分档标签）。用量写入 `page_versions`（迁移 `008_llm_usage_cost.sql`）。
 
 ## 网页制作技能（page-skills）
 

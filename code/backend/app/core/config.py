@@ -295,6 +295,7 @@ def get_model_registry() -> LlmModelRegistry:
             api_key=api_key,
             params=_resolve_params(defaults, entry),
             extra_body=dict(entry.get("extra_body") or {}),
+            pricing=dict(entry.get("pricing") or {}) or None,
             available=bool(api_key and entry.get("model")),
         )
 

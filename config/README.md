@@ -92,7 +92,7 @@ ALIYUN_SMS_ENDPOINT=dysmsapi.aliyuncs.com
 
 当前支持"多模型并行生成"，配置分三层落点，做到"加模型 / 调参数互不污染、密钥不进 Git"：
 
-- 模型目录（非密钥，可提交可 review）：`config/llm.models.json`，描述 `defaults`（全局兜底参数）、`default_models`（默认勾选）、`models[]`（每模型 `key/label/provider/protocol/base_url/model/api_key_env/params/extra_body`）。
+- 模型目录（非密钥，可提交可 review）：`config/llm.models.json`，描述 `defaults`（全局兜底参数）、`default_models`（默认勾选）、`models[]`（每模型 `key/label/provider/protocol/base_url/model/api_key_env/params/extra_body/pricing`）。
 - 密钥与基建参数（敏感/运维，gitignored）：`config/llm.env`，只放各模型 API Key 与 `LLM_TIMEOUT_MS`/`LLM_RETRY_*`。模板见 `config/llm.env.example`（只保留变量名）。
 
 各模型密钥变量名由目录里的 `api_key_env` 指定，例如：
@@ -106,6 +106,17 @@ LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时 qwen 回退
 参数三层覆盖（就近优先）：`有效参数 = {...defaults, ...model.params}`，再合并 `extra_body`（厂商专有，如 qwen `enable_thinking`、doubao `reasoning_effort`）。`params` 值置 `null` 表示显式不发该字段（doubao 系统固定 temperature/top_p 并忽略传入）。
 
 密钥从 `api_key_env` 解析，缺失的模型自动不可用（前端多选里不出现，不崩）。协议当前后端支持 OpenAI-compatible；qwen 与 doubao 均按此接入，流式响应中可收到 `reasoning_content` 和正式回复内容。
+
+当前已接入模型（目录 key → model ID）：
+
+| key | model ID |
+| --- | --- |
+| `qwen` | `qwen3.7-max` |
+| `qwen-plus` | `qwen3.7-plus` |
+| `doubao` | `doubao-seed-2-0-pro-260215` |
+| `doubao-code` | `doubao-seed-2-0-code-preview-260215` |
+
+费用：`pricing.tiers[]` 维护各模型分段单价（元/百万 tokens），后端按 API 返回的 `usage` 自算（接口不返回 cost）。详见 `wiki/llm-provider-abstraction.md`。
 
 可选：`LLM_DEFAULT_MODELS=qwen,doubao` 覆盖默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
 

@@ -24,8 +24,9 @@ from app.models.entities import (
 )
 from app.services.html_sanitizer import extract_html_document, sanitize_html
 from app.services.llm.client import create_llm_client
+from app.services.llm.cost import cost_to_payload, estimate_llm_cost, usage_to_payload
 from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, build_skill_system_message
-from app.services.llm.types import LlmMessage, LlmUsage
+from app.services.llm.types import LlmCostBreakdown, LlmMessage, LlmUsage
 from app.services.skills.registry import SkillRegistry, get_skill_registry
 from app.services.skills.selector import select_skill_for_prompt
 from app.services.sse import SseEvent
@@ -461,6 +462,7 @@ class GenerationService:
         model_provider: str | None = None
         model_name: str | None = None
         usage: LlmUsage | None = None
+        cost: LlmCostBreakdown | None = None
         answer_text_length = 0
         reported_output_tokens = 0
         next_token_report = 50
@@ -569,18 +571,26 @@ class GenerationService:
                 raise ValueError("模型未返回 HTML 正文")
 
             output_tokens = usage.output_tokens if usage and usage.output_tokens is not None else _estimate_output_tokens(answer_text_length)
-            yield await self._record_event(
-                task.id,
-                "progress",
-                {
-                    "type": "progress",
-                    "step": "model_output",
-                    "status": "completed",
-                    "text": "模型答案输出完成",
-                    "output_tokens": output_tokens,
-                    "token_source": "actual" if usage and usage.output_tokens is not None else "estimated",
-                },
-            )
+            cost = estimate_llm_cost(task.model_key, usage) if usage else None
+            progress_payload: dict[str, Any] = {
+                "type": "progress",
+                "step": "model_output",
+                "status": "completed",
+                "text": "模型答案输出完成",
+                "output_tokens": output_tokens,
+                "token_source": "actual" if usage and usage.output_tokens is not None else "estimated",
+            }
+            if usage and usage.input_tokens is not None:
+                progress_payload["input_tokens"] = usage.input_tokens
+            if usage and usage.total_tokens is not None:
+                progress_payload["total_tokens"] = usage.total_tokens
+            if usage and usage.cached_input_tokens is not None:
+                progress_payload["cached_input_tokens"] = usage.cached_input_tokens
+            if usage and usage.reasoning_tokens is not None:
+                progress_payload["reasoning_tokens"] = usage.reasoning_tokens
+            if cost is not None:
+                progress_payload["cost"] = cost_to_payload(cost)
+            yield await self._record_event(task.id, "progress", progress_payload)
 
             model_output_text = "".join(answer_parts)
             task.model_output_text = model_output_text or None
@@ -608,6 +618,7 @@ class GenerationService:
                 model_provider=model_provider,
                 model_name=model_name,
                 usage=usage,
+                cost=cost,
             )
 
             page.current_version_id = version.id
@@ -628,11 +639,17 @@ class GenerationService:
             )
 
             page_url = self._page_url(page)
-            yield await self._record_event(
-                task.id,
-                "completed",
-                {"type": "completed", "page_id": str(page.id), "url": page_url, "model_key": task.model_key},
-            )
+            completed_payload: dict[str, Any] = {
+                "type": "completed",
+                "page_id": str(page.id),
+                "url": page_url,
+                "model_key": task.model_key,
+            }
+            if usage is not None:
+                completed_payload["usage"] = usage_to_payload(usage)
+            if cost is not None:
+                completed_payload["cost"] = cost_to_payload(cost)
+            yield await self._record_event(task.id, "completed", completed_payload)
 
         except asyncio.CancelledError:
             task.status = "cancelled"
@@ -674,6 +691,7 @@ class GenerationService:
         model_provider: str | None,
         model_name: str | None,
         usage: LlmUsage | None,
+        cost: LlmCostBreakdown | None = None,
     ) -> PageVersion:
         result = await self.session.execute(
             select(func.count(PageVersion.id)).where(PageVersion.page_id == page.id)
@@ -694,6 +712,11 @@ class GenerationService:
             input_tokens=usage.input_tokens if usage else None,
             output_tokens=usage.output_tokens if usage else None,
             total_tokens=usage.total_tokens if usage else None,
+            cached_input_tokens=usage.cached_input_tokens if usage else None,
+            reasoning_tokens=usage.reasoning_tokens if usage else None,
+            input_cost_cny=cost.input_cost_cny if cost else None,
+            output_cost_cny=cost.output_cost_cny if cost else None,
+            total_cost_cny=cost.total_cost_cny if cost else None,
         )
         self.session.add(version)
         await self.session.flush()

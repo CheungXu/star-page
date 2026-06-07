@@ -121,6 +121,8 @@ class OpenAICompatibleClient:
 
                     usage = raw_chunk.get("usage")
                     if usage:
+                        prompt_details = usage.get("prompt_tokens_details") or {}
+                        completion_details = usage.get("completion_tokens_details") or {}
                         yield LlmStreamChunk(
                             type="done",
                             provider=self.model.provider,
@@ -129,6 +131,8 @@ class OpenAICompatibleClient:
                                 input_tokens=usage.get("prompt_tokens"),
                                 output_tokens=usage.get("completion_tokens"),
                                 total_tokens=usage.get("total_tokens"),
+                                cached_input_tokens=prompt_details.get("cached_tokens"),
+                                reasoning_tokens=completion_details.get("reasoning_tokens"),
                             ),
                             raw_chunk=raw_chunk,
                         )
