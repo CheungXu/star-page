@@ -7,6 +7,7 @@ from app.services.skills.registry import (
 )
 from app.services.skills.selector import (
     LlmClassifierSelector,
+    SkillSelectionResult,
     SkillSelector,
     select_skill_for_prompt,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "SkillRegistry",
     "get_skill_registry",
     "SkillSelector",
+    "SkillSelectionResult",
     "LlmClassifierSelector",
     "select_skill_for_prompt",
 ]

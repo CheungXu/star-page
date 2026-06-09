@@ -872,46 +872,6 @@ h1 {
   to { transform: rotate(360deg); }
 }
 
-.skill-select {
-  min-width: 168px;
-  max-width: 220px;
-  height: 36px;
-  padding: 0 32px 0 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background:
-    var(--color-surface)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
-    no-repeat right 10px center;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.skill-select:hover:not(:disabled) {
-  border-color: var(--color-border-strong);
-  background-color: var(--color-surface-soft);
-  color: var(--color-text-primary);
-}
-
-.skill-select:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-focus);
-}
-
-.skill-select:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .prompt-card:focus-within {
   border-color: rgba(53, 99, 233, 0.55);
   box-shadow:

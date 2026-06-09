@@ -212,13 +212,14 @@ async def _call_llm_for_document_compression(user_prompt: str, scope: str, docum
         document_text=document_text,
     )
     try:
-        return await llm_client.complete_text(
+        result = await llm_client.complete_text(
             [
                 LlmMessage(role="system", content=DOCUMENT_COMPRESSION_SYSTEM_PROMPT),
                 LlmMessage(role="user", content=compression_user_prompt),
             ],
             require_content=True,
         )
+        return result.text
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

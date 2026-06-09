@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from app.core.config import get_settings
 from app.services.llm.client import create_llm_client
-from app.services.llm.types import LlmMessage
+from app.services.llm.types import LlmMessage, LlmUsage
 from app.services.skills.registry import SkillDefinition, get_skill_registry
 
 # 路由是"选一个词"的轻任务，给较短超时；超时即走关键词兜底，避免拖慢生成。
@@ -29,11 +30,17 @@ _ROUTER_USER_TEMPLATE = """候选技能：
 请只输出一个最匹配的 key，或在都不匹配时输出 NONE："""
 
 
+@dataclass(frozen=True)
+class SkillSelectionResult:
+    key: str | None
+    usage: LlmUsage | None = None
+
+
 @runtime_checkable
 class SkillSelector(Protocol):
     """技能选择器接口。方案 B 用 LLM 分类；方案 C 可实现基于工具调用的 Agentic 选择器。"""
 
-    async def select(self, prompt: str, skills: list[SkillDefinition]) -> str | None: ...
+    async def select(self, prompt: str, skills: list[SkillDefinition]) -> SkillSelectionResult: ...
 
 
 def _extract_key(raw: str, valid_keys: set[str]) -> str | None:
@@ -59,33 +66,33 @@ def _keyword_match(prompt: str, skills: list[SkillDefinition]) -> str | None:
 class LlmClassifierSelector:
     """用一次轻量、非流式 LLM 调用做技能路由；失败/超时回退关键词匹配，再回退 None。"""
 
-    def __init__(self, router_model: str | None = None) -> None:
+    def __init__(self, router_model: str) -> None:
         self.router_model = router_model
 
-    async def select(self, prompt: str, skills: list[SkillDefinition]) -> str | None:
+    async def select(self, prompt: str, skills: list[SkillDefinition]) -> SkillSelectionResult:
         if not skills:
-            return None
+            return SkillSelectionResult(None, None)
 
         clean_prompt = (prompt or "").strip()[:_MAX_PROMPT_CHARS]
         if not clean_prompt:
-            return None
+            return SkillSelectionResult(None, None)
 
         valid_keys = {skill.key for skill in skills}
         try:
-            raw = await asyncio.wait_for(
+            raw, usage = await asyncio.wait_for(
                 self._classify(clean_prompt, skills),
                 timeout=_ROUTER_TIMEOUT_SECONDS,
             )
             key = _extract_key(raw, valid_keys)
             if key:
-                return key
+                return SkillSelectionResult(key, usage)
         except Exception:
             # 超时、模型不可用、网络错误等：不阻断生成，降级到关键词兜底。
             pass
 
-        return _keyword_match(clean_prompt, skills)
+        return SkillSelectionResult(_keyword_match(clean_prompt, skills), None)
 
-    async def _classify(self, prompt: str, skills: list[SkillDefinition]) -> str:
+    async def _classify(self, prompt: str, skills: list[SkillDefinition]) -> tuple[str, LlmUsage | None]:
         client = create_llm_client(self.router_model)
         listing = "\n".join(
             f"- key: {skill.key} ｜ 名称: {skill.name} ｜ 适用: {skill.description}" for skill in skills
@@ -94,18 +101,19 @@ class LlmClassifierSelector:
             LlmMessage(role="system", content=_ROUTER_SYSTEM_PROMPT),
             LlmMessage(role="user", content=_ROUTER_USER_TEMPLATE.format(listing=listing, prompt=prompt)),
         ]
-        return await client.complete_text(messages, require_content=False)
+        result = await client.complete_text(messages, require_content=False)
+        return result.text, result.usage
 
 
-async def select_skill_for_prompt(prompt: str, router_model: str | None = None) -> str | None:
+async def select_skill_for_prompt(prompt: str, *, router_model: str) -> SkillSelectionResult:
     """便捷入口：在技能开启且有可用技能时，为给定需求选出一个技能 key（或 None）。"""
     settings = get_settings()
     if not settings.page_skills_enabled:
-        return None
+        return SkillSelectionResult(None, None)
 
     skills = get_skill_registry().list_skills()
     if not skills:
-        return None
+        return SkillSelectionResult(None, None)
 
-    selector = LlmClassifierSelector(router_model=router_model or settings.skill_router_model)
+    selector = LlmClassifierSelector(router_model=router_model)
     return await selector.select(prompt, skills)

@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 class GenerationCreateRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=4000)
     models: list[str] = Field(default_factory=list)
-    skill_keys: list[str] = Field(default_factory=list)
     conversation_id: UUID | None = None
     base_page_id: UUID | None = None
 
@@ -27,8 +26,6 @@ class GenerationCreateResponse(BaseModel):
     batch_id: UUID
     kind: str
     runs: list[GenerationRunItem]
-    skill_key: str | None = None
-    skill_name: str | None = None
 
 
 class ModelInfo(BaseModel):
@@ -37,12 +34,6 @@ class ModelInfo(BaseModel):
     provider: str
     is_default: bool
     available: bool
-
-
-class SkillInfo(BaseModel):
-    key: str
-    name: str
-    description: str
 
 
 class GenerationEventPayload(BaseModel):

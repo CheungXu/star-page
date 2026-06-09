@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from urllib.parse import urlparse
 
@@ -11,6 +12,13 @@ from app.core.config import get_settings
 # 注意：<script>/<form> 不在此列——本产品已用 CSP sandbox + connect-src none
 # 把页面关进无凭证、无外部网络的沙箱，故放行展示型 JS 与纯前端表单控件。
 BANNED_TAGS = {"iframe", "object", "embed", "base"}
+TAILWIND_PLAY_CDN_HOST = "cdn.tailwindcss.com"
+
+
+@dataclass(frozen=True)
+class GeneratedHtmlPolicyViolation:
+    code: str
+    message: str
 
 
 def extract_html_document(raw_text: str) -> str:
@@ -59,6 +67,29 @@ def sanitize_html(raw_html: str) -> str:
         rendered = "<!doctype html>\n" + rendered
 
     return rendered
+
+
+def find_tailwind_runtime_violation(raw_html: str) -> GeneratedHtmlPolicyViolation | None:
+    """检测当前不支持的 Tailwind 运行时依赖，避免发布后样式在沙箱里失效。"""
+    soup = BeautifulSoup(raw_html, "html.parser")
+
+    for script in soup.find_all("script"):
+        src = str(script.get("src") or "").strip().lower()
+        if TAILWIND_PLAY_CDN_HOST in src:
+            return GeneratedHtmlPolicyViolation(
+                code="tailwind_play_cdn",
+                message="生成结果引用了平台当前不支持的 Tailwind Play CDN",
+            )
+
+    for style in soup.find_all("style"):
+        style_type = str(style.get("type") or "").strip().lower()
+        if style_type == "text/tailwindcss":
+            return GeneratedHtmlPolicyViolation(
+                code="tailwind_style_block",
+                message="生成结果使用了平台当前不支持的 Tailwind 专用样式块",
+            )
+
+    return None
 
 
 def _allowed_script_hosts() -> set[str]:

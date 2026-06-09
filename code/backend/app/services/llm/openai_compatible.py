@@ -8,7 +8,7 @@ from json import JSONDecodeError
 import httpx
 
 from app.core.config import Settings
-from app.services.llm.types import LlmMessage, LlmModelConfig, LlmStreamChunk, LlmUsage
+from app.services.llm.types import LlmCompletionResult, LlmMessage, LlmModelConfig, LlmStreamChunk, LlmUsage
 
 RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 
@@ -34,16 +34,20 @@ class OpenAICompatibleClient:
                     raise
                 await self._sleep_before_retry(attempt)
 
-    async def complete_text(self, messages: list[LlmMessage], *, require_content: bool = True) -> str:
+    async def complete_text(self, messages: list[LlmMessage], *, require_content: bool = True) -> LlmCompletionResult:
         attempts = self._retry_attempts()
         last_text = ""
+        last_usage: LlmUsage | None = None
 
         for attempt in range(1, attempts + 1):
             parts: list[str] = []
+            usage: LlmUsage | None = None
             try:
                 async for chunk in self._stream_text_once(messages):
                     if chunk.type == "text_delta" and chunk.text:
                         parts.append(chunk.text)
+                    if chunk.type == "done" and chunk.usage:
+                        usage = chunk.usage
             except Exception as exc:
                 if attempt >= attempts or not _is_retryable_exception(exc):
                     raise
@@ -51,15 +55,16 @@ class OpenAICompatibleClient:
                 continue
 
             last_text = "".join(parts).strip()
+            last_usage = usage
             if last_text or not require_content:
-                return last_text
+                return LlmCompletionResult(text=last_text, usage=last_usage)
 
             if attempt < attempts:
                 await self._sleep_before_retry(attempt)
 
         if require_content:
             raise ValueError("LLM 返回空正文")
-        return last_text
+        return LlmCompletionResult(text=last_text, usage=last_usage)
 
     async def _stream_text_once(self, messages: list[LlmMessage]) -> AsyncIterator[LlmStreamChunk]:
         body = {

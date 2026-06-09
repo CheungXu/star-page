@@ -56,6 +56,27 @@ def estimate_llm_cost(model_key: str, usage: LlmUsage | None) -> LlmCostBreakdow
     )
 
 
+def merge_llm_usage(left: LlmUsage | None, right: LlmUsage | None) -> LlmUsage | None:
+    """合并两次 LLM 调用的 token 用量（如技能路由 + 页面生成）。"""
+    if left is None:
+        return right
+    if right is None:
+        return left
+
+    def _sum_optional(a: int | None, b: int | None) -> int | None:
+        if a is None and b is None:
+            return None
+        return (a or 0) + (b or 0)
+
+    return LlmUsage(
+        input_tokens=_sum_optional(left.input_tokens, right.input_tokens),
+        output_tokens=_sum_optional(left.output_tokens, right.output_tokens),
+        total_tokens=_sum_optional(left.total_tokens, right.total_tokens),
+        cached_input_tokens=_sum_optional(left.cached_input_tokens, right.cached_input_tokens),
+        reasoning_tokens=_sum_optional(left.reasoning_tokens, right.reasoning_tokens),
+    )
+
+
 def usage_to_payload(usage: LlmUsage) -> dict[str, int]:
     payload: dict[str, int] = {}
     if usage.input_tokens is not None:

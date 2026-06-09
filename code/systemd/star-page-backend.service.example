@@ -9,8 +9,8 @@ WorkingDirectory=/root/star-page/code/backend
 EnvironmentFile=/root/star-page/config/db.env
 EnvironmentFile=/root/star-page/config/oss.env
 EnvironmentFile=/root/star-page/config/llm.env
-Environment=PUBLIC_BASE_URL=http://8.138.118.232
-Environment=FRONTEND_ORIGIN=http://8.138.118.232
+Environment=PUBLIC_BASE_URL=https://stars-page.com
+Environment=FRONTEND_ORIGIN=https://stars-page.com
 ExecStart=/root/star-page/code/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=3

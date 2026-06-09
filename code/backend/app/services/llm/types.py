@@ -61,6 +61,12 @@ class LlmCostBreakdown:
 
 
 @dataclass(frozen=True)
+class LlmCompletionResult:
+    text: str
+    usage: LlmUsage | None = None
+
+
+@dataclass(frozen=True)
 class LlmStreamChunk:
     type: LlmStreamChunkType
     provider: str

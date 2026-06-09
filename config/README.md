@@ -16,9 +16,8 @@
 
 后续正式部署前仍需补齐：
 
-- 域名解析与备案
-- HTTPS 证书
-- 正式 Nginx 反向代理站点配置与进程常驻方案
+- 域名备案（若尚未完成）
+- HTTPS 已上线（DigiCert DV，`stars-page.com` + `www`，详见 `wiki/aliyun-ssl-cert-nginx-deployment.md`）；到期前需续费并重新部署
 - Docker Hub 镜像拉取加速器，或改用阿里云 ACR 镜像
 - CDN、监控、备份等生产配置
 
@@ -118,7 +117,7 @@ LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时 qwen 回退
 
 费用：`pricing.tiers[]` 维护各模型分段单价（元/百万 tokens），后端按 API 返回的 `usage` 自算（接口不返回 cost）。详见 `wiki/llm-provider-abstraction.md`。
 
-可选：`LLM_DEFAULT_MODELS=qwen,doubao` 覆盖默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
+默认勾选：`default_models` 当前为 `["qwen", "doubao"]`（新用户首访同时勾选通义千问 3.7 Max 与豆包 Seed 2.0 Pro，展示多模型并行能力）。可选：`LLM_DEFAULT_MODELS=qwen,doubao` 覆盖默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
 
 ## 阿里云 OSS
 

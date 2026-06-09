@@ -31,8 +31,6 @@ type CreateGenerationResponse = {
   batch_id: string;
   kind: string;
   runs: GenerationRunResponse[];
-  skill_key?: string | null;
-  skill_name?: string | null;
 };
 
 type GenerationRunResponse = {
@@ -67,6 +65,8 @@ type SsePayload = {
   url?: string;
   message?: string;
   model_key?: string;
+  skill_key?: string;
+  skill_name?: string;
   step?: ProgressStepId;
   status?: ProgressStepStatus;
   output_tokens?: number;
@@ -134,7 +134,7 @@ type StoredSession = {
   prompt: string;
   fileNames: string[];
   selectedModelKeys: string[];
-  selectedSkillKey?: string;
+  appliedSkillKey?: string;
   appliedSkillName?: string | null;
   runs: RunState[];
   roundIndex: number;
@@ -262,8 +262,6 @@ const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
 const SELECTED_MODELS_KEY = "star-page-selected-models";
-// 技能：空串=自动（由后端路由），首页不再展示手动选择。
-const SKILL_AUTO_VALUE = "";
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 3;
@@ -1036,7 +1034,6 @@ export default function HomePage() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModelKeys, setSelectedModelKeys] = useState<string[]>([]);
-  const [selectedSkillKey, setSelectedSkillKey] = useState<string>(SKILL_AUTO_VALUE);
   const [appliedSkill, setAppliedSkill] = useState<{ key: string; name: string } | null>(null);
   const [roundIndex, setRoundIndex] = useState(0);
   const [continueBase, setContinueBase] = useState<{ pageId: string; modelLabel: string } | null>(null);
@@ -1085,7 +1082,7 @@ export default function HomePage() {
       prompt: submittedPrompt,
       fileNames: submittedFileNames,
       selectedModelKeys,
-      selectedSkillKey,
+      appliedSkillKey: appliedSkill?.key,
       appliedSkillName: appliedSkill?.name ?? null,
       runs,
       roundIndex,
@@ -1095,7 +1092,7 @@ export default function HomePage() {
       updatedAt: now,
     };
     writeCurrentSession(session);
-  }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, selectedSkillKey, appliedSkill, roundIndex, continueBase]);
+  }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, appliedSkill, roundIndex, continueBase]);
 
   async function initializeAuthState(): Promise<void> {
     const user = await loadMe();
@@ -1315,8 +1312,6 @@ export default function HomePage() {
       formData.append("prompt", effectivePrompt);
       submitFiles.forEach((file) => formData.append("files", file));
       selectedModelKeys.forEach((key) => formData.append("models", key));
-      // 技能：空串=自动（不透传，由后端路由或续写延用）；具体 key 或 __none__ 则显式透传。
-      if (selectedSkillKey) formData.append("skill_keys", selectedSkillKey);
       if (inConversation) {
         formData.append("conversation_id", conversationId);
         if (continueBase) formData.append("base_page_id", continueBase.pageId);
@@ -1331,7 +1326,7 @@ export default function HomePage() {
       const data = (await response.json()) as CreateGenerationResponse;
       setConversationId(data.conversation_id);
       setBatchId(data.batch_id);
-      setAppliedSkill(data.skill_key ? { key: data.skill_key, name: data.skill_name ?? data.skill_key } : null);
+      setAppliedSkill(null);
       if (inConversation) setRoundIndex((value) => value + 1);
       setContinueBase(null);
       setSelectedFiles([]);
@@ -1362,6 +1357,16 @@ export default function HomePage() {
     source.addEventListener("status", (event) => {
       const payload = parsePayload(event);
       if (payload.text) patch((run) => ({ ...run, statusText: payload.text ?? run.statusText }));
+    });
+
+    source.addEventListener("skill_selected", (event) => {
+      const payload = parsePayload(event);
+      if (payload.skill_key) {
+        setAppliedSkill({
+          key: payload.skill_key,
+          name: payload.skill_name ?? payload.skill_key,
+        });
+      }
     });
 
     source.addEventListener("reasoning_delta", (event) => {
@@ -1466,7 +1471,6 @@ export default function HomePage() {
       setRoundIndex(0);
       setContinueBase(null);
       setAppliedSkill(null);
-      setSelectedSkillKey(SKILL_AUTO_VALUE);
     });
   }
 
@@ -1589,10 +1593,9 @@ export default function HomePage() {
       session.basePageId ? { pageId: session.basePageId, modelLabel: session.baseModelLabel ?? "上一结果" } : null,
     );
     if (session.selectedModelKeys?.length) setSelectedModelKeys(session.selectedModelKeys);
-    if (typeof session.selectedSkillKey === "string") setSelectedSkillKey(session.selectedSkillKey);
     setAppliedSkill(
       session.appliedSkillName
-        ? { key: session.selectedSkillKey ?? "", name: session.appliedSkillName }
+        ? { key: session.appliedSkillKey ?? "", name: session.appliedSkillName }
         : null,
     );
   }

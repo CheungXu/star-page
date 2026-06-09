@@ -39,8 +39,8 @@
 因此域名上线后，后端服务里的公开地址必须同步从 IP 切到主域名，例如：
 
 ```ini
-Environment=PUBLIC_BASE_URL=http://stars-page.com
-Environment=FRONTEND_ORIGIN=http://stars-page.com
+Environment=PUBLIC_BASE_URL=https://stars-page.com
+Environment=FRONTEND_ORIGIN=https://stars-page.com
 ```
 
 如果仍保留 `PUBLIC_BASE_URL=http://8.138.118.232`，用户通过 `http://stars-page.com/` 或 `http://www.stars-page.com/` 打开主站时，前端 iframe 会加载 `http://8.138.118.232/p/...`，浏览器会把父页面和预览页判定为不同源，表现为“拒绝连接”或预览灰屏，但后端日志里 `/p/...` 可能仍是 `200 OK`。

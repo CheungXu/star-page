@@ -3,7 +3,7 @@
     "temperature": 0.7,
     "max_tokens": 65536
   },
-  "default_models": ["qwen"],
+  "default_models": ["qwen", "doubao"],
   "models": [
     {
       "key": "qwen",
