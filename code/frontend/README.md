@@ -43,6 +43,7 @@
 - **侧边栏 Active 状态**：当用户处于"新对话"空态时，`.new-chat-button.is-active` 在原本实心蓝色 CTA 之上叠加一圈柔和发光环和脉冲动画 `new-chat-pulse`，明确告诉用户"你在这里"；历史项 active 使用浅品牌色背景 + 左侧 3px 竖条强化定位。
 - **历史列表层级**：列表项 `padding: 12px 14px / gap: 6px`；标题 13.5px / 600；日期 11px / 500 / muted (#94a3b8)；标题 vs 日期对比拉满，扫视时一眼锁定标题。
 - **滚动条 hover 反馈**：webkit 滑块 6px 宽 + `padding-box` 圆角 + `border: 1px solid transparent`，hover 时 alpha `0.22 → 0.42` 加深一倍，明确"可拖拽"反馈。`.history-list padding-right: 4px / margin-right: -2px` 让 thumb 不紧贴右边。
+- **ICP 备案页脚（`SiteFooter`）**：仅在 idle 首屏 Hero 下方展示 `粤ICP备2026071100号`，链接工信部 `https://beian.miit.gov.cn`；工作区不展示。配置在 `app/site-config.ts`，`.page-shell` 用 flex 列 + `margin-top: auto` 沉底，不用 fixed。设计原则见 `wiki/site-icp-filing-footer.md`。
 
 跨项目复用的设计原则与代码片段沉淀在 `wiki/frontend-design-tokens-and-prompt-card.md`（设计 token / Prompt Card / Header Logo / 侧边栏 / 多层阴影 / Chip Hover / 双语品牌 / 副标题品牌词 / 视觉节奏 / 滚动条 hover 共 11 节）。
 

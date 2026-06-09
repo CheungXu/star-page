@@ -26,6 +26,8 @@
 - `20260602/generated_page_js_sandbox.plan.md`：上述实施对应的方案归档（plan 同步留档便于回溯）。
 - `20260602/page-skills-injection-record.md`：网页制作技能（page-skills）发现与注入实施记录。方案 B（技能目录扫描 + 轻量 LLM 路由 + 全量注入 + 持久化延用，选择器抽象预留演进到 Agentic 方案 C）；含默认开启/未选由模型自动选/可手动覆盖与显式关闭、续写延用 parent 链路、batch 级一次路由、路由短超时+关键词兜底、技能目录不在后端构建上下文的部署注意点。
 - `20260604/frontend-homepage-ux-round2-record.md`：首页 UX 第二轮精修（创建三态、preset pill、高级设置成组去 VS、侧边栏单一 Active、移除首页页面模板选择）。
+- `20260610/production-https-and-ux-defaults.md`：生产 HTTPS 上线、首屏默认双模型勾选与 ICP 备案号展示状态汇总。
+- `20260610/icp-filing-footer-implementation.md`：ICP 备案号首页页脚实施记录（idle 静态沉底、工作区不展示、systemd 上线验证）。
 
 ## 使用约定
 

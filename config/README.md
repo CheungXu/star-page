@@ -16,7 +16,7 @@
 
 后续正式部署前仍需补齐：
 
-- 域名备案（若尚未完成）
+- 域名 ICP 备案已完成（`stars-page.com`，粤ICP备2026071100号；首页页脚展示见 `doc/20260610/icp-filing-footer-implementation.md`）
 - HTTPS 已上线（DigiCert DV，`stars-page.com` + `www`，详见 `wiki/aliyun-ssl-cert-nginx-deployment.md`）；到期前需续费并重新部署
 - Docker Hub 镜像拉取加速器，或改用阿里云 ACR 镜像
 - CDN、监控、备份等生产配置
