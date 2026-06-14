@@ -8,11 +8,20 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.entities import SmsVerificationCode, User, UserSession
+from app.models.entities import (
+    Conversation,
+    GenerationTask,
+    Page,
+    PagePermission,
+    SmsVerificationCode,
+    User,
+    UserSession,
+)
+from app.services.billing import BillingService
 from app.services.sms.factory import create_sms_provider
 
 _PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
@@ -63,6 +72,7 @@ class AuthService:
         code: str,
         user_agent: str | None,
         ip_address: str | None,
+        anon_user: User | None = None,
     ) -> LoginResult:
         normalized_phone = self.normalize_phone(phone)
         clean_code = code.strip()
@@ -96,10 +106,38 @@ class AuthService:
         user = await self._get_or_create_phone_user(normalized_phone)
         user.phone_verified = True
         user.last_login_at = now
+
+        # 归并匿名身份：把匿名期的会话/页面/任务/权限改挂到手机账号，并标记匿名用户已合并。
+        if anon_user is not None and anon_user.is_anonymous and anon_user.id != user.id:
+            await self._merge_anonymous_into(anon_user, user)
+
+        # 首次注册赠送积分（幂等，仅首次生效）。
+        await BillingService(self.session).grant_signup_bonus(user)
+
         token = await self._create_session(user, user_agent=user_agent, ip_address=ip_address)
         await self.session.commit()
         await self.session.refresh(user)
         return LoginResult(user=user, session_token=token)
+
+    async def _merge_anonymous_into(self, anon_user: User, target: User) -> None:
+        await self.session.execute(
+            update(Conversation).where(Conversation.owner_user_id == anon_user.id).values(owner_user_id=target.id)
+        )
+        await self.session.execute(
+            update(Page).where(Page.owner_user_id == anon_user.id).values(owner_user_id=target.id)
+        )
+        await self.session.execute(
+            update(GenerationTask)
+            .where(GenerationTask.requested_by_user_id == anon_user.id)
+            .values(requested_by_user_id=target.id)
+        )
+        # 权限表 (page_id, user_id) 唯一：匿名页面此前只属于匿名用户，直接改挂即可。
+        await self.session.execute(
+            update(PagePermission).where(PagePermission.user_id == anon_user.id).values(user_id=target.id)
+        )
+        anon_user.merged_into_user_id = target.id
+        anon_user.is_anonymous = False
+        await self.session.flush()
 
     async def get_user_by_session_token(self, token: str | None) -> User | None:
         if not token:

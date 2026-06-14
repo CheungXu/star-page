@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
-from app.core.auth import get_client_ip, get_current_user, get_session_token
+from app.core.auth import (
+    clear_anon_cookie,
+    get_client_ip,
+    get_current_user,
+    get_optional_actor,
+    get_session_token,
+    is_admin_user,
+)
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.schemas.auth import (
@@ -33,17 +40,21 @@ async def send_sms_code(payload: SmsSendRequest, request: Request) -> SmsSendRes
 async def login_with_sms(payload: SmsLoginRequest, request: Request, response: Response) -> AuthLoginResponse:
     async with AsyncSessionLocal() as session:
         service = AuthService(session)
+        anon_user = await get_optional_actor(session, request)
+        anon_user = anon_user if (anon_user and anon_user.is_anonymous) else None
         try:
             result = await service.login_with_code(
                 phone=payload.phone,
                 code=payload.code,
                 user_agent=request.headers.get("user-agent"),
                 ip_address=get_client_ip(request),
+                anon_user=anon_user,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
         _set_session_cookie(response, result.session_token)
+        clear_anon_cookie(response)
         return AuthLoginResponse(user=_to_user_response(result.user))
 
 
@@ -76,6 +87,7 @@ def _to_user_response(user) -> AuthUserResponse:
         display_name=user.display_name,
         phone_verified=user.phone_verified,
         has_password=bool(user.password_hash),
+        is_admin=is_admin_user(user),
     )
 
 

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Identity, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -33,6 +33,11 @@ class User(Base, TimestampMixin):
     phone_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
     password_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_anonymous: Mapped[bool] = mapped_column(default=False, nullable=False)
+    anon_device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    merged_into_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
 
 
 class SmsVerificationCode(Base):
@@ -203,6 +208,128 @@ class GenerationTask(Base):
 
     page: Mapped[Page] = relationship("Page")
     requested_by: Mapped[User] = relationship("User")
+
+
+class AnonVisitor(Base):
+    """匿名访客：device_id 对应一个 is_anonymous 用户；记录 IP 以做天花板风控。"""
+
+    __tablename__ = "anon_visitors"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    anon_device_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    sign_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    free_generations_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CreditAccount(Base):
+    """积分钱包：每用户一行，区分充值（paid）与赠送（gift）两个桶。积分整数，1 元 = 100 积分。"""
+
+    __tablename__ = "credit_accounts"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    paid_balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    gift_balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    free_generations_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_recharged_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total_spent_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    signup_bonus_granted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CreditTransaction(Base):
+    """积分流水：追加写、按 idempotency_key 幂等；消费行快照原始成本/倍率/确认收入。"""
+
+    __tablename__ = "credit_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type: Mapped[str] = mapped_column(String(16), nullable=False)
+    credits_delta: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_delta: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    gift_delta: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    balance_after: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    ref_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    markup: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    revenue_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class RechargeOrder(Base):
+    __tablename__ = "recharge_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    package_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    amount_cny: Mapped[float] = mapped_column(Numeric(18, 2), nullable=False)
+    base_credits: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    bonus_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    payment_provider: Mapped[str] = mapped_column(String(16), default="mock", nullable=False)
+    provider_txn_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CreditPackage(Base):
+    __tablename__ = "credit_packages"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    amount_cny: Mapped[float] = mapped_column(Numeric(18, 2), nullable=False)
+    base_credits: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    bonus_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class LedgerAccount(Base):
+    __tablename__ = "ledger_accounts"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    type: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class LedgerEntry(Base):
+    """复式记账凭证：一个业务事件一张凭证，按 (event_type, event_ref) 幂等。"""
+
+    __tablename__ = "ledger_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("event_type", "event_ref", name="uq_ledger_entries_event"),)
+
+
+class LedgerEntryLine(Base):
+    __tablename__ = "ledger_entry_lines"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    entry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("ledger_entries.id", ondelete="CASCADE"), nullable=False)
+    account_code: Mapped[str] = mapped_column(String(16), ForeignKey("ledger_accounts.code"), nullable=False)
+    debit: Mapped[float] = mapped_column(Numeric(18, 8), default=0, nullable=False)
+    credit: Mapped[float] = mapped_column(Numeric(18, 8), default=0, nullable=False)
 
 
 class GenerationEvent(Base):

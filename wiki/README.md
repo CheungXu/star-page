@@ -8,6 +8,7 @@
 ## 条目
 
 - `aliyun-mvp-deployment-checklist.md`：阿里云 MVP 部署检查清单，覆盖轻量服务器、OSS、ACR、RDS、凭证管理与基础验证顺序；含个人版镜像加速器局限、基础镜像预存 ACR、Dockerfile `ARG` 控制 base 来源与「先登录、拒绝才降级」约定。
+- `credit-billing-and-double-entry-accounting.md`：AIGC/按次消耗类产品的积分计费 + 复式记账 + 匿名风控通用经验——积分整数双桶(充值/赠送)、ceil 取整 + 最小 1 兜底、积分=预收账款且消费时确认收入的复式分录、**供应商预付费用「预付资产」而非「应付负债」(误用会让资金状况反向)**、财务总览三段式 + 营业利润、全链路幂等(idempotency_key + 凭证唯一 + 原子状态流转 + 借贷必平)、匿名用真实用户行建模 + 读写两套 actor 解析、签名 cookie + IP 天花板 + 后端强校验模型白名单的分层围栏、价格服务端权威 + mock 生产禁用、**供应商真实余额/账单对账(BSS QueryAccountBalance/QueryBillOverview、火山 QueryBalanceAcct、按平台域名归集多家模型做偏差对账、成本取应付而非现金口径)**，以及「服务内 commit 污染测试库 / 默认模型含旗舰被白名单误伤 / lru_cache 配置需 cache_clear / router 重复 prefix」等坑。
 - `aliyun-ssl-cert-nginx-deployment.md`：阿里云 SSL 证书在 ECS + Nginx 上的自动部署流程；含证书路径约定、`fullchain` 合并脚本、`www` 归一根域、HSTS、`PUBLIC_BASE_URL` 与 iframe 同源、续期检查清单。
 - `ai-generation-progress-ux.md`：AI 生成 / 长任务类产品的过程可视化与状态反馈 UX 原则——步骤条流程感连线、状态色克制（只强调进行中/失败）、进行中用动效、唯一主 CTA、按钮文案随状态、等待态骨架屏、辅助数据微徽、选中态字重对比、隐形优雅滚动条、动画无障碍降级，共 11 条。
 - `frontend-css-grid-and-class-pitfalls.md`：前端 CSS 网格与类名易错点（均为"默认行为+边界数据/视口"才暴露的坑）：动态状态词别直接当 class（会撞全局工具类，用 `is-${status}` 命名空间）、高容器里的 grid 列表项目少时会被 `align-content` 默认 stretch 等高拉伸（改 `align-content:start` + `grid-auto-rows:max-content`）、响应式把多列 grid 降为少列时要显式重排溢出子项的 `grid-column`/`grid-row`；附"用少量数据/空状态/中间视口宽度专门过一遍 + 实测量尺寸定位"的排查定式。

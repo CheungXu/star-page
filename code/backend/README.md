@@ -64,6 +64,33 @@ journalctl -u star-page-backend.service -f
 - `GET /api/pages/{page_id}`：获取页面元数据。
 - `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。会话被软删后其下节点链接同步失效（404）。
 
+### 计费接口（积分制，1 元 = 100 积分）
+
+用户侧（`routes_billing.py`）：
+
+- `GET /api/billing/account`：返回积分余额（登录）或剩余免费次数（匿名/未分配 cookie 的访客返回合成的满额免费态）。
+- `GET /api/billing/transactions`：当前用户积分流水（登录或带匿名 cookie 的访客）。
+- `GET /api/billing/packages`：充值套餐（DB `credit_packages`，启动 seed mock）。
+- `POST /api/billing/recharge`：建单，**只收 `package_key`**，金额/积分服务端按套餐计算（价格服务端权威）。需登录。
+- `POST /api/billing/recharge/{id}/mock-pay`：mock 支付回调入账，**仅非生产环境（`APP_ENV != production`）开放**，原子流转 `pending→paid` + 幂等入账。
+
+管理员侧（`routes_admin.py` + `require_admin` 手机白名单 `config/billing.json.admin_phones`）：
+
+- `GET /api/admin/billing/overview`：财务总览，三段式呈现——①付费业务（不含赠送）：累计充值现金/付费确认收入/付费 COGS/付费毛利；②赠送台账：赠送已发放/未用负债/已核销收入/赠送+试用成本；③含赠送合计：综合收入/成本/毛利；并含预收账款、预付云资源余额与累计充值、科目余额。收入与成本按消费流水的 paid/gift 占比拆分。
+- `GET /api/admin/billing/transactions`、`/ledger`、`/users`：积分流水、记账凭证、用户对账。
+- `GET / PUT /api/admin/billing/model-markups`：读取/保存模型倍率（展示各模型成本基准），PUT 写回 `config/billing.json` 并清缓存即时生效。
+- `POST /api/admin/billing/supplier-topup`：记录云/LLM 供应商账户预充值（借 `1102 预付账款-云/LLM供应商`、贷 `1001 现金`）。供应商为预付费模型，每次调用按实际成本贷记 `1102` 冲减预付资产（不再使用应付账款）。
+- `GET /api/admin/billing/supplier-balances?refresh=false`：直连各云厂商财务接口拉取**真实账户余额**做对账，默认 5 分钟缓存，`refresh=true` 强制刷新。实现见 `app/services/supplier_balance/`（provider 可插拔）：
+  - 阿里云：BSS OpenAPI `QueryAccountBalance`，复用 OSS 的 `OBJECT_STORAGE_ACCESS_KEY_ID/SECRET`；**需给该 RAM 用户授予 `AliyunBSSReadOnlyAccess`**，否则返回 NotAuthorized 提示。
+  - 火山引擎（豆包）：需在 `VOLC_ACCESSKEY/VOLC_SECRETKEY` 配置火山账号 IAM AK/SK（ARK 推理 key 不能查余额）；未配置时后台显示「未配置」。其余厂商按需新增 provider 即可。
+  - 阿里云费用 key 走独立 `ALIYUN_BILLING_ACCESS_KEY_ID/SECRET`（`config/aliyun.env`），与 OSS/短信分开；火山凭据放 `config/huoshan.env`；两文件均由 systemd 以可选 `EnvironmentFile=-` 加载。
+- `GET /api/admin/billing/aliyun-bill?cycle=YYYY-MM` 与 `POST /api/admin/billing/aliyun-bill/post`：按账期拉取阿里云账单总览（BSS `QueryBillOverview`，成本口径取 `pretax_amount`＝折扣后应付，预付费模式下现金已在充值时支付、账单期 `payment_amount`≈0，故用应付而非现金口径），按 `aliyun_llm_keywords`（`config/billing.json`）拆分「百炼 LLM（已按次计入 `6001`，不重复入账）」与「服务器等基础设施」；POST 把基础设施部分按 `(infra_cost, aliyun-账期)` 幂等入账（借 `6002 基础设施成本` / 贷 `1102 预付账款`）。财务总览据此给出「营业利润 = 综合毛利 − 基础设施成本」。
+- 该接口还返回**百炼成本偏差对账**：把该账期内走 `dashscope.aliyuncs.com`（百炼平台）的模型按次估算 COGS（`raw_cost_cny` 之和）与账单百炼实际金额对比，给出偏差额与偏差率；并提供付款拆解（原价/应付/代金券补贴/储值卡抵扣/现金支付）。注意 qwen 及在百炼上托管的 deepseek/glm/kimi/minimax 均计入阿里云百炼，doubao 走火山 ARK 不计入。
+
+计费实现位于 `app/services/billing/`：`pricing.py`（`扣费积分 = max(ceil(原始成本×倍率×100), 1)`）、`account.py`（钱包：赠送/充值入账、生成结算，扣减顺序 gift→paid，全部按 `idempotency_key` 幂等）、`ledger.py`（复式过账，借贷必平且按 `(event_type, event_ref)` 幂等）。倍率与匿名围栏参数读 `config/billing.json`。
+
+匿名体系：未登录访客经 `resolve_actor` 懒签发 HMAC 签名 `sp_anon` cookie 并建 `is_anonymous` 用户，免费 2 次生成；高价模型后端强校验拒绝（匿名只允许 `anon_allowed_models`、单次 ≤ `anon_max_models_per_gen`）；按 IP 每日限制签发匿名 id 数与免费次数。手机验证码登录时把匿名会话/页面归并到正式账号并首次赠送 1000 积分（幂等）。
+
 `POST /api/generations` 同时兼容 JSON 和 `multipart/form-data`。上传文件时表单字段为：
 
 - `prompt`：用户页面需求。

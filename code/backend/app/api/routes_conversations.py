@@ -8,8 +8,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_model_registry, get_settings
-from app.core.auth import get_current_user
+from app.core.config import get_billing_config, get_model_registry, get_settings
+from app.core.auth import get_optional_actor
 from app.core.database import AsyncSessionLocal
 from app.core.urls import build_page_url
 from app.models.entities import Conversation, GenerationBatch, GenerationTask, Page, PageVersion
@@ -33,6 +33,7 @@ router = APIRouter(tags=["conversations"])
 async def list_models() -> list[ModelInfo]:
     registry = get_model_registry()
     defaults = set(registry.default_model_keys)
+    anon_allowed = set(get_billing_config().anon_allowed_models)
     return [
         ModelInfo(
             key=model.key,
@@ -40,6 +41,7 @@ async def list_models() -> list[ModelInfo]:
             provider=model.provider,
             is_default=model.key in defaults,
             available=model.available,
+            anon_allowed=model.key in anon_allowed,
         )
         for model in registry.models.values()
     ]
@@ -53,7 +55,9 @@ async def list_conversations(
     limit: int = Query(default=50, ge=1, le=100),
 ) -> list[ConversationListItem]:
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await get_optional_actor(session, request)
+        if user is None:
+            return []
         conditions = [Conversation.owner_user_id == user.id, Conversation.deleted_at.is_(None)]
         if favorite_only:
             conditions.append(Conversation.is_favorite.is_(True))
@@ -85,7 +89,9 @@ async def update_conversation(
     conversation_id: uuid.UUID, payload: ConversationUpdate, request: Request
 ) -> ConversationListItem:
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await get_optional_actor(session, request)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
         conversation = await session.get(Conversation, conversation_id)
         if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="会话不存在")
@@ -100,7 +106,9 @@ async def update_conversation(
 @router.delete("/api/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(conversation_id: uuid.UUID, request: Request) -> None:
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await get_optional_actor(session, request)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
         conversation = await session.get(Conversation, conversation_id)
         if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="会话不存在")
@@ -123,7 +131,9 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
     registry = get_model_registry()
 
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await get_optional_actor(session, request)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
         conversation = await session.get(Conversation, conversation_id)
         if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="会话不存在")

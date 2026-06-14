@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_model_registry, get_settings
+from app.core.config import get_billing_config, get_model_registry, get_settings
 from app.core.urls import build_page_url
 from app.models.entities import (
     Conversation,
@@ -22,6 +22,8 @@ from app.models.entities import (
     PageVersion,
     User,
 )
+from app.services.anon_service import AnonService
+from app.services.billing import BillingService
 from app.services.html_sanitizer import extract_html_document, find_tailwind_runtime_violation, sanitize_html
 from app.services.llm.client import create_llm_client
 from app.services.llm.cost import cost_to_payload, estimate_llm_cost, merge_llm_usage, usage_to_payload
@@ -59,9 +61,13 @@ class GenerationService:
         self.session = session
         self.settings = get_settings()
 
-    def _resolve_model_keys(self, selected_model_keys: list[str] | None) -> list[str]:
+    def _resolve_model_keys(
+        self, selected_model_keys: list[str] | None, allowed_keys: set[str] | None = None
+    ) -> list[str]:
         registry = get_model_registry()
         available = {model.key for model in registry.available_models()}
+        if allowed_keys is not None:
+            available = available & allowed_keys
 
         requested = [key for key in (selected_model_keys or []) if key in available]
         if not requested:
@@ -93,10 +99,25 @@ class GenerationService:
         conversation_id: uuid.UUID | None = None,
         base_page_id: uuid.UUID | None = None,
         user: User,
+        client_ip: str | None = None,
     ) -> BatchCreation:
         """创建一轮生成：会话(新建/复用) -> 批次 -> 每个模型一个 Page 节点 + Task。"""
         registry = get_model_registry()
-        model_keys = self._resolve_model_keys(selected_model_keys)
+        billing = BillingService(self.session)
+
+        # 匿名：先按显式选择强校验模型白名单与数量（防绕过前端置灰），再把可用集合限定到允许范围。
+        allowed_keys: set[str] | None = None
+        if user.is_anonymous:
+            billing.validate_anon_models(list(selected_model_keys or []))
+            allowed_keys = set(billing.config.anon_allowed_models)
+
+        model_keys = self._resolve_model_keys(selected_model_keys, allowed_keys=allowed_keys)
+
+        # 额度/余额前置校验：匿名查免费次数与 IP 天花板，登录查积分余额。
+        await billing.ensure_can_start_batch(user, model_keys)
+        if user.is_anonymous:
+            await AnonService(self.session).check_ip_free_generation_ceiling(client_ip)
+
         title = _build_page_title(title_prompt or prompt)
 
         # parent_for_model：每个模型的新节点接到哪个父节点。
@@ -189,6 +210,9 @@ class GenerationService:
                     page_url=self._page_url(page),
                 )
             )
+
+        # 匿名批次启动计一次免费额度（按批次计，非按模型）。
+        await billing.record_anon_batch_started(user)
 
         await self.session.commit()
         return BatchCreation(
@@ -646,6 +670,10 @@ class GenerationService:
             page.status = "ready"
             task.status = "succeeded"
             task.finished_at = datetime.now(UTC)
+
+            # 计费结算：按 page_version 幂等扣积分/记账（匿名仅记成本，登录扣积分确认收入）。
+            await self._settle_generation_billing(task, version, cost)
+
             await self.session.commit()
             await self._recompute_batch_status(task.batch_id)
             yield await self._record_event(
@@ -694,6 +722,26 @@ class GenerationService:
                 "failed",
                 {"type": "failed", "message": "页面生成失败，请稍后重试。", "model_key": task.model_key},
             )
+
+    async def _settle_generation_billing(
+        self, task: GenerationTask, version: PageVersion, cost: LlmCostBreakdown | None
+    ) -> None:
+        """对一次成功生成结算计费，按 version_id 幂等。失败不阻断生成主流程。"""
+        actor = await self.session.get(User, task.requested_by_user_id)
+        if actor is None:
+            return
+        markup = get_billing_config().markup_for(task.model_key)
+        raw_cost = cost.total_cost_cny if cost is not None else None
+        try:
+            await BillingService(self.session).settle_generation(
+                user=actor,
+                version_id=version.id,
+                model_key=task.model_key,
+                raw_cost_cny=raw_cost,
+                markup=markup,
+            )
+        except Exception as exc:  # noqa: BLE001 - 结算失败仅告警，不影响已生成页面
+            print(f"[billing] 结算失败 version={version.id}: {exc}")
 
     async def _upload_page_html(self, page: Page, html: str) -> tuple[uuid.UUID, str]:
         version_id = uuid.uuid4()

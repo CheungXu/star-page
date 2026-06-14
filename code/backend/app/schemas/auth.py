@@ -25,6 +25,7 @@ class AuthUserResponse(BaseModel):
     display_name: str
     phone_verified: bool
     has_password: bool
+    is_admin: bool = False
 
 
 class AuthLoginResponse(BaseModel):

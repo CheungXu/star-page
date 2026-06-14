@@ -101,6 +101,24 @@ doubao（火山方舟 ARK）同样按 OpenAI-compatible 协议接入：
 
 Qwen 侧 Max / Plus 已支持「裸名」最新版；Doubao 侧 Pro / Code 目前仍要带 `-260215`（及 Code 的 `preview` 前缀），后续若方舟开放无后缀别名，只需改 `config/llm.models.json` 的 `model` 字段。
 
+### DeepSeek V4 / GLM-5.1 / Kimi K2.6 / MiniMax M3（百炼主路，2026-06-14）
+
+星页新增五款国内旗舰模型，**生产主路统一走阿里云百炼**（与 Qwen 共用 `QWEN_API_KEY`），完整定价与灾备见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
+
+| 目录 key | model ID | extra_body 要点 |
+| --- | --- | --- |
+| `deepseek-v4-flash` | `deepseek-v4-flash` | `enable_thinking` + `reasoning_effort: high` |
+| `deepseek-v4-pro` | `deepseek-v4-pro` | 同上 |
+| `glm-5.1` | `glm-5.1` | `enable_thinking: true` |
+| `kimi-k2.6` | `kimi/kimi-k2.6` | `enable_thinking: true` |
+| `minimax-m3` | `MiniMax/MiniMax-M3` | `thinking: { type: adaptive }` |
+
+百炼控制台需分别开通各模型服务。流式 `reasoning_content` 仍由现有 OpenAI 适配层解析，无需改代码。
+
+**灾备**（百炼故障时只改目录三项）：DeepSeek → `https://api.deepseek.com`；GLM → `https://open.bigmodel.cn/api/paas/v4`；Kimi → `https://api.moonshot.cn/v1`；MiniMax → `https://api.minimaxi.com/v1`。灾备 Key 变量名见 `config/llm.env.example`。
+
+**注意**：Coding Plan / Kimi Code / MiniMax Token Plan 的 endpoint 与 Key **不能**用于星页服务端生成。
+
 ### 模型列表与官方定价 API（2026-06 实测）
 
 | 厂商 | 模型列表 | 价格 | 鉴权 |

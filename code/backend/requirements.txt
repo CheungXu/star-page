@@ -14,3 +14,5 @@ alibabacloud_dysmsapi20170525
 alibabacloud_credentials
 alibabacloud_tea_openapi
 alibabacloud_tea_util
+alibabacloud_bssopenapi20171214
+volcengine

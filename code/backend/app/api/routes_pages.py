@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import desc, or_, select
 
-from app.core.auth import get_current_user, get_optional_user
+from app.core.auth import get_optional_actor, get_optional_user
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.urls import build_page_url
@@ -46,7 +46,9 @@ async def list_pages(request: Request) -> list[PageHistoryItem]:
     settings = get_settings()
 
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await get_optional_actor(session, request)
+        if user is None:
+            return []
         result = await session.execute(
             select(Page)
             .outerjoin(
@@ -96,7 +98,7 @@ async def list_pages(request: Request) -> list[PageHistoryItem]:
 @router.get("/api/pages/{page_id}", response_model=PageResponse)
 async def get_page(page_id: uuid.UUID, request: Request) -> PageResponse:
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await get_optional_actor(session, request)
         page = await session.get(Page, page_id)
         if page is None:
             raise HTTPException(status_code=404, detail="页面不存在")

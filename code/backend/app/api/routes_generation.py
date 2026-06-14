@@ -4,14 +4,15 @@ import json
 import uuid
 from dataclasses import dataclass, field
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from starlette.datastructures import FormData, UploadFile
 
-from app.core.auth import get_current_user
+from app.core.auth import get_client_ip, get_optional_actor, resolve_actor
 from app.core.database import AsyncSessionLocal
 from app.schemas.generation import GenerationCreateRequest, GenerationCreateResponse, GenerationRunItem
+from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
 from app.services.document_extractor import prepare_generation_input
 from app.services.generation_service import GenerationService
 from app.services.sse import format_sse
@@ -29,11 +30,11 @@ class ParsedGenerationRequest:
 
 
 @router.post("", response_model=GenerationCreateResponse)
-async def create_generation(request: Request) -> GenerationCreateResponse:
+async def create_generation(request: Request, response: Response) -> GenerationCreateResponse:
     parsed = await _parse_create_generation_request(request)
 
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await resolve_actor(session, request, response)
         generation_input = await prepare_generation_input(parsed.prompt, parsed.files)
         service = GenerationService(session)
         try:
@@ -48,7 +49,23 @@ async def create_generation(request: Request) -> GenerationCreateResponse:
                 conversation_id=parsed.conversation_id,
                 base_page_id=parsed.base_page_id,
                 user=user,
+                client_ip=get_client_ip(request),
             )
+        except InsufficientCreditsError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+        except (AnonLimitError, ModelNotAllowedError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={"code": exc.code, "message": exc.message, "need_login": True},
+            ) from exc
+        except BillingError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
@@ -147,7 +164,9 @@ def _parse_optional_str(value: object) -> str | None:
 @router.get("/{task_id}/events")
 async def stream_generation_events(task_id: uuid.UUID, request: Request) -> StreamingResponse:
     async with AsyncSessionLocal() as session:
-        user = await get_current_user(session, request)
+        user = await get_optional_actor(session, request)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
 
     async def event_generator():
         async with AsyncSessionLocal() as session:

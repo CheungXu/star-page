@@ -3,7 +3,11 @@
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { SiteFooter } from "./components/SiteFooter";
+import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
+import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
 
@@ -13,6 +17,7 @@ type ModelInfo = {
   provider: string;
   is_default: boolean;
   available: boolean;
+  anon_allowed?: boolean;
 };
 
 type AuthUser = {
@@ -21,6 +26,7 @@ type AuthUser = {
   display_name: string;
   phone_verified: boolean;
   has_password: boolean;
+  is_admin?: boolean;
 };
 
 type AuthLoginResponse = {
@@ -263,6 +269,7 @@ const PREVIEW_VIEWPORT_WIDTH = 1200;
 const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
 const SELECTED_MODELS_KEY = "star-page-selected-models";
+const ANON_MAX_MODELS = 2;
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const MAX_FILE_COUNT = 3;
@@ -621,6 +628,7 @@ function PreviewCell({
   canContinue,
   selectedAsBase,
   dimmedByBase,
+  shareGate,
 }: {
   run: RunState;
   onOpenPreview: () => void;
@@ -628,6 +636,7 @@ function PreviewCell({
   canContinue: boolean;
   selectedAsBase: boolean;
   dimmedByBase: boolean;
+  shareGate?: () => boolean;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -670,6 +679,8 @@ function PreviewCell({
 
   async function copyUrl() {
     if (!absoluteUrl) return;
+    // 匿名访客复制分享链接时拦截并引导登录（避免未登录散播无归属链接）。
+    if (shareGate && shareGate()) return;
     try {
       await copyTextToClipboard(absoluteUrl);
       setCopied(true);
@@ -1012,6 +1023,7 @@ function PasswordPromptModal({
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -1042,6 +1054,9 @@ export default function HomePage() {
   const [isPromptAttention, setIsPromptAttention] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const [account, setAccount] = useState<BillingAccount | null>(null);
+  const [notice, setNotice] = useState("");
+  const noticeTimerRef = useRef<number | null>(null);
 
   const eventSourcesRef = useRef<EventSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1098,8 +1113,12 @@ export default function HomePage() {
   async function initializeAuthState(): Promise<void> {
     const user = await loadMe();
     if (!user) {
-      localStorage.removeItem(CURRENT_SESSION_KEY);
-      setHistoryItems([]);
+      // 未登录也可能是已分配匿名 cookie 的访客：尝试拉取其历史。
+      await loadHistory(historyScope, historySearch, null);
+      const anonSession = readCurrentSession();
+      if (anonSession && anonSession.userId) {
+        localStorage.removeItem(CURRENT_SESSION_KEY);
+      }
       hasHydratedRef.current = true;
       return;
     }
@@ -1139,6 +1158,7 @@ export default function HomePage() {
     localStorage.removeItem(CURRENT_SESSION_KEY);
     startNewChat();
     void loadHistory(historyScope, historySearch, user);
+    void refreshAccount();
     if (!user.has_password) setShowPasswordPrompt(true);
   }
 
@@ -1154,12 +1174,8 @@ export default function HomePage() {
     }
   }
 
-  async function loadHistory(scope = historyScope, search = historySearch, user = authUser): Promise<void> {
-    if (!user) {
-      setHistoryItems([]);
-      setIsHistoryLoading(false);
-      return;
-    }
+  async function loadHistory(scope = historyScope, search = historySearch, _user = authUser): Promise<void> {
+    // 登录用户与已分配 cookie 的匿名访客都可拉取自己的历史；后端按身份返回，无身份返回空。
     const params = new URLSearchParams();
     if (scope === "favorite") params.set("favorite_only", "true");
     const keyword = search.trim();
@@ -1182,6 +1198,17 @@ export default function HomePage() {
     } finally {
       setIsHistoryLoading(false);
     }
+  }
+
+  function showNotice(message: string) {
+    setNotice(message);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(""), 2800);
+  }
+
+  async function refreshAccount(): Promise<void> {
+    const data = await fetchAccount();
+    setAccount(data);
   }
 
   async function loadModels(): Promise<void> {
@@ -1219,6 +1246,7 @@ export default function HomePage() {
     const timer = window.setTimeout(() => {
       void initializeAuthState();
       void loadModels();
+      void refreshAccount();
     }, 0);
     return () => window.clearTimeout(timer);
     // 首屏初始化只执行一次，内部函数会读当前存储和服务端登录态。
@@ -1249,9 +1277,21 @@ export default function HomePage() {
   }, [isModelMenuOpen]);
 
   function toggleModel(key: string) {
+    const model = availableModels.find((item) => item.key === key);
+    // 匿名：高价模型可见但不可选，点击轻提示引导注册。
+    if (!authUser && model && model.anon_allowed === false) {
+      showNotice("该模型注册后可用，注册即可解锁全部模型");
+      return;
+    }
     setSelectedModelKeys((current) => {
-      const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
-      const ordered = availableModels.filter((model) => next.includes(model.key)).map((model) => model.key);
+      const isSelected = current.includes(key);
+      // 匿名：单次最多生效 2 个模型，勾第 3 个时轻提示需注册。
+      if (!isSelected && !authUser && current.length >= ANON_MAX_MODELS) {
+        showNotice(`未登录最多同时使用 ${ANON_MAX_MODELS} 个模型，注册后可解锁更多`);
+        return current;
+      }
+      const next = isSelected ? current.filter((item) => item !== key) : [...current, key];
+      const ordered = availableModels.filter((m) => next.includes(m.key)).map((m) => m.key);
       const result = ordered.length ? ordered : current; // 至少保留一个
       writeSelectedModels(result);
       return result;
@@ -1276,13 +1316,22 @@ export default function HomePage() {
       setFileError("请至少选择一个模型");
       return;
     }
-    if (!authUser) {
-      setFileError("请先登录后再创建页面");
-      setIsAuthModalOpen(true);
-      return;
-    }
     if (isGenerating) {
       return;
+    }
+
+    // 计费前置预判（后端仍为权威）：匿名免费次数用尽引导登录，登录用户余额不足引导充值。
+    if (account) {
+      if (account.is_anonymous && account.free_generations_remaining <= 0) {
+        showNotice("免费体验已用完，登录后赠送 1000 积分");
+        setIsAuthModalOpen(true);
+        return;
+      }
+      if (!account.is_anonymous && account.total_balance <= 0) {
+        showNotice("积分不足，正在前往充值…");
+        router.push("/pricing");
+        return;
+      }
     }
 
     // 在工作区里提交即"在本会话内续写"：
@@ -1322,6 +1371,25 @@ export default function HomePage() {
       if (response.status === 401) {
         setIsAuthModalOpen(true);
       }
+      if (response.status === 402) {
+        const err = await readBillingError(response);
+        const failMsg = err.message || "额度不足，无法创建";
+        playTransition(() => {
+          setPhase("idle");
+          setRuns([]);
+          setPrompt(effectivePrompt);
+        });
+        showNotice(failMsg);
+        if (err.needLogin) {
+          setIsAuthModalOpen(true);
+        } else if (err.code === "insufficient_credits") {
+          window.setTimeout(() => {
+            router.push("/pricing");
+          }, 900);
+        }
+        void refreshAccount();
+        return;
+      }
       if (!response.ok) throw new Error(await readErrorMessage(response));
 
       const data = (await response.json()) as CreateGenerationResponse;
@@ -1337,6 +1405,7 @@ export default function HomePage() {
       setRuns(nextRuns);
       setActiveModelKey(nextRuns[0]?.modelKey ?? "");
       void loadHistory();
+      void refreshAccount();
 
       nextRuns.forEach((run) => connectRun(run.taskId));
     } catch (error) {
@@ -1426,6 +1495,7 @@ export default function HomePage() {
         })),
       }));
       void loadHistory();
+      void refreshAccount();
       source.close();
     });
 
@@ -1716,20 +1786,29 @@ export default function HomePage() {
             <div className="model-menu-list">
               {availableModels.map((model) => {
                 const active = selectedModelKeys.includes(model.key);
+                // 匿名：高价模型可见但置灰（不隐藏），点击轻提示引导注册。
+                const anonLocked = !authUser && model.anon_allowed === false;
                 return (
                   <button
                     key={model.key}
                     type="button"
                     role="menuitemcheckbox"
                     aria-checked={active}
-                    className={`model-menu-item ${active ? "is-active" : ""}`}
+                    className={`model-menu-item ${active ? "is-active" : ""} ${anonLocked ? "is-anon-locked" : ""}`}
                     onClick={() => model.available && toggleModel(model.key)}
                     disabled={!model.available}
-                    title={model.available ? model.label : `${model.label}（未配置密钥，暂不可用）`}
+                    title={
+                      !model.available
+                        ? `${model.label}（未配置密钥，暂不可用）`
+                        : anonLocked
+                          ? `${model.label}（注册后可用）`
+                          : model.label
+                    }
                   >
                     <span className="model-dot" aria-hidden="true" style={{ background: modelAccent(model.key) }} />
                     <span className="model-menu-item-label">{model.label}</span>
                     {!model.available && <span className="model-unavailable">未配置</span>}
+                    {model.available && anonLocked && <span className="model-unavailable">登录可用</span>}
                     <span className="model-menu-check" aria-hidden="true">{active && <CheckIcon />}</span>
                   </button>
                 );
@@ -1878,6 +1957,26 @@ export default function HomePage() {
           )}
         </div>
         <div className="sidebar-user-footer">
+          {!isSidebarCollapsed && account && (
+            <div className="sidebar-billing">
+              {account.is_anonymous ? (
+                <span className="billing-chip" title="未登录免费体验次数">
+                  免费体验 {account.free_generations_remaining}/{account.free_generations_limit} 次
+                </span>
+              ) : (
+                <span
+                  className="billing-chip"
+                  title={`充值积分 ${formatCredits(account.paid_balance)} · 赠送积分 ${formatCredits(account.gift_balance)}`}
+                >
+                  积分 {formatCredits(account.total_balance)}（≈¥{creditsToYuan(account.total_balance)}）
+                </span>
+              )}
+              <Link className="billing-link" href="/pricing">充值</Link>
+              {authUser?.is_admin && (
+                <Link className="billing-link" href="/admin">财务后台</Link>
+              )}
+            </div>
+          )}
           <button
             className="sidebar-user-button"
             type="button"
@@ -2228,6 +2327,14 @@ export default function HomePage() {
                       dimmedByBase={continueBase ? continueBase.pageId !== run.pageId : false}
                       onOpenPreview={() => setFullscreenRun(run)}
                       onContinue={() => startContinueFrom(run)}
+                      shareGate={() => {
+                        if (!authUser) {
+                          showNotice("登录后即可复制并分享你的作品链接");
+                          setIsAuthModalOpen(true);
+                          return true;
+                        }
+                        return false;
+                      }}
                     />
                   ))}
                 </div>
@@ -2236,6 +2343,7 @@ export default function HomePage() {
           </section>
         </main>
       )}
+      {notice && <div className="app-toast" role="status">{notice}</div>}
       {fullscreenPreviewRun && <FullscreenPreviewModal run={fullscreenPreviewRun} onClose={() => setFullscreenRun(null)} />}
       {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
       {showPasswordPrompt && authUser && !authUser.has_password && (
@@ -2578,24 +2686,6 @@ function formatFileSize(size: number): string {
 function resizePromptTextarea(textarea: HTMLTextAreaElement): void {
   textarea.style.height = "auto";
   textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-}
-
-function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, {
-    ...init,
-    credentials: init.credentials ?? "include",
-  });
-}
-
-async function readErrorMessage(response: Response, fallback = "请求失败"): Promise<string> {
-  try {
-    const payload = (await response.json()) as { detail?: unknown };
-    if (typeof payload.detail === "string") return payload.detail;
-  } catch {
-    return fallback;
-  }
-
-  return fallback;
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {

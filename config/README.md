@@ -97,27 +97,34 @@ ALIYUN_SMS_ENDPOINT=dysmsapi.aliyuncs.com
 各模型密钥变量名由目录里的 `api_key_env` 指定，例如：
 
 ```text
-QWEN_API_KEY=   # 阿里云百炼 / DashScope（qwen）
+QWEN_API_KEY=   # 阿里云百炼 / DashScope（qwen、deepseek-v4-*、glm-5.1、kimi-k2.6、minimax-m3）
 ARK_API_KEY=    # 火山方舟（doubao）
-LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时 qwen 回退到它
+LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时百炼系模型回退到它
 ```
 
-参数三层覆盖（就近优先）：`有效参数 = {...defaults, ...model.params}`，再合并 `extra_body`（厂商专有，如 qwen `enable_thinking`、doubao `reasoning_effort`）。`params` 值置 `null` 表示显式不发该字段（doubao 系统固定 temperature/top_p 并忽略传入）。
+参数三层覆盖（就近优先）：`有效参数 = {...defaults, ...model.params}`，再合并 `extra_body`（厂商专有，如 qwen `enable_thinking`、doubao `reasoning_effort`、minimax `thinking`）。`params` 值置 `null` 表示显式不发该字段（doubao 系统固定 temperature/top_p 并忽略传入）。
 
-密钥从 `api_key_env` 解析，缺失的模型自动不可用（前端多选里不出现，不崩）。协议当前后端支持 OpenAI-compatible；qwen 与 doubao 均按此接入，流式响应中可收到 `reasoning_content` 和正式回复内容。
+密钥从 `api_key_env` 解析，缺失的模型自动不可用（前端多选里不出现，不崩）。协议当前后端支持 OpenAI-compatible；百炼系与 doubao 均按此接入，流式响应中可收到 `reasoning_content` 和正式回复内容。
 
 当前已接入模型（目录 key → model ID）：
 
-| key | model ID |
-| --- | --- |
-| `qwen` | `qwen3.7-max` |
-| `qwen-plus` | `qwen3.7-plus` |
-| `doubao` | `doubao-seed-2-0-pro-260215` |
-| `doubao-code` | `doubao-seed-2-0-code-preview-260215` |
+| key | model ID | 接入通道 |
+| --- | --- | --- |
+| `qwen` | `qwen3.7-max` | 百炼 |
+| `qwen-plus` | `qwen3.7-plus` | 百炼 |
+| `doubao` | `doubao-seed-2-0-pro-260215` | 火山方舟 |
+| `doubao-code` | `doubao-seed-2-0-code-preview-260215` | 火山方舟 |
+| `deepseek-v4-flash` | `deepseek-v4-flash` | 百炼（主路） |
+| `deepseek-v4-pro` | `deepseek-v4-pro` | 百炼（主路） |
+| `glm-5.1` | `glm-5.1` | 百炼（主路） |
+| `kimi-k2.6` | `kimi/kimi-k2.6` | 百炼（主路） |
+| `minimax-m3` | `MiniMax/MiniMax-M3` | 百炼（主路） |
+
+新增五款模型均复用 `QWEN_API_KEY`；灾备官方 API 切换方式见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
 
 费用：`pricing.tiers[]` 维护各模型分段单价（元/百万 tokens），后端按 API 返回的 `usage` 自算（接口不返回 cost）。详见 `wiki/llm-provider-abstraction.md`。
 
-默认勾选：`default_models` 当前为 `["qwen", "doubao"]`（新用户首访同时勾选通义千问 3.7 Max 与豆包 Seed 2.0 Pro，展示多模型并行能力）。可选：`LLM_DEFAULT_MODELS=qwen,doubao` 覆盖默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
+默认勾选：`default_models` 当前为 `["qwen", "doubao"]`（产品确认后可切为 deepseek-v4 组合）。可选：`LLM_DEFAULT_MODELS=qwen,doubao` 覆盖默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
 
 ## 阿里云 OSS
 

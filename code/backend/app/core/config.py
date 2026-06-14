@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     llm_models_file: str = Field(default="config/llm.models.json", alias="LLM_MODELS_FILE")
     llm_default_models: str | None = Field(default=None, alias="LLM_DEFAULT_MODELS")
 
+    billing_config_file: str = Field(default="config/billing.json", alias="BILLING_CONFIG_FILE")
+    anon_cookie_name: str = Field(default="sp_anon", alias="ANON_COOKIE_NAME")
+    anon_cookie_ttl_seconds: int = Field(default=60 * 60 * 24 * 180, alias="ANON_COOKIE_TTL_SECONDS")
+
     # 网页制作技能（page-skills）：默认开启；各 task 按生成模型自动路由匹配技能并注入生成提示。
     page_skills_enabled: bool = Field(default=True, alias="PAGE_SKILLS_ENABLED")
     page_skills_dir: str = Field(default="skills/page-skills", alias="PAGE_SKILLS_DIR")
@@ -198,6 +202,94 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+@dataclass(frozen=True)
+class BillingConfig:
+    """计费配置：模型倍率、匿名围栏、赠送与套餐等，来源 config/billing.json。"""
+
+    default_markup: float
+    model_markups: dict[str, float]
+    free_trial_generations: int
+    signup_bonus_credits: int
+    anon_allowed_models: list[str]
+    anon_max_models_per_gen: int
+    anon_daily_id_limit_per_ip: int
+    anon_daily_free_generation_limit_per_ip: int
+    admin_phones: list[str]
+    min_recharge_cny: float
+    max_recharge_cny: float
+    aliyun_llm_keywords: list[str]
+
+    def markup_for(self, model_key: str | None) -> float:
+        if model_key and model_key in self.model_markups:
+            return float(self.model_markups[model_key])
+        return float(self.default_markup)
+
+    def is_anon_allowed_model(self, model_key: str) -> bool:
+        return model_key in self.anon_allowed_models
+
+
+def _find_billing_config_path(settings: Settings) -> Path | None:
+    raw = settings.billing_config_file
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    cwd = Path.cwd()
+    for base in [cwd, *cwd.parents]:
+        path = base / raw
+        if path.exists():
+            return path
+        fallback = base / "config" / "billing.json"
+        if fallback.exists():
+            return fallback
+    return None
+
+
+@lru_cache(maxsize=1)
+def get_billing_config() -> BillingConfig:
+    settings = get_settings()
+    path = _find_billing_config_path(settings)
+    data: dict[str, Any] = {}
+    if path is not None:
+        data = json.loads(path.read_text(encoding="utf-8"))
+
+    return BillingConfig(
+        default_markup=float(data.get("default_markup", 1.2)),
+        model_markups={str(k): float(v) for k, v in (data.get("model_markups") or {}).items()},
+        free_trial_generations=int(data.get("free_trial_generations", 2)),
+        signup_bonus_credits=int(data.get("signup_bonus_credits", 1000)),
+        anon_allowed_models=[str(item) for item in (data.get("anon_allowed_models") or [])],
+        anon_max_models_per_gen=int(data.get("anon_max_models_per_gen", 2)),
+        anon_daily_id_limit_per_ip=int(data.get("anon_daily_id_limit_per_ip", 3)),
+        anon_daily_free_generation_limit_per_ip=int(data.get("anon_daily_free_generation_limit_per_ip", 5)),
+        admin_phones=[str(item) for item in (data.get("admin_phones") or [])],
+        min_recharge_cny=float(data.get("min_recharge_cny", 1)),
+        max_recharge_cny=float(data.get("max_recharge_cny", 100000)),
+        aliyun_llm_keywords=[
+            str(item)
+            for item in (
+                data.get("aliyun_llm_keywords")
+                or ["百炼", "灵积", "通义", "模型", "dashscope", "bailian", "lingji"]
+            )
+        ],
+    )
+
+
+def update_billing_markups(default_markup: float, model_markups: dict[str, float]) -> BillingConfig:
+    """更新 config/billing.json 的倍率配置并即时生效（清缓存）。保留其余字段不变。"""
+    settings = get_settings()
+    path = _find_billing_config_path(settings)
+    if path is None:
+        raise FileNotFoundError("未找到 billing 配置文件，无法保存倍率")
+
+    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    data["default_markup"] = float(default_markup)
+    data["model_markups"] = {str(k): float(v) for k, v in model_markups.items()}
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    get_billing_config.cache_clear()
+    return get_billing_config()
 
 
 @dataclass(frozen=True)

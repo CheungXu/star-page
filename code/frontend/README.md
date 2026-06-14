@@ -19,6 +19,15 @@
 
 上传资料当前限制为最多 3 个文件，单文件与单次总大小均不超过 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`pdf`、`txt`、`md`、`html`。PDF 仅保证可复制文本内容的抽取，扫描版图片 PDF 或加密 PDF 可能解析失败。
 
+## 计费与积分（前端）
+
+- **公共请求工具抽到 `app/lib/api.ts`（`apiFetch` / `readErrorMessage` / `readBillingError`）与 `app/lib/billing.ts`（计费类型、`fetchAccount/fetchPackages/...`、`creditsToYuan`、套餐折扣等），避免 `page.tsx` 继续膨胀。**
+- **顶部积分/免费次数**：侧边栏底部展示登录用户的积分余额（≈¥换算）或匿名访客「剩余免费 N 次」，并提供「充值」入口；管理员（`/api/auth/me` 的 `is_admin`）额外显示「财务后台」入口。
+- **匿名可用**：未登录也能生成。匿名只能选 `anon_allowed` 模型，高价旗舰**可见但置灰**，点击弹轻提示「注册后可用」；单次最多生效 2 个模型，勾第 3 个轻提示需注册（前端仅作引导，后端强校验）。
+- **登录拦截**：匿名免费次数用尽（后端 402 `need_login`）或复制分享链接时弹登录框；登录用户余额不足（402 `insufficient_credits`）跳转 `/pricing`。生成成功与登录后会刷新账户余额。
+- **`app/pricing`**：mock 套餐卡（基础/赠送/折扣标注），建单 + mock 支付闭环，展示积分流水；正式上线接入微信/支付宝。
+- **`app/admin`**：财务仪表盘（收入/成本/毛利/赠送负债/科目余额、积分流水、记账凭证、用户对账）；后端 `require_admin` 鉴权，前端对 401/403 兜底显示「需要管理员权限」。
+
 ## 首屏 UI 设计要点
 
 - **品牌主名**："星页 StarPage"。所有面向用户的触点（`<title>` / `meta description` / `og:siteName` / 侧边栏品牌区 / Hero 副标题 / `<img alt>` / systemd Description）统一使用此命名。
