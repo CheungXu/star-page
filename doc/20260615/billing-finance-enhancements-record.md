@@ -54,6 +54,12 @@
 - 火山真实余额实测可拉取；阿里云费用 key 配好后余额/账单均可正常拉取，百炼产品被正确识别。
 - 基础设施入账与偏差对账逻辑在真实数据下验证（含幂等：同账期重复入账自动跳过）。
 
+## 四、补充：管理员手机号改为数据库配置
+
+- 将管理员白名单从 `config/billing.json.admin_phones` 迁至数据库独立表 `admin_phones`（迁移 `014_admin_flag.sql`），按手机号管理，可**预授权尚未注册的手机号**，与用户表解耦。
+- 鉴权 `require_admin` / `is_admin_user` 改为查 `admin_phones` 表（按当前用户手机号），变更即时生效、无需重启。
+- 运维用 `script/set_admin.py`（`list` / `grant` / `revoke`）维护，初始管理员已随迁移引导写入。
+
 ## 五、后续可迭代
 
 - 百炼若改为预付资源包计费，可接 `QueryResourcePackageInstances` 展示包余量。

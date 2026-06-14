@@ -55,14 +55,14 @@ async def login_with_sms(payload: SmsLoginRequest, request: Request, response: R
 
         _set_session_cookie(response, result.session_token)
         clear_anon_cookie(response)
-        return AuthLoginResponse(user=_to_user_response(result.user))
+        return AuthLoginResponse(user=await _to_user_response(session, result.user))
 
 
 @router.get("/me", response_model=AuthUserResponse)
 async def get_me(request: Request) -> AuthUserResponse:
     async with AsyncSessionLocal() as session:
         user = await get_current_user(session, request)
-        return _to_user_response(user)
+        return await _to_user_response(session, user)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -77,17 +77,17 @@ async def set_password(payload: PasswordSetRequest, request: Request) -> AuthUse
     async with AsyncSessionLocal() as session:
         user = await get_current_user(session, request)
         user = await AuthService(session).set_password(user, payload.password)
-        return _to_user_response(user)
+        return await _to_user_response(session, user)
 
 
-def _to_user_response(user) -> AuthUserResponse:
+async def _to_user_response(session, user) -> AuthUserResponse:
     return AuthUserResponse(
         id=user.id,
         phone=user.phone or "",
         display_name=user.display_name,
         phone_verified=user.phone_verified,
         has_password=bool(user.password_hash),
-        is_admin=is_admin_user(user),
+        is_admin=await is_admin_user(session, user),
     )
 
 

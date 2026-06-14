@@ -40,6 +40,14 @@ class User(Base, TimestampMixin):
     )
 
 
+class AdminPhone(Base):
+    __tablename__ = "admin_phones"
+
+    phone: Mapped[str] = mapped_column(String(32), primary_key=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class SmsVerificationCode(Base):
     __tablename__ = "sms_verification_codes"
 

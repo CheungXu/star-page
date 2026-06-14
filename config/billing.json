@@ -17,7 +17,6 @@
   "anon_max_models_per_gen": 2,
   "anon_daily_id_limit_per_ip": 3,
   "anon_daily_free_generation_limit_per_ip": 5,
-  "admin_phones": ["15827488805"],
   "min_recharge_cny": 1,
   "max_recharge_cny": 100000,
   "aliyun_llm_keywords": ["百炼", "灵积", "通义", "模型", "dashscope", "bailian", "lingji"]

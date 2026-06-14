@@ -216,7 +216,6 @@ class BillingConfig:
     anon_max_models_per_gen: int
     anon_daily_id_limit_per_ip: int
     anon_daily_free_generation_limit_per_ip: int
-    admin_phones: list[str]
     min_recharge_cny: float
     max_recharge_cny: float
     aliyun_llm_keywords: list[str]
@@ -263,7 +262,6 @@ def get_billing_config() -> BillingConfig:
         anon_max_models_per_gen=int(data.get("anon_max_models_per_gen", 2)),
         anon_daily_id_limit_per_ip=int(data.get("anon_daily_id_limit_per_ip", 3)),
         anon_daily_free_generation_limit_per_ip=int(data.get("anon_daily_free_generation_limit_per_ip", 5)),
-        admin_phones=[str(item) for item in (data.get("admin_phones") or [])],
         min_recharge_cny=float(data.get("min_recharge_cny", 1)),
         max_recharge_cny=float(data.get("max_recharge_cny", 100000)),
         aliyun_llm_keywords=[

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.entities import User
+from app.models.entities import AdminPhone, User
 from app.services.anon_service import AnonService
 from app.services.auth_service import AuthService
 
@@ -25,16 +26,17 @@ async def get_current_user(session: AsyncSession, request: Request) -> User:
     return user
 
 
-def is_admin_user(user: User) -> bool:
-    from app.core.config import get_billing_config
-
-    phones = set(get_billing_config().admin_phones)
-    return bool(user.phone and user.phone in phones)
+async def is_admin_user(session: AsyncSession, user: User | None) -> bool:
+    """管理员身份以数据库 admin_phones 表为准（按手机号白名单，用 script/set_admin.py 维护）。"""
+    if user is None or not user.phone:
+        return False
+    row = await session.scalar(select(AdminPhone.phone).where(AdminPhone.phone == user.phone))
+    return row is not None
 
 
 async def require_admin(session: AsyncSession, request: Request) -> User:
     user = await get_current_user(session, request)
-    if not is_admin_user(user):
+    if not await is_admin_user(session, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
     return user
 
