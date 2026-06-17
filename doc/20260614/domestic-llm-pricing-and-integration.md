@@ -86,9 +86,8 @@
 |----------|----------|----------|------------|------|
 | `deepseek-v4-flash` | **阿里云百炼** | `deepseek-v4-flash` | `enable_thinking` + `reasoning_effort: high` | DeepSeek 官网 |
 | `deepseek-v4-pro` | **阿里云百炼** | `deepseek-v4-pro` | 同上 | DeepSeek 官网 |
-| `glm-5.1` | **阿里云百炼** | `glm-5.1` | `enable_thinking: true` | 智谱开放平台 |
-| `kimi-k2.6` | **阿里云百炼** | `kimi/kimi-k2.6` | `enable_thinking: true` | Moonshot 官方 API |
-| `minimax-m3` | **阿里云百炼** | `MiniMax/MiniMax-M3` | `thinking: { type: adaptive }` | MiniMax 开放平台 |
+| `glm-5.2` | **阿里云百炼** | `glm-5.2` | `enable_thinking: true` | 智谱开放平台 |
+| `kimi-k2.7-code` | **阿里云百炼** | `kimi-k2.7-code` | `enable_thinking: true` | Moonshot 官方 API |
 
 **统一主路参数**（已在 `config/llm.models.json` 落地）：
 
@@ -140,7 +139,7 @@ api_key  = DEEPSEEK_API_KEY
 **百炼接入**（推荐）：
 
 ```text
-model = glm-5.1   // 或 ZHIPU/GLM-5.1
+model = glm-5.2   // 或 ZHIPU/GLM-5.2
 extra_body = { "enable_thinking": true }
 ```
 
@@ -150,7 +149,7 @@ extra_body = { "enable_thinking": true }
 
 ```text
 base_url = https://open.bigmodel.cn/api/paas/v4
-model    = glm-5.1
+model    = glm-5.2
 api_key  = ZHIPU_API_KEY
 ```
 
@@ -165,7 +164,7 @@ api_key  = ZHIPU_API_KEY
 **百炼接入**（推荐）：
 
 ```text
-model = kimi/kimi-k2.6
+model = kimi-k2.7-code
 extra_body = { "enable_thinking": true }
 ```
 
@@ -175,7 +174,7 @@ extra_body = { "enable_thinking": true }
 
 ```text
 base_url = https://api.moonshot.cn/v1
-model    = kimi-k2.6
+model    = kimi-k2.7-code
 api_key  = MOONSHOT_API_KEY
 ```
 
@@ -251,7 +250,7 @@ Benchmark 偏代码修复，上线前建议对星页做小规模 A/B（页面美
 │  deepseek-v4-pro + deepseek-v4-flash                          │
 ├─────────────────────────────────────────────────────────────┤
 │  付费高级档（markup 1.3~1.5×）                                 │
-│  minimax-m3 / glm-5.1 / kimi-k2.6                            │
+│  glm-5.2 / kimi-k2.7-code（MiniMax M3 暂缓）                  │
 ├─────────────────────────────────────────────────────────────┤
 │  逐步降级                                                      │
 │  qwen-max（成本高，仅保留兼容）                                 │
@@ -270,16 +269,15 @@ Benchmark 偏代码修复，上线前建议对星页做小规模 A/B（页面美
 |-----|-------|----------|
 | `deepseek-v4-flash` | DeepSeek V4 Flash | `deepseek-v4-flash` |
 | `deepseek-v4-pro` | DeepSeek V4 Pro | `deepseek-v4-pro` |
-| `glm-5.1` | 智谱 GLM-5.1 | `glm-5.1` |
-| `kimi-k2.6` | Kimi K2.6 | `kimi/kimi-k2.6` |
-| `minimax-m3` | MiniMax M3 | `MiniMax/MiniMax-M3` |
+| `glm-5.2` | 智谱 GLM-5.2 | `glm-5.2` |
+| `kimi-k2.7-code` | Kimi K2.7 Code | `kimi-k2.7-code` |
 
 `default_models` **暂保持** `["qwen", "doubao"]`，避免未开通百炼新模型时首访体验突变；产品确认后可改为 `["deepseek-v4-pro", "deepseek-v4-flash"]`。
 
 ### 9.2 `config/billing.json`
 
 - `anon_allowed_models` 增加 `deepseek-v4-flash`（置首，作为匿名首选）。
-- 新增模型 markup：`deepseek-v4-*` 1.2×，`minimax-m3` 1.3×，`glm-5.1` / `kimi-k2.6` 1.5×。
+- 新增模型 markup：`deepseek-v4-*` 1.2×，`glm-5.2` / `kimi-k2.7-code` 1.5×。MiniMax M3 暂不上线（百炼产品未开通）。
 
 ### 9.3 运维 checklist
 
@@ -306,7 +304,7 @@ Benchmark 偏代码修复，上线前建议对星页做小规模 A/B（页面美
 ## 十一、风险与维护
 
 1. **价格变动频繁**：DeepSeek 2026 年已多次调价；定期核对 [官方定价页](https://api-docs.deepseek.com/zh-cn/quick_start/pricing) 与百炼 `/api/v1/models`。
-2. **百炼 model ID 前缀**：Kimi 为 `kimi/`，MiniMax 为 `MiniMax/`，GLM 可用 `glm-5.1` 或 `ZHIPU/GLM-5.1`，需与控制台一致。
+2. **百炼 model ID**：Kimi 在百炼侧使用裸名（如 `kimi-k2.7-code`），勿用 `kimi/` 前缀；GLM 可用 `glm-5.2` 或 `ZHIPU/GLM-5.2`。
 3. **思考模式成本**：输出 token 含 reasoning，长思考会显著拉高单次费用。
 4. **可选后续**：百炼 pricing API 定时同步脚本；按模型 SLA 做自动 failover。
 

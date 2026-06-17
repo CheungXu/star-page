@@ -30,7 +30,8 @@
 - `20260610/icp-filing-footer-implementation.md`：ICP 备案号首页页脚实施记录（idle 静态沉底、工作区不展示、systemd 上线验证）。
 - `20260614/billing-system-plan.md`：星页积分计费系统设计方案（积分单位、匿名策略、复式记账、接口规划）。
 - `20260614/billing-system-implementation-record.md`：星页积分计费系统实施记录——已交付的数据/会计内核、匿名→注册闭环、生成链路计费、用户购买页与管理员财务后台，安全加固要点、上线验证结果与后续可迭代项。
-- `20260614/domestic-llm-pricing-and-integration.md`：国内旗舰大模型（DeepSeek V4、GLM-5.1、Kimi K2.6、MiniMax M3）定价调研、最优接入方案与配置落地记录。
+- `20260614/domestic-llm-pricing-and-integration.md`：国内旗舰大模型定价调研、百炼主路接入方案与模型分档建议。
+- `20260614/domestic-llm-integration-record.md`：上述方案的实施与上线记录——GLM-5.2 / Kimi K2.7 Code 落地、百炼 model ID 坑（Kimi 勿用 `kimi/` 前缀）、M3 暂缓、探测脚本与 systemd 重启验证。
 - `20260615/billing-finance-enhancements-record.md`：计费财务后台增强记录——财务总览三段式+营业利润、模型倍率可视化配置（即时生效）、**预付费记账改造（应付→预付资产）**、供应商真实余额对账（阿里云/火山）、阿里云账单基础设施成本入账与百炼成本偏差对账，含成本口径（应付 vs 现金支付）决策。
 
 ## 使用约定

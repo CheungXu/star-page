@@ -16,7 +16,7 @@
 - `frontend-home-workspace-transition.md`：首页 ↔ 工作区两态切换的平滑衔接过渡——用命令式过渡协调器解耦「改状态」与「怎么动画」；含 React 集成 5 个关键点（稳定舞台容器 + key、`flushSync` 同步提交、动态 import、内联样式防 React 覆盖、首屏恢复不走过渡）、FLIP 飞行 / 文字变气泡 / stagger 入场技巧，以及一条重要经验——**降级层级要按项目阶段权衡**（本项目从三级链简化为「motion + 兜底直切」）与 DOM 契约集中化防「静默失效」。
 - `generated-page-preview-design.md`：生成页面在主站内预览时的固定桌面视口缩放方案，包含避免窄 iframe 触发移动端布局、避免 `100vh` 被整页高度撑大的经验，以及把预览容器做成"真实浏览器视窗"（细边框 + 弥散阴影 + 极简控制栏，去厚白边）的外观原则。
 - `generated-page-js-sandbox-and-security.md`：LLM 生成页放开 CSS/JS 时的"隔离优先"安全原则——不清洗用户 JS 而用浏览器原生沙箱隔离；两道独立的墙（`sandbox` 不透明 origin 防偷主站凭证、`connect-src 'none'`/`form-action 'none'` 防钓鱼/信标）、sandbox 管不到 fetch 的关键认知、无需新域名的响应头落地方式、清洗定位转变、默认禁网 + 未来 opt-in 与独立内容域名的演进。
-- `llm-provider-abstraction.md`：LLM Provider 抽象原则，按 OpenAI / Anthropic 协议族接入不同模型供应商，并统一处理重试和空输出；含"多模型目录 + 仅密钥 env + 参数三层覆盖（defaults/params/extra_body）+ 密钥缺失自动不可选"的配置规划与火山方舟 doubao 接入。
+- `llm-provider-abstraction.md`：LLM Provider 抽象原则，按 OpenAI / Anthropic 协议族接入不同模型供应商，并统一处理重试和空输出；含"多模型目录 + 仅密钥 env + 参数三层覆盖（defaults/params/extra_body）+ 密钥缺失自动不可选"的配置规划、火山方舟 doubao 接入，以及**百炼托管第三方模型（DeepSeek/GLM/Kimi/MiniMax）的 model ID 约定**（Kimi 用裸名如 `kimi-k2.7-code`，勿误用 `kimi/` 前缀导致「产品未开通」）。
 - `multi-model-generation-tree.md`：多模型并行生成与生成树结构（会话=树、批次=一轮、Node=Page 可独立分享），含"合并另起新会话避免 DAG"、N 路 SSE 并行进度展示与批次状态聚合、扩展性注意点。
 - `multi-model-preview-comparison.md`：多模型结果预览对比设计——复用固定视口缩放、按 N 自适应网格 + 单元聚焦、对比模式加宽预览栏、各单元独立信息与动作、先完成先展示。
 - `multi-port-static-preview-for-design-variants.md`：前端"方案 A/B/C 对比"模式，单进程 Python `http.server` + `ThreadingTCPServer` 同时绑定多个端口、每个端口默认入口指向对应方案 HTML，零依赖、零编译、零构建。

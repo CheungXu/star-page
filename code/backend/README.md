@@ -149,3 +149,4 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - 生成页可信 CDN 白名单：`GENERATED_PAGE_CDN_ALLOWLIST`，默认 `https://cdn.jsdelivr.net https://unpkg.com`。
 - 业务数据库：`stars_page`。
 - 当前 Qwen 配置：`LLM_PROVIDER=qwen`、`LLM_PROTOCOL=openai`、`LLM_MODEL=qwen3.7-max`。
+- 多模型目录见 `config/llm.models.json`，当前 8 个可用 key：`qwen`、`qwen-plus`、`doubao`、`doubao-code`、`deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k2.7-code`（MiniMax M3 暂缓）。变更目录后需 `systemctl restart star-page-backend.service`；可用 `script/probe-llm-models.py` 探测连通性。

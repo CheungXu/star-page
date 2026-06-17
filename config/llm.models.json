@@ -177,12 +177,12 @@
       }
     },
     {
-      "key": "glm-5.1",
-      "label": "智谱 GLM-5.1",
+      "key": "glm-5.2",
+      "label": "智谱 GLM-5.2",
       "provider": "zhipu",
       "protocol": "openai",
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "model": "glm-5.1",
+      "model": "glm-5.2",
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
@@ -208,12 +208,12 @@
       }
     },
     {
-      "key": "kimi-k2.6",
-      "label": "Kimi K2.6",
+      "key": "kimi-k2.7-code",
+      "label": "Kimi K2.7 Code",
       "provider": "moonshot",
       "protocol": "openai",
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "model": "kimi/kimi-k2.6",
+      "model": "kimi-k2.7-code",
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
@@ -227,37 +227,6 @@
             "input_per_million": 6.5,
             "output_per_million": 27,
             "cache_input_per_million": 1.1
-          }
-        ]
-      }
-    },
-    {
-      "key": "minimax-m3",
-      "label": "MiniMax M3",
-      "provider": "minimax",
-      "protocol": "openai",
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "model": "MiniMax/MiniMax-M3",
-      "api_key_env": "QWEN_API_KEY",
-      "api_key_fallback_env": "LLM_API_KEY",
-      "params": {},
-      "extra_body": { "thinking": { "type": "adaptive" } },
-      "pricing": {
-        "currency": "CNY",
-        "tiers": [
-          {
-            "label": "输入≤512K",
-            "max_input_tokens": 512000,
-            "input_per_million": 4.2,
-            "output_per_million": 16.8,
-            "cache_input_per_million": 0.84
-          },
-          {
-            "label": "输入>512K",
-            "max_input_tokens": null,
-            "input_per_million": 8.4,
-            "output_per_million": 33.6,
-            "cache_input_per_million": 1.68
           }
         ]
       }

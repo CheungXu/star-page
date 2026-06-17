@@ -97,7 +97,7 @@ ALIYUN_SMS_ENDPOINT=dysmsapi.aliyuncs.com
 各模型密钥变量名由目录里的 `api_key_env` 指定，例如：
 
 ```text
-QWEN_API_KEY=   # 阿里云百炼 / DashScope（qwen、deepseek-v4-*、glm-5.1、kimi-k2.6、minimax-m3）
+QWEN_API_KEY=   # 阿里云百炼 / DashScope（qwen、deepseek-v4-*、glm-5.2、kimi-k2.7-code）
 ARK_API_KEY=    # 火山方舟（doubao）
 LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时百炼系模型回退到它
 ```
@@ -116,9 +116,8 @@ LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时百炼系模
 | `doubao-code` | `doubao-seed-2-0-code-preview-260215` | 火山方舟 |
 | `deepseek-v4-flash` | `deepseek-v4-flash` | 百炼（主路） |
 | `deepseek-v4-pro` | `deepseek-v4-pro` | 百炼（主路） |
-| `glm-5.1` | `glm-5.1` | 百炼（主路） |
-| `kimi-k2.6` | `kimi/kimi-k2.6` | 百炼（主路） |
-| `minimax-m3` | `MiniMax/MiniMax-M3` | 百炼（主路） |
+| `glm-5.2` | `glm-5.2` | 百炼（主路） |
+| `kimi-k2.7-code` | `kimi-k2.7-code` | 百炼（主路） |
 
 新增五款模型均复用 `QWEN_API_KEY`；灾备官方 API 切换方式见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
 

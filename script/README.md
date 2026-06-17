@@ -99,6 +99,16 @@ pkill -f preview-logo/serve.py
 
 跨项目可复用方法见 `wiki/multi-port-static-preview-for-design-variants.md`。
 
+## LLM 模型连通性探测：`probe-llm-models.py`
+
+对 `config/llm.models.json` 中每个模型发最小 chat 请求，并拉取百炼/方舟 models API 列出同系列 ID，用于上线前验证与排查「产品未开通 / model ID 写错」。
+
+```bash
+python3 script/probe-llm-models.py
+```
+
+结果摘要写入 `doc/20260614/llm-model-probe-result.json`（本地探测产物，可不提交）。详见 `doc/20260614/domestic-llm-integration-record.md`。
+
 ## 多端口衔接动画方案对比预览：`preview-transition/`
 
 `preview-transition/` 把上面的「多端口静态对比」模式扩展到**交互动画 / 多状态过渡**，
