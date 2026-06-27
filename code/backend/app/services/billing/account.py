@@ -153,8 +153,11 @@ class BillingService:
         )
 
         amount = Decimal(str(order.amount_cny))
+        # 第三方支付（微信）资金先到平台、按周期结算到银行，支付成功记应收第三方(1002)；
+        # mock/其他视为现金即时到账(1001)。结算到账再 借1001/贷1002（见 record_wechat_settlement_*）。
+        cash_account = "1002" if order.payment_provider == "wechat" else "1001"
         lines = [
-            LedgerLine(account_code="1001", debit=amount),
+            LedgerLine(account_code=cash_account, debit=amount),
             LedgerLine(account_code="2001", credit=amount),
         ]
         if bonus > 0:
@@ -222,6 +225,70 @@ class BillingService:
                 LedgerLine(account_code="6002", debit=amount),
                 LedgerLine(account_code="1102", credit=amount),
             ],
+        )
+        await self.session.flush()
+        return entry is not None
+
+    # ---------- 微信资金结算入账（应收第三方 → 现金） ----------
+
+    async def record_wechat_settlement_manual(
+        self, settlement_cny: Decimal, fee_cny: Decimal = Decimal("0"), memo: str | None = None
+    ) -> None:
+        """手动记一笔微信结算到账：借 现金(1001) 结算额 + 借 手续费(6603) / 贷 应收第三方(1002)。
+        每次为管理员显式操作，使用独立事件号、不做跨次幂等（作为自动对账的兜底）。"""
+        settlement = Decimal(str(settlement_cny))
+        fee = Decimal(str(fee_cny or 0))
+        if settlement <= 0 and fee <= 0:
+            raise BillingError("结算金额与手续费不能都为 0")
+        lines = []
+        if settlement > 0:
+            lines.append(LedgerLine(account_code="1001", debit=settlement))
+        if fee > 0:
+            lines.append(LedgerLine(account_code="6603", debit=fee))
+        lines.append(LedgerLine(account_code="1002", credit=settlement + fee))
+        await self.ledger.post(
+            event_type="wechat_settlement",
+            event_ref=str(uuid.uuid4()),
+            memo=memo or "微信结算到账（手动）",
+            lines=lines,
+        )
+        await self.session.flush()
+
+    @staticmethod
+    def _wechat_settle_event_ref(bill_date: str) -> str:
+        return f"wechat-settle:{bill_date}"
+
+    async def is_wechat_settlement_posted(self, bill_date: str) -> bool:
+        from app.models.entities import LedgerEntry
+
+        result = await self.session.execute(
+            select(LedgerEntry.id).where(
+                LedgerEntry.event_type == "wechat_settlement",
+                LedgerEntry.event_ref == self._wechat_settle_event_ref(bill_date),
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def record_wechat_settlement_from_bill(
+        self, bill_date: str, settlement_cny: Decimal, fee_cny: Decimal
+    ) -> bool:
+        """按资金账单某日入账结算与手续费：借 现金(1001)/借 手续费(6603) / 贷 应收第三方(1002)。
+        按 (wechat_settlement, 账单日) 幂等，返回是否本次实际入账。"""
+        settlement = Decimal(str(settlement_cny))
+        fee = Decimal(str(fee_cny or 0))
+        if settlement <= 0 and fee <= 0:
+            return False
+        lines = []
+        if settlement > 0:
+            lines.append(LedgerLine(account_code="1001", debit=settlement))
+        if fee > 0:
+            lines.append(LedgerLine(account_code="6603", debit=fee))
+        lines.append(LedgerLine(account_code="1002", credit=settlement + fee))
+        entry = await self.ledger.post(
+            event_type="wechat_settlement",
+            event_ref=self._wechat_settle_event_ref(bill_date),
+            memo=f"微信 {bill_date} 资金结算到账（结算 ¥{settlement} / 手续费 ¥{fee}）",
+            lines=lines,
         )
         await self.session.flush()
         return entry is not None
@@ -310,8 +377,9 @@ class BillingService:
         if amount < Decimal(str(self.config.min_recharge_cny)) or amount > Decimal(str(self.config.max_recharge_cny)):
             raise BillingError("充值金额超出允许范围")
 
+        order_id = uuid.uuid4()
         order = RechargeOrder(
-            id=uuid.uuid4(),
+            id=order_id,
             user_id=user.id,
             package_key=package.key,
             amount_cny=package.amount_cny,
@@ -319,6 +387,8 @@ class BillingService:
             bonus_credits=package.bonus_credits,
             status="pending",
             payment_provider=provider,
+            # 商户订单号 = 订单 UUID 的 hex（32 位，符合微信 6-32 位与字符集要求），回调可逆向还原。
+            out_trade_no=order_id.hex,
         )
         self.session.add(order)
         await self.session.commit()

@@ -17,6 +17,7 @@ from app.models.entities import (
     LedgerAccount,
     LedgerEntry,
     LedgerEntryLine,
+    RechargeOrder,
     User,
 )
 from app.schemas.admin import (
@@ -36,8 +37,14 @@ from app.schemas.admin import (
     SupplierBalanceItem,
     SupplierTopupRequest,
     SupplierTopupResponse,
+    WechatFundflowPostRequest,
+    WechatFundflowPostResponse,
+    WechatFundflowResponse,
+    WechatSettlementRequest,
+    WechatSettlementResponse,
 )
 from app.services.billing.account import BillingService
+from app.services.payment import wechat
 from app.services.supplier_balance import get_supplier_balances
 from app.services.supplier_balance.aliyun import fetch_aliyun_bill_overview
 
@@ -78,11 +85,25 @@ async def overview(request: Request) -> AdminOverview:
         def debit_sum(code: str) -> Decimal:
             return sums.get(code, (Decimal("0"), Decimal("0")))[0]
 
-        # 累计充值现金取借方累计（不被供应商付款冲减），现金净额另算。
-        total_recharge = debit_sum("1001")
         gift_granted = debit_net("6601")
         gift_unused = credit_net("2002")
         deferred_revenue = credit_net("2001")
+        # 应收第三方支付（微信已收款、尚未结算到银行）= 1002 净额；支付手续费 = 6603 净额。
+        receivable_third_party = debit_net("1002")
+        payment_fee = debit_net("6603")
+
+        # 累计充值现金：直接取已支付充值订单金额之和（provider 无关、不受结算/付款冲减干扰）。
+        total_recharge = Decimal(
+            str(
+                (
+                    await session.execute(
+                        select(func.coalesce(func.sum(RechargeOrder.amount_cny), 0)).where(
+                            RechargeOrder.status == "paid"
+                        )
+                    )
+                ).scalar_one()
+            )
+        )
         # 预付云资源：借方=累计向云账户充值，贷方=调用消费冲减；净额=剩余可用。
         prepaid_cloud_topup = debit_sum("1102")
         prepaid_cloud_balance = debit_net("1102")
@@ -119,7 +140,7 @@ async def overview(request: Request) -> AdminOverview:
         paid_gross = paid_revenue - paid_cogs
         total_gross = total_revenue - total_cogs
         infra_cost = debit_net("6002")
-        operating_profit = total_gross - infra_cost
+        operating_profit = total_gross - infra_cost - payment_fee
         paid_margin = float(paid_gross / paid_revenue) if paid_revenue > 0 else None
         total_margin = float(total_gross / total_revenue) if total_revenue > 0 else None
 
@@ -165,8 +186,10 @@ async def overview(request: Request) -> AdminOverview:
             total_gross_profit_cny=float(total_gross),
             total_gross_margin=total_margin,
             infra_cost_cny=float(infra_cost),
+            payment_fee_cny=float(payment_fee),
             operating_profit_cny=float(operating_profit),
             deferred_revenue_cny=float(deferred_revenue),
+            receivable_third_party_cny=float(receivable_third_party),
             prepaid_cloud_balance_cny=float(prepaid_cloud_balance),
             prepaid_cloud_topup_cny=float(prepaid_cloud_topup),
             total_paid_balance_credits=int(paid_sum),
@@ -537,3 +560,102 @@ async def aliyun_bill_post(request: Request, payload: InfraCostPostRequest) -> I
             infra_cost_cny=float(infra),
             message=(f"已入账基础设施成本 ¥{infra:.2f}" if newly else f"{cycle} 已入账过，未重复记账"),
         )
+
+
+async def _receivable_third_party(session) -> Decimal:
+    rows = await session.execute(
+        select(
+            func.coalesce(func.sum(LedgerEntryLine.debit), 0),
+            func.coalesce(func.sum(LedgerEntryLine.credit), 0),
+        ).where(LedgerEntryLine.account_code == "1002")
+    )
+    debit, credit = rows.one()
+    return Decimal(str(debit)) - Decimal(str(credit))
+
+
+@router.post("/wechat-settlement", response_model=WechatSettlementResponse)
+async def wechat_settlement(request: Request, payload: WechatSettlementRequest) -> WechatSettlementResponse:
+    """手动记一笔微信结算到账：借 现金(1001)+手续费(6603) / 贷 应收第三方(1002)。"""
+    if payload.settlement_cny <= 0 and payload.fee_cny <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="结算金额与手续费不能都为 0")
+    async with AsyncSessionLocal() as session:
+        await require_admin(session, request)
+        service = BillingService(session)
+        await service.record_wechat_settlement_manual(
+            Decimal(str(payload.settlement_cny)), Decimal(str(payload.fee_cny)), payload.memo
+        )
+        await session.commit()
+        balance = await _receivable_third_party(session)
+        return WechatSettlementResponse(ok=True, receivable_third_party_cny=float(balance))
+
+
+@router.get("/wechat-fundflow", response_model=WechatFundflowResponse)
+async def wechat_fundflow(request: Request, date: str = Query(default="")) -> WechatFundflowResponse:
+    """拉取某日（YYYY-MM-DD）微信资金账单并归类汇总（结算/手续费），并返回是否已入账。"""
+    bill_date = date.strip() or _default_bill_date()
+    async with AsyncSessionLocal() as session:
+        await require_admin(session, request)
+        posted = await BillingService(session).is_wechat_settlement_posted(bill_date)
+
+    summary = await asyncio.to_thread(wechat.fetch_fundflow_summary, bill_date)
+    return WechatFundflowResponse(
+        configured=summary.configured,
+        bill_date=summary.bill_date,
+        settlement_cny=summary.settlement_cny,
+        fee_cny=summary.fee_cny,
+        income_cny=summary.income_cny,
+        row_count=summary.row_count,
+        unknown_types=summary.unknown_types,
+        posted=posted,
+        error=summary.error,
+        note=summary.note,
+    )
+
+
+@router.post("/wechat-fundflow/post", response_model=WechatFundflowPostResponse)
+async def wechat_fundflow_post(request: Request, payload: WechatFundflowPostRequest) -> WechatFundflowPostResponse:
+    """按资金账单某日把结算与手续费入账（借1001/借6603 / 贷1002）。金额由服务端按账单重算，幂等。"""
+    bill_date = payload.bill_date.strip()
+    if not bill_date:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="缺少账单日期 bill_date")
+
+    summary = await asyncio.to_thread(wechat.fetch_fundflow_summary, bill_date)
+    if not summary.configured:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=summary.note or "微信支付未配置")
+    if summary.error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=summary.error)
+
+    settlement = Decimal(str(summary.settlement_cny))
+    fee = Decimal(str(summary.fee_cny))
+    async with AsyncSessionLocal() as session:
+        await require_admin(session, request)
+        service = BillingService(session)
+        if settlement <= 0 and fee <= 0:
+            return WechatFundflowPostResponse(
+                ok=True,
+                posted=False,
+                bill_date=bill_date,
+                settlement_cny=0.0,
+                fee_cny=0.0,
+                message=f"{bill_date} 无结算/手续费流水，无需入账",
+            )
+        newly = await service.record_wechat_settlement_from_bill(bill_date, settlement, fee)
+        await session.commit()
+        return WechatFundflowPostResponse(
+            ok=True,
+            posted=newly,
+            bill_date=bill_date,
+            settlement_cny=float(settlement),
+            fee_cny=float(fee),
+            message=(
+                f"已入账结算 ¥{settlement:.2f}、手续费 ¥{fee:.2f}"
+                if newly
+                else f"{bill_date} 已入账过，未重复记账"
+            ),
+        )
+
+
+def _default_bill_date() -> str:
+    # 资金账单按自然日出，默认取昨天（当天账单通常次日才可下载）。
+    now = datetime.now(timezone(timedelta(hours=8))) - timedelta(days=1)
+    return now.strftime("%Y-%m-%d")

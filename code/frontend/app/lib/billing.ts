@@ -43,6 +43,15 @@ export type RechargeOrder = {
   status: string;
   payment_provider: string;
   pay_url: string | null;
+  code_url: string | null;
+};
+
+export type RechargeStatus = {
+  order_id: string;
+  status: string;
+  payment_provider: string;
+  amount_cny: number;
+  total_credits: number;
 };
 
 export async function fetchAccount(): Promise<BillingAccount | null> {
@@ -63,11 +72,11 @@ export async function fetchTransactions(): Promise<CreditTransaction[]> {
   return (await res.json()) as CreditTransaction[];
 }
 
-export async function createRecharge(packageKey: string): Promise<RechargeOrder> {
+export async function createRecharge(packageKey: string, provider?: string): Promise<RechargeOrder> {
   const res = await apiFetch("/api/billing/recharge", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ package_key: packageKey }),
+    body: JSON.stringify({ package_key: packageKey, provider: provider ?? null }),
   });
   if (!res.ok) throw new Error(await readErrorMessage(res, "创建订单失败"));
   return (await res.json()) as RechargeOrder;
@@ -76,6 +85,13 @@ export async function createRecharge(packageKey: string): Promise<RechargeOrder>
 export async function mockPay(orderId: string): Promise<void> {
   const res = await apiFetch(`/api/billing/recharge/${orderId}/mock-pay`, { method: "POST" });
   if (!res.ok) throw new Error(await readErrorMessage(res, "支付失败"));
+}
+
+// 查询充值订单状态（后端会对微信单做查单兜底）。
+export async function fetchOrderStatus(orderId: string): Promise<RechargeStatus | null> {
+  const res = await apiFetch(`/api/billing/recharge/${orderId}`);
+  if (!res.ok) return null;
+  return (await res.json()) as RechargeStatus;
 }
 
 // 积分换算为人民币（元）展示，1 元 = 100 积分。

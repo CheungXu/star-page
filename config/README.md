@@ -55,6 +55,7 @@
 - RDS 真实配置文件建议使用 `config/db.env`，模板文件为 `config/db.env.example`。
 - LLM 真实配置建议放在 `config/llm.env`，模板文件为 `config/llm.env.example`；也可以统一放入 `config/.env`，不要提交真实 API Key。
 - 短信真实配置建议放在 `config/sms.env`，用于 `SMS_PROVIDER`、短信签名、模板 Code 和阿里云凭据；不要提交真实 AccessKey。
+- 微信支付真实配置建议放在 `config/wechatpay.env`，模板为 `config/wechatpay.env.example`；商户私钥/微信支付公钥 pem 放 `config/certs/`。`config/*.env`、`config/certs/`、`*.pem`、`*.p12`、`*_cert.zip` 均已 gitignore，不要提交真实密钥与证书。
 - `config/env.example` 只能保留变量名和非敏感默认值，不要写入 AccessKey、数据库密码、AI Key、Session Secret 等真实密钥。
 
 ## 阿里云短信
@@ -86,6 +87,32 @@ ALIYUN_SMS_ENDPOINT=dysmsapi.aliyuncs.com
 - 如果没有 AK/SK，则回退阿里云默认凭据链，后续迁移到 ECS/RAM Role 时可复用。
 
 建议短信 RAM 用户只授予 `dysmsapi:SendSms` 最小权限。
+
+## 微信支付（Native 扫码充值）
+
+充值环节接入微信 Native 支付（PC 扫码），验签采用**微信支付公钥模式**（非平台证书模式，免证书轮换）。配置与凭据：
+
+- 真实配置放 `config/wechatpay.env`（gitignore），模板 `config/wechatpay.env.example`；后端 `core/config.py` 已把它纳入本地 env 加载。
+- 商户私钥 `apiclient_key.pem`（API 证书 zip 解压得到）与微信支付公钥 `pub_key.pem` 放 `config/certs/`，由 `WECHATPAY_PRIVATE_KEY_PATH`/`WECHATPAY_PUBLIC_KEY_PATH` 指向（默认 `config/certs/apiclient_key.pem`、`config/certs/pub_key.pem`）。
+
+变量（含商户平台 `pay.weixin.qq.com` 获取路径）：
+
+```text
+WECHATPAY_MCHID=            # 账户中心→商户信息（1 开头 10 位）
+WECHATPAY_APPID=           # 已认证并与 mchid 绑定的服务号/公众号 AppID
+WECHATPAY_APIV3_KEY=       # 账户中心→API安全→APIv3密钥（自设 32 位，平台不回显）
+WECHATPAY_CERT_SERIAL_NO= # 账户中心→API安全→API证书 序列号
+WECHATPAY_PRIVATE_KEY_PATH=config/certs/apiclient_key.pem
+WECHATPAY_PUBLIC_KEY_PATH=config/certs/pub_key.pem
+WECHATPAY_PUBLIC_KEY_ID=  # 账户中心→API安全→微信支付公钥 公钥ID（PUB_KEY_ID_xxx）
+WECHATPAY_NOTIFY_URL=https://stars-page.com/api/billing/wechat/notify
+```
+
+注意：
+
+- 证书 zip 内 `apiclient_key.pem` 才是商户私钥（请求签名用）；下载的 `pub_key.pem` 是微信支付公钥（应答/回调验签用），两者别弄混。
+- 回调地址需在商户平台「产品中心→开发配置」配置，且公网 HTTPS 可达（Nginx 已把 `/api/` 转发到后端）。
+- 安全红线：私钥/证书/APIv3 密钥**只放服务器**，严禁提交到 Git；`config/certs/`、`*.pem`、`*.p12`、`*_cert.zip` 已加入 `config/.gitignore`。
 
 ## LLM 多模型配置
 

@@ -71,12 +71,18 @@ journalctl -u star-page-backend.service -f
 - `GET /api/billing/account`：返回积分余额（登录）或剩余免费次数（匿名/未分配 cookie 的访客返回合成的满额免费态）。
 - `GET /api/billing/transactions`：当前用户积分流水（登录或带匿名 cookie 的访客）。
 - `GET /api/billing/packages`：充值套餐（DB `credit_packages`，启动 seed mock）。
-- `POST /api/billing/recharge`：建单，**只收 `package_key`**，金额/积分服务端按套餐计算（价格服务端权威）。需登录。
+- `POST /api/billing/recharge`：建单，**只收 `package_key`（+可选 `provider`）**，金额/积分服务端按套餐计算（价格服务端权威）。需登录。`provider=wechat` 走微信 Native 下单并返回二维码链接 `code_url`；`provider=mock` 仅非生产；不传时微信已配置则默认微信、否则回退 mock。
 - `POST /api/billing/recharge/{id}/mock-pay`：mock 支付回调入账，**仅非生产环境（`APP_ENV != production`）开放**，原子流转 `pending→paid` + 幂等入账。
+- `POST /api/billing/wechat/notify`：微信支付结果回调（无需登录）。先验签再解密，校验订单归属 + 金额一致 + `trade_state=SUCCESS` 才入账；非成功事件/异常订单回 200 避免重试风暴。
+- `GET /api/billing/recharge/{id}`：查询充值订单状态（需登录、校验归属）。微信单仍 `pending` 时主动查微信对账（回调丢失也能到账），前端据此轮询。
+
+微信支付实现见 `app/services/payment/wechat/`（**微信支付公钥模式**，非平台证书模式）：`config.py` 读凭据与私钥/公钥文件（缺失不报错、由 `configured` 判断启用），`client.py` 懒加载单例封装 Native 下单 / 查单 / 回调验签解密 / 资金账单解析，同步 SDK（`wechatpayv3`）调用统一经 `asyncio.to_thread`。`out_trade_no = 订单 UUID 的 hex`，回调可逆向还原。凭据放服务器 `config/wechatpay.env` 与 `config/certs/`（均 gitignore），模板见 `config/wechatpay.env.example`。
 
 管理员侧（`routes_admin.py` + `require_admin`，管理员身份以数据库 `admin_phones` 表为准，按手机号白名单，可预授权未注册手机号；用 `script/set_admin.py` 维护）：
 
-- `GET /api/admin/billing/overview`：财务总览，三段式呈现——①付费业务（不含赠送）：累计充值现金/付费确认收入/付费 COGS/付费毛利；②赠送台账：赠送已发放/未用负债/已核销收入/赠送+试用成本；③含赠送合计：综合收入/成本/毛利；并含预收账款、预付云资源余额与累计充值、科目余额。收入与成本按消费流水的 paid/gift 占比拆分。
+- `GET /api/admin/billing/overview`：财务总览，三段式呈现——①付费业务（不含赠送）：累计充值现金（取已支付充值订单金额之和，provider 无关）/付费确认收入/付费 COGS/付费毛利；②赠送台账：赠送已发放/未用负债/已核销收入/赠送+试用成本；③含赠送合计：综合收入/成本/毛利；期间费用含基础设施成本与**支付手续费（6603）**，营业利润 = 综合毛利 − 基础设施 − 手续费；并含预收账款、**应收第三方支付（1002 净额，微信已收款未结算）**、预付云资源余额与累计充值、科目余额。收入与成本按消费流水的 paid/gift 占比拆分。
+- `POST /api/admin/billing/wechat-settlement`：手动记一笔微信结算到账（借 `1001 现金` + `6603 支付手续费` / 贷 `1002 应收第三方支付`），作为自动对账的兜底，每次独立事件号。
+- `GET /api/admin/billing/wechat-fundflow?date=YYYY-MM-DD` 与 `POST /api/admin/billing/wechat-fundflow/post`：拉取微信「申请资金账单」(`fundflowbill`，BASIC 账户) 并按业务类型归类结算/手续费/收入，POST 按 `(wechat_settlement, 账单日)` 幂等入账（借 1001 + 6603 / 贷 1002）。当日账单一般次日才可下载；业务类型归类关键词需以首笔真实账单校验。
 - `GET /api/admin/billing/transactions`、`/ledger`、`/users`：积分流水、记账凭证、用户对账。
 - `GET / PUT /api/admin/billing/model-markups`：读取/保存模型倍率（展示各模型成本基准），PUT 写回 `config/billing.json` 并清缓存即时生效。
 - `POST /api/admin/billing/supplier-topup`：记录云/LLM 供应商账户预充值（借 `1102 预付账款-云/LLM供应商`、贷 `1001 现金`）。供应商为预付费模型，每次调用按实际成本贷记 `1102` 冲减预付资产（不再使用应付账款）。

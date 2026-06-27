@@ -36,12 +36,14 @@ class AdminOverview(BaseModel):
     total_gross_profit_cny: float
     total_gross_margin: float | None
 
-    # 期间费用与营业利润：基础设施(服务器等)成本、营业利润=综合毛利-基础设施
+    # 期间费用与营业利润：基础设施(服务器等)成本、支付手续费，营业利润=综合毛利-基础设施-手续费
     infra_cost_cny: float
+    payment_fee_cny: float
     operating_profit_cny: float
 
     # 其他：资产负债与全站余额
     deferred_revenue_cny: float
+    receivable_third_party_cny: float
     prepaid_cloud_balance_cny: float
     prepaid_cloud_topup_cny: float
     total_paid_balance_credits: int
@@ -123,6 +125,43 @@ class AliyunBillOverviewResponse(BaseModel):
     llm_deviation_pct: float | None = None
     error: str | None = None
     note: str | None = None
+
+
+class WechatSettlementRequest(BaseModel):
+    settlement_cny: float
+    fee_cny: float = 0.0
+    memo: str | None = None
+
+
+class WechatSettlementResponse(BaseModel):
+    ok: bool
+    receivable_third_party_cny: float
+
+
+class WechatFundflowResponse(BaseModel):
+    configured: bool
+    bill_date: str
+    settlement_cny: float = 0.0
+    fee_cny: float = 0.0
+    income_cny: float = 0.0
+    row_count: int = 0
+    unknown_types: list[str] = []
+    posted: bool = False
+    error: str | None = None
+    note: str | None = None
+
+
+class WechatFundflowPostRequest(BaseModel):
+    bill_date: str
+
+
+class WechatFundflowPostResponse(BaseModel):
+    ok: bool
+    posted: bool
+    bill_date: str
+    settlement_cny: float
+    fee_cny: float
+    message: str
 
 
 class InfraCostPostRequest(BaseModel):

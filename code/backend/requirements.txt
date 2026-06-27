@@ -16,3 +16,4 @@ alibabacloud_tea_openapi
 alibabacloud_tea_util
 alibabacloud_bssopenapi20171214
 volcengine
+wechatpayv3

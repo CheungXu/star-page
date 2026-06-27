@@ -2,3 +2,9 @@
 .env.*
 *.env
 !.env.example
+
+# 证书/密钥材料：商户私钥、公钥、p12、商户证书压缩包，严禁入库
+certs/
+*.pem
+*.p12
+*_cert.zip

@@ -29,6 +29,7 @@ def _load_local_env_files() -> None:
                 base / "config" / "oss.env",
                 base / "config" / "llm.env",
                 base / "config" / "sms.env",
+                base / "config" / "wechatpay.env",
             ]
         )
 
@@ -107,6 +108,21 @@ class Settings(BaseSettings):
     billing_config_file: str = Field(default="config/billing.json", alias="BILLING_CONFIG_FILE")
     anon_cookie_name: str = Field(default="sp_anon", alias="ANON_COOKIE_NAME")
     anon_cookie_ttl_seconds: int = Field(default=60 * 60 * 24 * 180, alias="ANON_COOKIE_TTL_SECONDS")
+
+    # 微信支付（Native / PC 扫码）。验签采用「微信支付公钥」模式（public_key + public_key_id）。
+    # 商户私钥与证书序列号用于「请求签名」，与验签模式无关、永远必填。
+    wechatpay_mchid: str = Field(default="", alias="WECHATPAY_MCHID")
+    wechatpay_appid: str = Field(default="", alias="WECHATPAY_APPID")
+    wechatpay_apiv3_key: str = Field(default="", alias="WECHATPAY_APIV3_KEY")
+    wechatpay_cert_serial_no: str = Field(default="", alias="WECHATPAY_CERT_SERIAL_NO")
+    wechatpay_private_key_path: str = Field(
+        default="config/certs/apiclient_key.pem", alias="WECHATPAY_PRIVATE_KEY_PATH"
+    )
+    wechatpay_public_key_path: str = Field(
+        default="config/certs/pub_key.pem", alias="WECHATPAY_PUBLIC_KEY_PATH"
+    )
+    wechatpay_public_key_id: str = Field(default="", alias="WECHATPAY_PUBLIC_KEY_ID")
+    wechatpay_notify_url: str = Field(default="", alias="WECHATPAY_NOTIFY_URL")
 
     # 网页制作技能（page-skills）：默认开启；各 task 按生成模型自动路由匹配技能并注入生成提示。
     page_skills_enabled: bool = Field(default=True, alias="PAGE_SKILLS_ENABLED")

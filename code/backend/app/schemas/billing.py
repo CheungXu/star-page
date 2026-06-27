@@ -40,6 +40,8 @@ class PackageItem(BaseModel):
 
 class RechargeCreateRequest(BaseModel):
     package_key: str = Field(min_length=1, max_length=64)
+    # 支付方式：wechat（微信 Native 扫码）/ mock（仅非生产）。不传时后端按环境选默认。
+    provider: str | None = Field(default=None, max_length=16)
 
 
 class RechargeOrderResponse(BaseModel):
@@ -51,6 +53,16 @@ class RechargeOrderResponse(BaseModel):
     status: str
     payment_provider: str
     pay_url: str | None = None
+    # 微信 Native 下单返回的二维码链接，前端转二维码展示。
+    code_url: str | None = None
+
+
+class RechargeStatusResponse(BaseModel):
+    order_id: UUID
+    status: str
+    payment_provider: str
+    amount_cny: float
+    total_credits: int
 
 
 class MockPayResponse(BaseModel):

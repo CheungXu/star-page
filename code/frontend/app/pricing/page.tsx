@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import QRCode from "qrcode";
+import { useEffect, useRef, useState } from "react";
 import {
   type BillingAccount,
   type CreditPackage,
   type CreditTransaction,
+  type RechargeOrder,
   createRecharge,
   creditsToYuan,
   fetchAccount,
+  fetchOrderStatus,
   fetchPackages,
   fetchTransactions,
   formatCredits,
@@ -17,6 +20,13 @@ import {
   txnTypeLabel,
 } from "../lib/billing";
 
+type WechatPayState = {
+  order: RechargeOrder;
+  pkg: CreditPackage;
+  qrDataUrl: string;
+  status: "pending" | "paid";
+};
+
 export default function PricingPage() {
   const [account, setAccount] = useState<BillingAccount | null>(null);
   const [packages, setPackages] = useState<CreditPackage[]>([]);
@@ -24,6 +34,8 @@ export default function PricingPage() {
   const [loading, setLoading] = useState(true);
   const [payingKey, setPayingKey] = useState<string | null>(null);
   const [toast, setToast] = useState("");
+  const [wechatPay, setWechatPay] = useState<WechatPayState | null>(null);
+  const pollTimer = useRef<number | null>(null);
 
   async function refresh() {
     const [acc, pkgs, txns] = await Promise.all([fetchAccount(), fetchPackages(), fetchTransactions()]);
@@ -39,9 +51,33 @@ export default function PricingPage() {
     })();
   }, []);
 
+  // 微信扫码后轮询订单状态（后端含查单兜底），支付成功即刷新积分。
+  useEffect(() => {
+    if (!wechatPay || wechatPay.status !== "pending") return;
+    const orderId = wechatPay.order.order_id;
+    pollTimer.current = window.setInterval(async () => {
+      const status = await fetchOrderStatus(orderId);
+      if (status?.status === "paid") {
+        if (pollTimer.current) window.clearInterval(pollTimer.current);
+        setWechatPay((prev) => (prev ? { ...prev, status: "paid" } : prev));
+        await refresh();
+        showToast(`充值成功，到账 ${formatCredits(wechatPay.pkg.total_credits)} 积分`);
+        window.setTimeout(() => setWechatPay(null), 1800);
+      }
+    }, 2500);
+    return () => {
+      if (pollTimer.current) window.clearInterval(pollTimer.current);
+    };
+  }, [wechatPay]);
+
   function showToast(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2800);
+  }
+
+  function closeWechatPay() {
+    if (pollTimer.current) window.clearInterval(pollTimer.current);
+    setWechatPay(null);
   }
 
   async function handleBuy(pkg: CreditPackage) {
@@ -52,10 +88,18 @@ export default function PricingPage() {
     setPayingKey(pkg.key);
     try {
       const order = await createRecharge(pkg.key);
-      // 当前为 mock 支付：建单后直接走 mock 回调入账；接入微信/支付宝后改为跳转支付。
-      await mockPay(order.order_id);
-      await refresh();
-      showToast(`充值成功，到账 ${formatCredits(pkg.total_credits)} 积分`);
+      if (order.code_url) {
+        // 微信 Native：把 code_url 渲染为二维码，弹窗展示并轮询到账。
+        const qrDataUrl = await QRCode.toDataURL(order.code_url, { width: 240, margin: 1 });
+        setWechatPay({ order, pkg, qrDataUrl, status: "pending" });
+      } else if (order.pay_url) {
+        // 开发期 mock 支付：建单后直接走 mock 回调入账。
+        await mockPay(order.order_id);
+        await refresh();
+        showToast(`充值成功，到账 ${formatCredits(pkg.total_credits)} 积分`);
+      } else {
+        showToast("暂不可用的支付方式");
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : "充值失败");
     } finally {
@@ -131,7 +175,7 @@ export default function PricingPage() {
       )}
 
       <section className="pricing-note">
-        <p>当前支付为开发期 Mock 流程，正式上线后将接入微信支付与支付宝。</p>
+        <p>支持微信扫码支付，1 元 = 100 积分，充值即时到账。</p>
       </section>
 
       {!isAnon && transactions.length > 0 && (
@@ -163,6 +207,35 @@ export default function PricingPage() {
             </tbody>
           </table>
         </section>
+      )}
+
+      {wechatPay && (
+        <div className="pay-modal-mask" onClick={closeWechatPay}>
+          <div className="pay-modal" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="pay-modal-close" onClick={closeWechatPay} aria-label="关闭">
+              ×
+            </button>
+            <h3>微信扫码支付</h3>
+            <p className="pay-modal-pkg">
+              {wechatPay.pkg.title} · ¥{wechatPay.pkg.amount_cny.toFixed(2)} · 到账{" "}
+              {formatCredits(wechatPay.pkg.total_credits)} 积分
+            </p>
+            {wechatPay.status === "paid" ? (
+              <div className="pay-modal-paid">
+                <span className="pay-modal-check">✓</span>
+                <p>支付成功，积分已到账</p>
+              </div>
+            ) : (
+              <>
+                <div className="pay-modal-qr">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={wechatPay.qrDataUrl} alt="微信支付二维码" width={240} height={240} />
+                </div>
+                <p className="pay-modal-tip">请使用微信「扫一扫」扫码支付，支付完成后页面会自动到账。</p>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {toast && <div className="app-toast">{toast}</div>}

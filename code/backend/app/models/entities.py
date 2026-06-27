@@ -287,6 +287,7 @@ class RechargeOrder(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     payment_provider: Mapped[str] = mapped_column(String(16), default="mock", nullable=False)
     provider_txn_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    out_trade_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

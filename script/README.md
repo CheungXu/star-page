@@ -107,7 +107,7 @@ pkill -f preview-logo/serve.py
 python3 script/probe-llm-models.py
 ```
 
-结果摘要写入 `doc/20260614/llm-model-probe-result.json`（本地探测产物，可不提交）。详见 `doc/20260614/domestic-llm-integration-record.md`。
+探测结果直接输出到终端；关键结论见 `doc/20260614/domestic-llm-integration-record.md`。
 
 ## 多端口衔接动画方案对比预览：`preview-transition/`
 

@@ -305,21 +305,6 @@ def main() -> int:
     print(f"汇总: {ok_count}/{len(results)} 模型探测成功")
     print("=" * 72)
 
-    # 写入探测结果供 doc 引用
-    out = ROOT / "doc" / "20260614" / "llm-model-probe-result.json"
-    out.write_text(
-        json.dumps(
-            {
-                "probed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "results": results,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    print(f"\n结果已写入 {out.relative_to(ROOT)}")
-
     return 0 if ok_count > 0 else 1
 
 
