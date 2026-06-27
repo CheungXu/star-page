@@ -1820,10 +1820,21 @@ export default function HomePage() {
     );
   }
 
+  function handleSidebarSurfaceClick(event: MouseEvent<HTMLElement>) {
+    // 折叠态：点击侧边栏空白处也可展开；点到按钮/链接/输入等交互元素则交给它们各自处理。
+    if (!isSidebarCollapsed) return;
+    if ((event.target as HTMLElement).closest("button, a, input, label, [role='button']")) return;
+    setIsSidebarCollapsed(false);
+  }
+
   function renderHistorySidebar() {
     const isOnNewChat = phase === "idle" && !conversationId;
     return (
-      <nav className={`history-sidebar ${isSidebarCollapsed ? "collapsed" : ""}`} aria-label="历史创建">
+      <nav
+        className={`history-sidebar ${isSidebarCollapsed ? "collapsed" : ""}`}
+        aria-label="历史创建"
+        onClick={handleSidebarSurfaceClick}
+      >
         <button
           className="sidebar-brand"
           type="button"
@@ -1959,50 +1970,72 @@ export default function HomePage() {
         <div className="sidebar-user-footer">
           {!isSidebarCollapsed && account && (
             <div className="sidebar-billing">
-              {account.is_anonymous ? (
-                <span className="billing-chip" title="未登录免费体验次数">
-                  免费体验 {account.free_generations_remaining}/{account.free_generations_limit} 次
-                </span>
-              ) : (
-                <span
-                  className="billing-chip"
-                  title={`充值积分 ${formatCredits(account.paid_balance)} · 赠送积分 ${formatCredits(account.gift_balance)}`}
-                >
-                  积分 {formatCredits(account.total_balance)}（≈¥{creditsToYuan(account.total_balance)}）
-                </span>
-              )}
-              <Link className="billing-link" href="/pricing">充值</Link>
-              {authUser?.is_admin && (
-                <Link className="billing-link" href="/admin">财务后台</Link>
-              )}
+              <div className="billing-summary">
+                {account.is_anonymous ? (
+                  <>
+                    <span className="billing-label">免费体验</span>
+                    <span className="billing-amount">
+                      {account.free_generations_remaining}
+                      <span className="billing-amount-unit">/{account.free_generations_limit} 次</span>
+                    </span>
+                    <span className="billing-sub">登录后赠送 1000 积分</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="billing-label">当前积分</span>
+                    <span
+                      className="billing-amount"
+                      title={`充值积分 ${formatCredits(account.paid_balance)} · 赠送积分 ${formatCredits(account.gift_balance)}`}
+                    >
+                      {formatCredits(account.total_balance)}
+                    </span>
+                    <span className="billing-sub">≈ ¥{creditsToYuan(account.total_balance)}</span>
+                  </>
+                )}
+              </div>
+              <div className="billing-actions">
+                <Link className="billing-link is-primary" href="/pricing">充值</Link>
+                {authUser?.is_admin && (
+                  <Link className="billing-link" href="/admin">财务后台</Link>
+                )}
+              </div>
             </div>
           )}
-          <button
-            className="sidebar-user-button"
-            type="button"
-            onClick={() => (authUser ? undefined : setIsAuthModalOpen(true))}
-            title={authUser ? authUser.phone : "登录 / 注册"}
-            aria-label={authUser ? `当前用户 ${authUser.phone}` : "登录 / 注册"}
-          >
-            <span className="sidebar-user-avatar"><UserIcon /></span>
-            {!isSidebarCollapsed && (
-              <span className="sidebar-user-text">
-                <strong>{authUser ? maskPhone(authUser.phone) : isAuthLoading ? "检查登录态" : "登录 / 注册"}</strong>
-                <small>{authUser ? "已登录" : "同步历史记录"}</small>
-              </span>
-            )}
-          </button>
-          {authUser && !isSidebarCollapsed && (
+          <div className="sidebar-account-row">
             <button
-              className="sidebar-logout-button"
+              className="sidebar-user-button"
               type="button"
-              onClick={() => void handleLogout()}
-              title="退出登录"
-              aria-label="退出登录"
+              onClick={() => {
+                if (isSidebarCollapsed) {
+                  setIsSidebarCollapsed(false);
+                  return;
+                }
+                if (!authUser) setIsAuthModalOpen(true);
+              }}
+              title={isSidebarCollapsed ? "展开侧边栏" : authUser ? authUser.phone : "登录 / 注册"}
+              aria-label={isSidebarCollapsed ? "展开侧边栏" : authUser ? `当前用户 ${authUser.phone}` : "登录 / 注册"}
+              aria-expanded={isSidebarCollapsed ? false : undefined}
             >
-              <LogoutIcon />
+              <span className="sidebar-user-avatar"><UserIcon /></span>
+              {!isSidebarCollapsed && (
+                <span className="sidebar-user-text">
+                  <strong>{authUser ? maskPhone(authUser.phone) : isAuthLoading ? "检查登录态" : "登录 / 注册"}</strong>
+                  <small>{authUser ? "账号已登录" : "登录后同步历史记录"}</small>
+                </span>
+              )}
             </button>
-          )}
+            {authUser && !isSidebarCollapsed && (
+              <button
+                className="sidebar-logout-button"
+                type="button"
+                onClick={() => void handleLogout()}
+                title="退出登录"
+                aria-label="退出登录"
+              >
+                <LogoutIcon />
+              </button>
+            )}
+          </div>
         </div>
       </nav>
     );

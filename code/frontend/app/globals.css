@@ -169,7 +169,7 @@ button {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
+  grid-template-columns: 252px minmax(0, 1fr);
   gap: 20px;
   width: 100%;
   min-height: 100vh;
@@ -1345,7 +1345,7 @@ h1 {
    ========================================================================== */
 .workspace-layout {
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 252px minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;
   height: calc(100vh - 40px);
 }
@@ -1387,6 +1387,8 @@ h1 {
   align-items: center;
   padding: 14px 10px;
   gap: 6px;
+  /* 折叠态整条侧栏可点击展开，用手型光标给出可交互暗示 */
+  cursor: pointer;
 }
 
 .history-sidebar.collapsed .sidebar-brand {
@@ -1753,10 +1755,28 @@ h1 {
   border-top: 1px solid var(--color-border);
 }
 
+.history-sidebar:not(.collapsed) .sidebar-user-footer {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 0 2px;
+}
+
 .history-sidebar.collapsed .sidebar-user-footer {
   width: 100%;
   justify-content: center;
   padding: 8px 0 4px;
+}
+
+.sidebar-account-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.history-sidebar.collapsed .sidebar-account-row {
+  justify-content: center;
 }
 
 .sidebar-user-button {
@@ -1765,9 +1785,9 @@ h1 {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  min-height: 48px;
-  padding: 6px 8px;
-  border: 0;
+  min-height: 52px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-secondary);
@@ -1780,11 +1800,13 @@ h1 {
   flex: 0 0 40px;
   justify-content: center;
   width: 40px;
+  min-height: 40px;
   padding: 0;
 }
 
 .sidebar-user-button:hover {
-  background: var(--color-surface-soft);
+  background: rgba(248, 250, 252, 0.92);
+  border-color: var(--color-border);
 }
 
 /* 圆形头像，给账号区一个清晰的视觉锚点 */
@@ -1792,12 +1814,17 @@ h1 {
   display: inline-grid;
   flex-shrink: 0;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: var(--color-primary-soft);
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.9), transparent 36%),
+    linear-gradient(135deg, #eef3ff 0%, #dfe8ff 100%);
   color: var(--color-primary-active);
   font-size: 16px;
+  box-shadow:
+    inset 0 0 0 1px rgba(53, 99, 233, 0.1),
+    0 4px 12px -8px rgba(53, 99, 233, 0.65);
 }
 
 .history-sidebar:not(.collapsed) .sidebar-user-button .sidebar-icon {
@@ -1820,14 +1847,14 @@ h1 {
 
 .sidebar-user-text strong {
   color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 13.5px;
+  font-weight: 750;
   line-height: 1.3;
 }
 
 .sidebar-user-text small {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
   line-height: 1.3;
 }
@@ -2977,7 +3004,7 @@ h1 {
   .history-sidebar:not(.collapsed) {
     position: sticky;
     top: 10px;
-    width: 220px;
+    width: 252px;
     z-index: 3;
   }
 
@@ -3049,7 +3076,7 @@ h1 {
 
 /* 多模型对比时，给右侧预览更多空间：会话栏收窄、预览栏加宽 */
 .workspace-layout.compare-mode {
-  grid-template-columns: 208px minmax(300px, 0.82fr) minmax(0, 1.45fr);
+  grid-template-columns: 252px minmax(300px, 0.82fr) minmax(0, 1.45fr);
 }
 
 .workspace-layout.compare-mode.sidebar-collapsed {
@@ -3839,38 +3866,108 @@ h1 {
 }
 
 /* ===== 计费相关 UI ===== */
+/* 侧栏底部余额卡片：上半区显示余额（标签 + 大数字 + 折算），
+   下半区是充值/财务后台操作按钮，信息层级清晰、质感精致 */
 .sidebar-billing {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
-  border-radius: 12px;
-  background: rgba(99, 102, 241, 0.08);
-  border: 1px solid rgba(99, 102, 241, 0.16);
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(255, 255, 255, 0.92), transparent 52%),
+    linear-gradient(135deg, #eef2ff 0%, #f3f1ff 52%, #f6f3ff 100%);
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 10px 24px -20px rgba(67, 56, 202, 0.9);
 }
 
-.billing-chip {
-  font-size: 12px;
+.billing-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.billing-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8083c4;
+}
+
+.billing-amount {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: #3730a3;
+}
+
+.billing-amount-unit {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #6d70bf;
+}
+
+.billing-sub {
+  font-size: 11.5px;
   font-weight: 600;
-  color: #4338ca;
-  line-height: 1.3;
+  color: #8a8dca;
+}
+
+.billing-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .billing-link {
-  font-size: 12px;
-  font-weight: 600;
-  color: #6366f1;
+  flex: 1;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 750;
+  color: #4f46e5;
   text-decoration: none;
-  padding: 2px 8px;
+  padding: 7px 10px;
   border-radius: 999px;
-  background: rgba(99, 102, 241, 0.12);
-  transition: background 0.15s ease;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(99, 102, 241, 0.16);
+  box-shadow: 0 1px 2px rgba(67, 56, 202, 0.04);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .billing-link:hover {
-  background: rgba(99, 102, 241, 0.22);
+  background: #fff;
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #4338ca;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px -10px rgba(67, 56, 202, 0.8);
+}
+
+/* 充值：作为主操作，实心渐变按钮，视觉权重高于"财务后台" */
+.billing-link.is-primary {
+  color: #fff;
+  background: linear-gradient(135deg, #6366f1 0%, #7c5cf0 100%);
+  border-color: transparent;
+  box-shadow: 0 6px 14px -8px rgba(99, 102, 241, 0.85);
+}
+
+.billing-link.is-primary:hover {
+  color: #fff;
+  background: linear-gradient(135deg, #5a5ef0 0%, #6f4ee8 100%);
+  box-shadow: 0 8px 18px -8px rgba(99, 102, 241, 0.95);
 }
 
 .app-toast {
