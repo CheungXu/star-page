@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SiteFooter } from "./components/SiteFooter";
 import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
+import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
@@ -893,6 +894,7 @@ function AuthModal({
       });
       if (!response.ok) throw new Error(await readErrorMessage(response, "登录失败"));
       const payload = (await response.json()) as AuthLoginResponse;
+      track("login_success");
       onLogin(payload.user);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "登录失败");
@@ -1065,6 +1067,12 @@ export default function HomePage() {
   const hasHydratedRef = useRef(false);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const motionRef = useRef<MotionLib | null>(null);
+  const promptTrackedRef = useRef(false);
+
+  // 运营埋点：落地访问（漏斗第一步），每次页面加载上报一次。
+  useEffect(() => {
+    track("landing_view");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1308,6 +1316,12 @@ export default function HomePage() {
     if (!effectivePrompt) {
       return;
     }
+    // 运营埋点：点击生成（捕获意图，含后续被登录/付费拦截的情况）。
+    track("generate_click", {
+      model_count: selectedModelKeys.length,
+      has_file: submitFiles.length > 0,
+      in_conversation: phase === "active" && Boolean(conversationId),
+    });
     if (validationError) {
       setFileError(validationError);
       return;
@@ -1697,6 +1711,11 @@ export default function HomePage() {
   function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
     setPrompt(event.target.value);
     resizePromptTextarea(event.currentTarget);
+    // 运营埋点：本次会话首次产生输入意图，只上报一次。
+    if (!promptTrackedRef.current && event.target.value.trim()) {
+      promptTrackedRef.current = true;
+      track("prompt_input");
+    }
   }
 
   function handlePresetClick(preset: PromptPreset) {

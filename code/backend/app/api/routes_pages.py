@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import desc, or_, select
 
-from app.core.auth import get_optional_actor, get_optional_user
+from app.core.auth import get_client_ip, get_optional_actor, get_optional_user
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.urls import build_page_url
 from app.models.entities import Conversation, GenerationTask, Page, PagePermission, PageVersion
 from app.schemas.pages import PageHistoryItem, PageResponse
+from app.services.analytics import record_page_view
 from app.services.permission_service import can_view_page
 from app.services.storage.factory import create_storage_provider
 
@@ -118,7 +119,9 @@ async def get_page(page_id: uuid.UUID, request: Request) -> PageResponse:
 
 
 @router.get("/p/{conversation_id}/{page_id}")
-async def serve_page(conversation_id: uuid.UUID, page_id: uuid.UUID, request: Request) -> HTMLResponse:
+async def serve_page(
+    conversation_id: uuid.UUID, page_id: uuid.UUID, request: Request, background_tasks: BackgroundTasks
+) -> HTMLResponse:
     async with AsyncSessionLocal() as session:
         page = await session.get(Page, page_id)
         if page is None or page.deleted_at is not None:
@@ -147,8 +150,27 @@ async def serve_page(conversation_id: uuid.UUID, page_id: uuid.UUID, request: Re
         if version is None:
             raise HTTPException(status_code=404, detail="页面版本不存在")
 
+        # 在会话关闭前取出埋点所需字段（避免懒加载/会话过期）。
+        owner_user_id = page.owner_user_id
+        viewer_user_id = user.id if user is not None else None
+        is_owner_view = bool(user is not None and user.id == owner_user_id)
+
     storage = create_storage_provider()
     html = await storage.get_text(version.storage_key)
+
+    # 访问埋点：放到 BackgroundTask，响应返回后再异步写，绝不阻塞页面访问热路径。
+    background_tasks.add_task(
+        record_page_view,
+        page_id=page_id,
+        conversation_id=conversation_id,
+        owner_user_id=owner_user_id,
+        viewer_user_id=viewer_user_id,
+        is_owner_view=is_owner_view,
+        ip=get_client_ip(request),
+        referer=request.headers.get("referer"),
+        user_agent=request.headers.get("user-agent"),
+    )
+
     return HTMLResponse(
         content=html,
         headers={

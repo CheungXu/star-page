@@ -1,0 +1,14 @@
+[Unit]
+Description=星页 StarPage · 运营指标聚合定时器
+
+[Timer]
+# 每小时第 5 分钟刷新当天指标（实时性足够，又避开整点高峰）。
+OnCalendar=*-*-* *:05:00
+# 每日 00:10 再跑一次，确保昨日数据在跨天后被完整补全（脚本默认含昨天+今天）。
+OnCalendar=*-*-* 00:10:00
+# 错过的触发（如机器休眠/重启）开机后补跑一次。
+Persistent=true
+Unit=star-page-analytics.service
+
+[Install]
+WantedBy=timers.target

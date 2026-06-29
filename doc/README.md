@@ -35,6 +35,8 @@
 - `20260615/billing-finance-enhancements-record.md`：计费财务后台增强记录——财务总览三段式+营业利润、模型倍率可视化配置（即时生效）、**预付费记账改造（应付→预付资产）**、供应商真实余额对账（阿里云/火山）、阿里云账单基础设施成本入账与百炼成本偏差对账，含成本口径（应付 vs 现金支付）决策。
 - `20260617/wechat-native-pay-integration-plan.md`：微信 Native（PC 扫码）支付充值接入方案与进展——Native 选型、微信支付公钥验签、`wechatpayv3` 接入、1002 应收第三方支付记账口径 + 手动结算入口 + 资金账单自动对账、回调安全与查单兜底、交付范围与所需凭据。
 - `20260627/sidebar-account-area-polish-record.md`：侧边栏账号区交互与排版精修记录——折叠态用户头像/空白区展开、展开宽度 252px、底部积分卡片与账号行重排、线上构建重启和静态资源验证。
+- `20260628/ops-backend-design-and-implementation.md`：星页运营后台设计与实施记录（面向管理）——背景与目标、北极星 WAGP（成功生成且被外部访问的页面数）、11 个指标域、明细+聚合两层数据架构、九 Tab 前端交付范围、上线验证与后续迭代。
+- `20260629/ops-backend-launch-record.md`：运营后台 systemd 上线记录——迁移、前后端 build+restart、analytics 定时器首次安装、冒烟验证与使用说明。
 
 ## 使用约定
 

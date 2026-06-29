@@ -164,6 +164,7 @@ export default function AdminPage() {
       <header className="admin-header">
         <Link className="pricing-back" href="/">← 返回首页</Link>
         <h1>财务后台</h1>
+        <Link className="ops-link-admin" href="/ops">运营后台 →</Link>
       </header>
 
       <nav className="admin-tabs">

@@ -7,7 +7,7 @@
 ```text
 code/
   frontend/          # Next.js 前端：浅色极简首页、SSE 展示、预览和复制链接
-  backend/           # FastAPI 后端：LLM、数据库、OSS、权限、页面访问网关
+  backend/           # FastAPI 后端：LLM、数据库、OSS、权限、页面访问网关、运营埋点与聚合
   llm/               # 早期 TypeScript LLM 抽象参考实现
   nginx/             # Nginx 反向代理示例
   docker-compose.yml # MVP 双服务编排
@@ -23,6 +23,7 @@ code/
 - `GET /api/conversations`、`GET /api/conversations/{id}` 会话列表（按会话一条）与会话树（批次 + 各模型节点），用于历史与恢复。
 - `GET /api/pages/{page_id}` 查询页面元数据。
 - `GET /p/{conversation_id}/{page_id}` 作为页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回。生成页支持展示型 CSS/JS，网关下发"隔离优先"的沙箱 CSP（`sandbox allow-scripts ...; connect-src 'none'`），详见 `wiki/generated-page-js-sandbox-and-security.md`。
+- **运营后台**：`/ops` 前端 + `/api/admin/analytics/*` 管理端接口；明细埋点（`page_view_events` / `analytics_events`）+ 离线聚合（`metric_daily` 等）+ systemd 定时器。详见 `code/backend/app/analytics/README.md`、`doc/20260628/ops-backend-design-and-implementation.md`。
 
 多模型生成采用"会话(生成树) → 批次(一轮) → 节点(每模型一个独立可分享 Page)"结构，详见 `wiki/multi-model-generation-tree.md`；模型走"可提交模型目录 `config/llm.models.json` + 仅密钥 env + 参数三层覆盖"，详见 `wiki/llm-provider-abstraction.md`。
 
@@ -76,13 +77,17 @@ Compose 只将服务绑定在本机：
 ```bash
 systemctl status star-page-backend.service
 systemctl status star-page-frontend.service
+systemctl status star-page-analytics.timer   # 运营指标聚合（每小时 :05 + 每日 00:10）
 ```
 
 重启服务：
 
 ```bash
 systemctl restart star-page-backend.service star-page-frontend.service
+# 前端改代码后须先 npm run build，再 restart frontend（见 code/systemd/README.md）
 ```
+
+运营指标聚合定时器安装见 `code/systemd/README.md`；手动补跑：`python -m app.analytics.aggregate --backfill 90`。
 
 systemd 模板文件位于 `code/systemd/`，实际运行文件已复制到 `/etc/systemd/system/`。
 

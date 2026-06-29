@@ -4,7 +4,19 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    ForeignKey,
+    Identity,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -354,3 +366,88 @@ class GenerationEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     task: Mapped[GenerationTask] = relationship("GenerationTask")
+
+
+class PageViewEvent(Base):
+    """生成页访问日志：/p 网关每次成功返回时 fire-and-forget 写入，支撑传播类指标。IP 仅存 HMAC。"""
+
+    __tablename__ = "page_view_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    viewer_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    is_owner_view: Mapped[bool] = mapped_column(default=False, nullable=False)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    referer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AnalyticsEvent(Base):
+    """前端通用/漏斗事件：经 POST /api/analytics/collect 上报（允许匿名），event_name 为白名单枚举。"""
+
+    __tablename__ = "analytics_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    anon_device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    client_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    props: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    referer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class MetricDaily(Base):
+    """指标日快照（KV 宽表）：date + metric_key + dims 唯一，定时任务幂等 upsert。"""
+
+    __tablename__ = "metric_daily"
+    __table_args__ = (UniqueConstraint("stat_date", "metric_key", "dims", name="uq_metric_daily"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    stat_date: Mapped[datetime] = mapped_column(Date, nullable=False)
+    metric_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    dims: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    value: Mapped[float] = mapped_column(Numeric(20, 4), default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class RetentionCohort(Base):
+    """留存 cohort 快照：cohort 起始日 + 口径（login/create）+ 周期偏移。"""
+
+    __tablename__ = "retention_cohort"
+    __table_args__ = (
+        UniqueConstraint("cohort_date", "cohort_kind", "period_index", name="uq_retention_cohort"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cohort_date: Mapped[datetime] = mapped_column(Date, nullable=False)
+    cohort_kind: Mapped[str] = mapped_column(String(16), default="login", nullable=False)
+    period_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    cohort_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retained_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class FunnelDaily(Base):
+    """漏斗日快照：每个步骤一行，按 (date, step) 幂等。"""
+
+    __tablename__ = "funnel_daily"
+    __table_args__ = (UniqueConstraint("stat_date", "step", name="uq_funnel_daily"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    stat_date: Mapped[datetime] = mapped_column(Date, nullable=False)
+    step: Mapped[str] = mapped_column(String(32), nullable=False)
+    step_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

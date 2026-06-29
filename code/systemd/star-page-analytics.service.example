@@ -1,0 +1,11 @@
+[Unit]
+Description=星页 StarPage · 运营指标聚合（oneshot）
+After=network-online.target star-page-backend.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/star-page/code/backend
+EnvironmentFile=/root/star-page/config/db.env
+# 默认刷新「昨天 + 今天」并重算留存窗口；幂等，可反复执行。
+ExecStart=/root/star-page/code/backend/.venv/bin/python -m app.analytics.aggregate

@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_admin import router as admin_router
+from app.api.routes_admin_analytics import router as admin_analytics_router
+from app.api.routes_analytics import router as analytics_router
 from app.api.routes_auth import router as auth_router
 from app.api.routes_billing import router as billing_router
 from app.api.routes_conversations import router as conversations_router
@@ -29,6 +31,8 @@ app.include_router(conversations_router)
 app.include_router(pages_router)
 app.include_router(billing_router)
 app.include_router(admin_router)
+app.include_router(analytics_router)
+app.include_router(admin_analytics_router)
 
 
 @app.get("/healthz")

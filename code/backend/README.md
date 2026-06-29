@@ -97,6 +97,14 @@ journalctl -u star-page-backend.service -f
 
 计费实现位于 `app/services/billing/`：`pricing.py`（`扣费积分 = max(ceil(原始成本×倍率×100), 1)`）、`account.py`（钱包：赠送/充值入账、生成结算，扣减顺序 gift→paid，全部按 `idempotency_key` 幂等）、`ledger.py`（复式过账，借贷必平且按 `(event_type, event_ref)` 幂等）。倍率与匿名围栏参数读 `config/billing.json`。
 
+### 运营埋点与运营后台接口
+
+运营后台数据内核见 `app/analytics/README.md`（明细+聚合两层架构、聚合 CLI、埋点字典、指标口径）。方案见 `doc/20260628/ops-backend-design-and-implementation.md`，方法论见 `wiki/product-ops-metrics-and-north-star.md`。
+
+- `POST /api/analytics/collect`：公开埋点采集（允许匿名），event 走白名单（`landing_view`/`prompt_input`/`generate_click`/`login_success`）+ IP 内存限频，写 `analytics_events`（IP 仅存 HMAC）。`/p` 网关成功返回时还会 fire-and-forget 写 `page_view_events`（区分作者自览）。
+- 管理端（`routes_admin_analytics.py` + `require_admin`，前缀 `/api/admin/analytics`，对应前端 `/ops` 九个 Tab）：`GET /realtime`、`/overview`、`/trends`、`/retention`、`/funnel`、`/engagement`、`/quality`、`/virality`、`/users`、`/users/{id}`、`/cases`、`/cases/{id}`。
+- 离线聚合：`python -m app.analytics.aggregate`（按自然日幂等 upsert `metric_daily`/`retention_cohort`/`funnel_daily`，可回填重跑），由 `code/systemd/star-page-analytics.{service,timer}` 定时驱动。
+
 匿名体系：未登录访客经 `resolve_actor` 懒签发 HMAC 签名 `sp_anon` cookie 并建 `is_anonymous` 用户，免费 2 次生成；高价模型后端强校验拒绝（匿名只允许 `anon_allowed_models`、单次 ≤ `anon_max_models_per_gen`）；按 IP 每日限制签发匿名 id 数与免费次数。手机验证码登录时把匿名会话/页面归并到正式账号并首次赠送 1000 积分（幂等）。
 
 `POST /api/generations` 同时兼容 JSON 和 `multipart/form-data`。上传文件时表单字段为：

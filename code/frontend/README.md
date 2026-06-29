@@ -27,6 +27,7 @@
 - **登录拦截**：匿名免费次数用尽（后端 402 `need_login`）或复制分享链接时弹登录框；登录用户余额不足（402 `insufficient_credits`）跳转 `/pricing`。生成成功与登录后会刷新账户余额。
 - **`app/pricing`**：mock 套餐卡（基础/赠送/折扣标注），建单 + mock 支付闭环，展示积分流水；正式上线接入微信/支付宝。
 - **`app/admin`**：财务仪表盘（收入/成本/毛利/赠送负债/科目余额、积分流水、记账凭证、用户对账）；后端 `require_admin` 鉴权，前端对 401/403 兜底显示「需要管理员权限」。
+- **`app/ops`**：运营后台，九个 Tab（实时看板 / 增长 / 留存 / 参与 / 质量 / 传播 / 商业化 / 用户明细 / Case 查看）。实时看板每 15 秒轮询；图表为**零依赖 SVG**（折线 / 条形 / 留存热力）；用户与 Case 支持搜索筛选与弹窗下钻（画像、含 SSE 事件流的 Case 详情）。复用 `require_admin` 鉴权，与 `/admin` 互加入口。漏斗埋点经 `app/lib/analytics.ts`（`navigator.sendBeacon`，失败静默）在首页关键节点上报，事件需命中后端白名单。方案见 `doc/20260628/ops-backend-design-and-implementation.md`。
 
 ## 首屏 UI 设计要点
 
