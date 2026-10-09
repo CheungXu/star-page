@@ -6,6 +6,7 @@
 
 ## 当前记录
 
+- `20261010/llm-model-catalog-update.md`：模型目录更新与探活。通义 Max 升到 3.8、Plus 槽改为 3.8 Flash、豆包 Pro 升到 Seed 2.1、DeepSeek Flash 升到 V4.1、GLM 升到 5.3、Kimi 升到 K3。
 - `20260522/html-page-builder-architecture-plan.md`：自然语言 HTML 页面生成网站架构规划。
 - `20260524/cloud-resource-setup-record.md`：阿里云云资源与服务器运行环境配置记录。
 - `20260524/mvp-main-flow-plan.md`：Next.js 前端 + FastAPI 后端的 MVP 主流程实施计划。

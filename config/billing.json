@@ -6,13 +6,16 @@
     "doubao": 1.2,
     "doubao-code": 1.2,
     "deepseek-v4-flash": 1.2,
+    "deepseek-v4.1-flash": 1.2,
     "deepseek-v4-pro": 1.2,
     "glm-5.2": 1.5,
-    "kimi-k2.7-code": 1.5
+    "glm-5.3": 1.5,
+    "kimi-k2.7-code": 1.5,
+    "kimi-k3": 1.5
   },
   "free_trial_generations": 2,
   "signup_bonus_credits": 1000,
-  "anon_allowed_models": ["deepseek-v4-flash", "qwen-plus", "doubao"],
+  "anon_allowed_models": ["deepseek-v4.1-flash", "qwen-plus", "doubao"],
   "anon_max_models_per_gen": 2,
   "anon_daily_id_limit_per_ip": 3,
   "anon_daily_free_generation_limit_per_ip": 5,

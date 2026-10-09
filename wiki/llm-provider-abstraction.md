@@ -84,33 +84,33 @@ LLM 适配层应提供统一重试能力，而不是让每个业务调用点各�
 doubao（火山方舟 ARK）同样按 OpenAI-compatible 协议接入：
 
 - `base_url=https://ark.cn-beijing.volces.com/api/v3`、`api_key_env=ARK_API_KEY`。
-- Pro：`model=doubao-seed-2-0-pro-260215`（目录 key `doubao`）。
-- Code：`model=doubao-seed-2-0-code-preview-260215`（目录 key `doubao-code`）。**不能**写 `doubao-seed-2-0-code`，方舟会返回 `InvalidEndpointOrModel.NotFound`。
+- Pro：`model=doubao-seed-2-1-pro-260915`（目录 key `doubao`）。需带发布日期后缀；`260628` 仍可用，当前用较新的 `260915`。
+- Turbo：`model=doubao-seed-2-1-turbo-260628`（目录 key `doubao-code`）。2026-10 没有 Seed 2.1 Code，这个槽改挂 Turbo。
 - 思考程度用 `reasoning_effort`（minimal/low/medium/high）经 `extra_body` 传；流式响应里 `reasoning_content` 仍按统一思考增量解析，`content` 按正文增量解析，无需改适配层。
 
-### 模型 ID 与「最新版」命名（2026-06 实测）
+### 模型 ID 与「最新版」命名（2026-10 实测）
 
 百炼 / 方舟的 `model` 字段需与控制台**精确一致**，不能凭产品名猜测缩写：
 
 | 目录 key | 产品名 | 可用 model ID | 备注 |
 | --- | --- | --- | --- |
-| `qwen` | 通义千问 3.7 Max | `qwen3.7-max` | 可直接用，无需日期后缀 |
-| `qwen-plus` | 通义千问 3.7 Plus | `qwen3.7-plus` | 可直接用，无需日期后缀 |
-| `doubao` | 豆包 Seed 2.0 Pro | `doubao-seed-2-0-pro-260215` | 需带发布日期后缀 |
-| `doubao-code` | 豆包 Seed 2.0 Code | `doubao-seed-2-0-code-preview-260215` | 需 `preview` + 日期后缀；`doubao-seed-2-0-code` 不可用 |
+| `qwen` | 通义千问 3.8 Max | `qwen3.8-max` | 裸名即最新版；快照如 `qwen3.8-max-0902` |
+| `qwen-plus` | 通义千问 3.8 Flash | `qwen3.8-flash` | 目录 key 仍为 `qwen-plus`；没有 3.8 Plus |
+| `doubao` | 豆包 Seed 2.1 Pro | `doubao-seed-2-1-pro-260915` | 需日期后缀 |
+| `doubao-code` | 豆包 Seed 2.1 Turbo | `doubao-seed-2-1-turbo-260628` | 目录 key 仍为 `doubao-code` |
 
-Qwen 侧 Max / Plus 已支持「裸名」最新版；Doubao 侧 Pro / Code 目前仍要带 `-260215`（及 Code 的 `preview` 前缀），后续若方舟开放无后缀别名，只需改 `config/llm.models.json` 的 `model` 字段。
+Qwen Max 用裸名最新版；Doubao 仍要带日期后缀。方舟开放无后缀别名后，只改 `config/llm.models.json` 的 `model` 字段。
 
-### DeepSeek V4 / GLM-5.1 / Kimi K2.6 / MiniMax M3（百炼主路，2026-06-14）
+### DeepSeek / GLM / Kimi（百炼主路，2026-10 更新）
 
 星页新增五款国内旗舰模型，**生产主路统一走阿里云百炼**（与 Qwen 共用 `QWEN_API_KEY`），完整定价与灾备见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
 
 | 目录 key | model ID | extra_body 要点 |
 | --- | --- | --- |
-| `deepseek-v4-flash` | `deepseek-v4-flash` | `enable_thinking` + `reasoning_effort: high` |
-| `deepseek-v4-pro` | `deepseek-v4-pro` | 同上 |
-| `glm-5.2` | `glm-5.2` | `enable_thinking: true` |
-| `kimi-k2.7-code` | `kimi-k2.7-code` | `enable_thinking: true` |
+| `deepseek-v4.1-flash` | `deepseek-v4.1-flash` | `enable_thinking` + `reasoning_effort: high` |
+| `deepseek-v4-pro` | `deepseek-v4-pro` | 同上；2026-10 无 V4.1 Pro |
+| `glm-5.3` | `glm-5.3` | `enable_thinking: true` |
+| `kimi-k3` | `kimi-k3` | `enable_thinking: true` |
 
 百炼控制台需分别开通各模型服务。流式 `reasoning_content` 仍由现有 OpenAI 适配层解析，无需改代码。
 
@@ -124,12 +124,24 @@ Qwen 侧 Max / Plus 已支持「裸名」最新版；Doubao 侧 Pro / Code 目�
 
 | 模型 | ❌ 易错 ID | ✅ 推荐 ID |
 | --- | --- | --- |
-| Kimi K2.x | `kimi/kimi-k2.6` | `kimi-k2.7-code`（或 `kimi-k2.6`） |
-| GLM | — | `glm-5.2`（或 `ZHIPU/GLM-5.2`） |
-| DeepSeek V4 | — | `deepseek-v4-pro` / `deepseek-v4-flash` |
+| Kimi | `kimi/kimi-k2.8-preview`（未开通）、`kimi-k2.8-preview`（404） | `kimi-k3` |
+| GLM | — | `glm-5.3`（或 `ZHIPU/GLM-5.3`） |
+| DeepSeek | — | `deepseek-v4.1-flash` / `deepseek-v4-pro` |
 | MiniMax | `MiniMax-M3`（404） | `MiniMax/MiniMax-M3`（需先控制台开通产品） |
 
 接入后务必用 `script/probe-llm-models.py` 或最小 chat 请求验证，勿凭文档前缀猜测。
+
+### 模型换代检查清单（2026-10）
+
+换一代模型时，先对清单再改生产目录。价格和开通状态以当时接口为准，不要沿用上一季文档里的 ID。
+
+1. **列目录再探活。** 百炼 `GET /api/v1/models` 同时给 ID 和 `prices`；方舟 `GET /api/v3/models` 只有 ID 和状态（如 `Retiring` / `Shutdown`），**不返回价格**，单价要另查官方价目。
+2. **两种 404 不要混。** `has not activated the model` 表示 ID 存在但账号未开通，此时不要把该 ID 写进生产，否则默认模型会整段失败。`does not exist` 才是 ID 写错或已下架。开通后要再探一次，同系列里取日期更新的那个。
+3. **思考模型的空正文。** 探活若把 `max_tokens` 压到十几，模型可能把额度用在思考上，HTTP 200 但正文为空。加大额度再确认能吐出正文，才算探活通过。
+4. **key 与展示名分开。** 版本写在目录 key 里（如 `glm-5.2`）就随版本改 key，并在计费倍率里暂时保留旧 key，避免更新瞬间未结算的调用找不到倍率；浏览器里勾过旧 key 的需要重选。槽位角色不变（更便宜的那一档、第二个豆包）就保留 key，只改 `label` 和 `model`，已勾选的用户会自动跟上。
+5. **高峰 / 低峰。** 厂商给两套单价、计费引擎又没有时段时，按高峰写入 `pricing`，避免高峰少计成本。档位 `label` 写明「低峰减半」，方便以后对账。
+6. **裸名与日期快照。** `qwen3.8-max` 这类裸名是滚动最新版，带日期的是快照，不要把快照当成更新。豆包必须带日期后缀，同名系列取较新日期。脚本若按字典序猜「更新 ID」，会把 omni、带厂名前缀的 ID 误报成更新，以探活和产品档位为准。
+7. **生效范围。** 目录在后端启动时加载，改完重启后端即可。展示名来自模型列表接口，前端不用重新构建。
 
 ### 模型列表与官方定价 API（2026-06 实测）
 
@@ -156,7 +168,7 @@ OpenAI-compatible 流式响应在 `stream_options.include_usage=true` 时，末 
 输出费用 = completion_tokens × 输出单价/1e6
 ```
 
-分档规则：`tiers[]` 按 `max_input_tokens` 升序，用 **prompt_tokens** 选档（Doubao Seed 2.0 Pro/Code 三档：≤32K / 32K–128K / 128K–256K；Qwen Plus 两档：≤256K / 256K–1M）。
+分档规则：`tiers[]` 按 `max_input_tokens` 升序，用 **prompt_tokens** 选档。Seed 2.1 Pro / Turbo 按公开价单档计费。
 
 实现落点：
 

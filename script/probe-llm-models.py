@@ -161,7 +161,7 @@ def find_ark_related(api_key: str, prefixes: list[str]) -> list[str]:
 
 LATEST_HINTS: dict[str, dict] = {
     "qwen": {
-        "prefixes": ["qwen3.7", "qwen3.6", "qwen3.5", "qwen3-max", "qwen-max"],
+        "prefixes": ["qwen3.8", "qwen3.7", "qwen3.6", "qwen3.5", "qwen3-max", "qwen-max"],
         "note": "百炼 Qwen 系列",
     },
     "doubao": {
@@ -169,7 +169,7 @@ LATEST_HINTS: dict[str, dict] = {
         "note": "方舟豆包 Seed 系列",
     },
     "deepseek": {
-        "prefixes": ["deepseek-v4", "deepseek-v3"],
+        "prefixes": ["deepseek-v4.1", "deepseek-v4", "deepseek-v3"],
         "note": "DeepSeek 系列",
     },
     "glm": {
@@ -248,18 +248,17 @@ def main() -> int:
     print("=" * 72)
 
     if qwen_key:
-        family_map = {
-            "qwen": ["qwen"],
-            "qwen-plus": ["qwen"],
-            "deepseek-v4-flash": ["deepseek"],
-            "deepseek-v4-pro": ["deepseek"],
-            "glm-5.2": ["glm"],
-            "kimi-k2.7-code": ["kimi"],
+        provider_family = {
+            "qwen": "qwen",
+            "deepseek": "deepseek",
+            "zhipu": "glm",
+            "moonshot": "kimi",
         }
         for entry in models:
-            fam = family_map.get(entry["key"])
-            if not fam:
+            fam_name = provider_family.get(entry.get("provider"))
+            if not fam_name:
                 continue
+            fam = [fam_name]
             prefixes = []
             for f in fam:
                 prefixes.extend(LATEST_HINTS[f]["prefixes"])

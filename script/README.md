@@ -107,7 +107,7 @@ pkill -f preview-logo/serve.py
 python3 script/probe-llm-models.py
 ```
 
-探测结果直接输出到终端；关键结论见 `doc/20260614/domestic-llm-integration-record.md`。
+探测结果直接输出到终端。换代时的判断顺序见 `wiki/llm-provider-abstraction.md` 的「模型换代检查清单」。2026-10 这次的结果见 `doc/20261010/llm-model-catalog-update.md`。
 
 ## 多端口衔接动画方案对比预览：`preview-transition/`
 

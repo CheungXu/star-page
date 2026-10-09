@@ -71,6 +71,8 @@ curl -s http://127.0.0.1:8000/api/models | python3 -m json.tool
 
 ## 六、后续可迭代
 
+2026-10-10 目录已整体换代（通义 3.8、豆包 2.1、DeepSeek V4.1 Flash、GLM-5.3、Kimi K3），以 `doc/20261010/llm-model-catalog-update.md` 为准。下文 ID 是 6 月当时的记录。
+
 - 百炼控制台开通 MiniMax 后再加回 `minimax-m3`
 - 产品确认后将 `default_models` 切为 `deepseek-v4-pro` + `deepseek-v4-flash`
 - 百炼 `/api/v1/models` 定时同步 `pricing.tiers`（可选脚本）
