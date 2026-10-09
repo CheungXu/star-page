@@ -1,0 +1,624 @@
+/* ==========================================================================
+   星页 StarPage · 方案5 优化版全局共享样式
+   完全继承生产 globals.css 中的设计令牌、极光背景、输入卡片流光边框等
+   ========================================================================== */
+
+:root {
+  --color-bg: #f7f8fa;
+  --color-bg-elevated: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f3f4f7;
+
+  --color-border: rgba(15, 23, 42, 0.08);
+  --color-border-strong: rgba(15, 23, 42, 0.14);
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #64748b;
+  --color-text-muted: #94a3b8;
+
+  --color-primary: #3563e9;
+  --color-primary-hover: #2849c8;
+  --color-primary-active: #1f3aab;
+  --color-primary-soft: #eaf0ff;
+  --color-primary-soft-strong: #d6e1ff;
+  --color-accent: #8b5cf6;
+
+  --color-success: #16a34a;
+  --color-danger: #b42318;
+
+  /* 文档类型色彩 */
+  --color-doc-excel: #107c41;
+  --color-doc-word: #185abd;
+  --color-doc-pdf: #c43126;
+  --color-doc-ppt: #d83b01;
+
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 6px 16px -6px rgba(15, 23, 42, 0.1);
+  --shadow-lg:
+    0 2px 4px rgba(15, 23, 42, 0.04),
+    0 12px 32px -12px rgba(15, 23, 42, 0.14);
+  --shadow-focus: 0 0 0 4px rgba(53, 99, 233, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  min-height: 100%;
+}
+
+body {
+  position: relative;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* 极光背景 */
+.hero-aurora {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.hero-aurora .aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.85;
+  will-change: transform;
+}
+
+.hero-aurora .aurora-blob-1 {
+  top: -160px;
+  left: 8%;
+  width: 560px;
+  height: 560px;
+  background: radial-gradient(circle at 30% 30%, rgba(53, 99, 233, 0.42), transparent 68%);
+  animation: aurora-float-a 18s ease-in-out infinite;
+}
+
+.hero-aurora .aurora-blob-2 {
+  top: 4%;
+  right: -180px;
+  width: 540px;
+  height: 540px;
+  background: radial-gradient(circle at 70% 30%, rgba(139, 92, 246, 0.34), transparent 68%);
+  animation: aurora-float-b 22s ease-in-out infinite;
+}
+
+.hero-aurora .aurora-blob-3 {
+  top: 28%;
+  left: 32%;
+  width: 720px;
+  height: 720px;
+  background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.22), transparent 68%);
+  animation: aurora-float-c 26s ease-in-out infinite;
+}
+
+.hero-aurora .aurora-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(closest-side at 50% 40%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(closest-side at 50% 40%, #000 55%, transparent 100%);
+}
+
+@keyframes aurora-float-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(40px, 30px, 0) scale(1.05); }
+}
+
+@keyframes aurora-float-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-50px, 24px, 0) scale(1.08); }
+}
+
+@keyframes aurora-float-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-30px, -36px, 0) scale(1.04); }
+}
+
+/* 顶部导航切换器（浮于顶部中央） */
+.top-nav-switcher {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+
+.nav-brand-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+  border-right: 1px solid var(--color-border);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.nav-brand-group img {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+.nav-tabs-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-tab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.nav-tab-pill:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.nav-tab-pill.is-active {
+  background: var(--color-primary);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(53, 99, 233, 0.35);
+}
+
+/* 页面主体 */
+.page-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 80px 24px 40px;
+  position: relative;
+  z-index: 10;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+}
+
+.brand-mark {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.brand-mark::before {
+  content: "";
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(53, 99, 233, 0.22), transparent 68%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+.brand-mark .brand-logo {
+  position: relative;
+  display: block;
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 4px 10px rgba(53, 99, 233, 0.26))
+    drop-shadow(0 12px 24px rgba(53, 99, 233, 0.14));
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.brand-mark .brand-logo:hover {
+  transform: translateY(-2px) scale(1.05) rotate(-2deg);
+}
+
+.scheme-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: rgba(53, 99, 233, 0.08);
+  border: 1px solid rgba(53, 99, 233, 0.2);
+  border-radius: 999px;
+  color: var(--color-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.scheme-tag .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
+h1 {
+  max-width: 760px;
+  margin: 0;
+  background: linear-gradient(180deg, #0b1220 0%, #2a3550 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: clamp(34px, 4.2vw, 48px);
+  font-weight: 760;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+.subtitle {
+  max-width: 620px;
+  margin: 14px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.brand-inline {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* 输入卡片外容器 */
+.prompt-form-wrap {
+  width: min(760px, 100%);
+  position: relative;
+  margin-top: 26px;
+}
+
+.hero-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 4% -4% -14%;
+  z-index: -1;
+  background:
+    radial-gradient(58% 56% at 50% 38%, rgba(53, 99, 233, 0.16), transparent 72%),
+    radial-gradient(46% 50% at 76% 64%, rgba(139, 92, 246, 0.12), transparent 74%);
+  filter: blur(34px);
+  pointer-events: none;
+}
+
+/* 原版标准卡片：保持完全一致的拟物与流动外框 */
+.prompt-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 10px 12px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(252, 253, 255, 0.92) 100%);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.05),
+    0 2px 4px -2px rgba(15, 23, 42, 0.08),
+    0 12px 24px -10px rgba(15, 23, 42, 0.12),
+    0 30px 60px -30px rgba(15, 23, 42, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.25s ease;
+}
+
+.prompt-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 1.6px;
+  background: linear-gradient(120deg, #3563e9 0%, #8b5cf6 34%, #38bdf8 66%, #3563e9 100%);
+  background-size: 280% 280%;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.prompt-card:focus-within::before {
+  opacity: 1;
+  animation: composer-flow 3.6s ease-in-out infinite;
+}
+
+@keyframes composer-flow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* 文本域标准排版 */
+.prompt-card textarea {
+  width: 100%;
+  min-height: 56px;
+  max-height: 220px;
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  outline: none;
+  padding: 10px 12px 8px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 16px;
+  line-height: 1.6;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.prompt-card textarea::placeholder {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+/* 底部工具条 */
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 上传按钮 */
+.composer-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  flex-shrink: 0;
+  padding: 0 14px 0 12px;
+  border: 1px solid rgba(53, 99, 233, 0.28);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(234, 240, 255, 0.9), rgba(226, 234, 255, 0.85));
+  color: var(--color-primary-active);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: all 0.18s ease;
+}
+
+.composer-upload:hover {
+  background: linear-gradient(180deg, #e3ecff, #d6e1ff);
+  border-color: rgba(53, 99, 233, 0.45);
+  transform: translateY(-1px);
+}
+
+.composer-upload input {
+  display: none;
+}
+
+.composer-upload-icon {
+  display: inline-flex;
+  font-size: 16px;
+  color: var(--color-primary);
+}
+
+/* 模型选择器 Pill */
+.model-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 10px 0 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.18s ease;
+}
+
+.model-picker-trigger:hover {
+  background: #fff;
+  border-color: rgba(53, 99, 233, 0.4);
+  color: var(--color-text-primary);
+}
+
+.model-picker-dots {
+  display: inline-flex;
+  align-items: center;
+}
+
+.model-picker-dots .model-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5), 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+
+.model-picker-dots .model-dot + .model-dot {
+  margin-left: -4px;
+}
+
+.model-picker-caret {
+  display: inline-flex;
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+/* 圆形发送主按钮 */
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4a78f5 0%, #3563e9 55%, #2c50d6 100%);
+  color: #fff;
+  cursor: pointer;
+  font-size: 18px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.12),
+    0 6px 16px -6px rgba(53, 99, 233, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition: all 0.18s ease;
+}
+
+.composer-send:hover:not(:disabled):not(.is-empty) {
+  background: linear-gradient(135deg, #5482ff 0%, #3a6bf2 55%, #2849c8 100%);
+  transform: translateY(-1.5px) scale(1.04);
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.12),
+    0 12px 26px -8px rgba(53, 99, 233, 0.6);
+}
+
+.composer-send.is-empty {
+  background: #e2e8f0;
+  color: #94a3b8;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* 灵感建议 Chips 行 */
+.prompt-inspirations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 0 4px;
+}
+
+.prompt-inspirations-lead {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.prompt-inspiration-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.18s ease;
+}
+
+.prompt-inspiration-chip:hover {
+  background: var(--color-primary-soft);
+  border-color: rgba(53, 99, 233, 0.28);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+/* 右下角极简模拟切换条 */
+.quick-simulator {
+  position: fixed;
+  bottom: 20px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.quick-sim-btn {
+  border: 1px solid var(--color-border);
+  background: #ffffff;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.quick-sim-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.quick-sim-btn.is-active {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}

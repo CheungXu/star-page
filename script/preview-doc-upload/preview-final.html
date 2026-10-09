@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 一句话生成可分享的网页</title>
+  <!-- 引入与生产环境 100% 相同的编译 CSS -->
+  <link rel="stylesheet" href="prod.css" />
+  <style>
+    /* ==========================================================================
+       只针对“有关文件的部分”进行精准升级（方案 5-A 优雅融合版）
+       其它所有元素（侧边栏、标题、副标题、Chips、底部）100% 继承生产原版
+       ========================================================================== */
+
+    /* 卡片容器：保持原版 --radius-xl、阴影、渐变与流光边框，微调内部元素纵向节奏 */
+    .prompt-card.hero-prompt.doc-focused-card {
+      padding: 12px 14px 10px;
+      gap: 6px;
+    }
+
+    /* --------------------------------------------------------------------------
+       1. 上方文档专属主舱（高度更高，约 68px，与卡片浑然一体，绝不杂乱）
+       -------------------------------------------------------------------------- */
+    .doc-hero-chamber {
+      position: relative;
+      width: 100%;
+      height: 68px;
+      border-radius: var(--radius-md);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      box-sizing: border-box;
+    }
+
+    /* 空态：通透浅蓝渐变 + 柔和细虚线（与原版 composer-upload 按钮同源质感） */
+    .doc-hero-chamber.is-empty {
+      background: linear-gradient(180deg, rgba(238, 244, 255, 0.75) 0%, rgba(244, 248, 255, 0.45) 100%);
+      border: 1px dashed rgba(53, 99, 233, 0.3);
+      cursor: pointer;
+    }
+
+    .doc-hero-chamber.is-empty:hover {
+      background: linear-gradient(180deg, rgba(234, 242, 255, 0.95) 0%, rgba(238, 246, 255, 0.75) 100%);
+      border-color: rgba(53, 99, 233, 0.55);
+      box-shadow: 0 2px 10px rgba(53, 99, 233, 0.08);
+    }
+
+    .doc-hero-chamber.is-dragover {
+      background: rgba(224, 236, 255, 0.95) !important;
+      border-color: var(--color-primary) !important;
+      box-shadow: 0 0 0 3px rgba(53, 99, 233, 0.2) !important;
+    }
+
+    .chamber-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* 上传图标徽章：原版 Attachment 图标 + 浅蓝高光微盒 */
+    .chamber-icon-box {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #eff5ff 0%, #dbe8fe 100%);
+      border: 1px solid rgba(53, 99, 233, 0.2);
+      color: var(--color-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+      box-shadow: 0 1px 3px rgba(53, 99, 233, 0.12);
+      transition: transform 0.2s ease;
+    }
+
+    .doc-hero-chamber.is-empty:hover .chamber-icon-box {
+      transform: translateY(-1px) scale(1.04);
+    }
+
+    .chamber-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      text-align: left;
+    }
+
+    .chamber-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      letter-spacing: -0.01em;
+    }
+
+    .chamber-sub {
+      font-size: 12px;
+      color: var(--color-text-tertiary);
+    }
+
+    .chamber-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 优雅的原生风格操作胶囊 */
+    .chamber-browse-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 30px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: #ffffff;
+      border: 1px solid rgba(53, 99, 233, 0.25);
+      color: var(--color-primary);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+      transition: all 0.15s ease;
+    }
+
+    .chamber-browse-btn:hover {
+      background: var(--color-primary-soft);
+      border-color: var(--color-primary);
+    }
+
+    /* --------------------------------------------------------------------------
+       挂载态（已上传文档）：优雅呈现文件卡片，支持随时删除与直接生成
+       -------------------------------------------------------------------------- */
+    .doc-hero-chamber.is-loaded {
+      height: auto;
+      min-height: 54px;
+      padding: 8px 12px;
+      background: linear-gradient(180deg, rgba(240, 246, 255, 0.9) 0%, rgba(234, 242, 255, 0.65) 100%);
+      border: 1px solid rgba(53, 99, 233, 0.25);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      cursor: default;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .loaded-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      flex-wrap: wrap;
+    }
+
+    .loaded-doc-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px 4px 8px;
+      background: #ffffff;
+      border: 1px solid rgba(53, 99, 233, 0.2);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+    }
+
+    .loaded-doc-badge {
+      font-size: 10px;
+      font-weight: 800;
+      color: #ffffff;
+      padding: 2px 5px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+
+    .loaded-doc-badge.excel { background: #16a34a; }
+    .loaded-doc-badge.word { background: #2563eb; }
+    .loaded-doc-badge.pdf { background: #dc2626; }
+    .loaded-doc-badge.ppt { background: #ea580c; }
+
+    .loaded-doc-size {
+      font-size: 11px;
+      font-weight: normal;
+      color: var(--color-text-tertiary);
+    }
+
+    .loaded-doc-del {
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      padding: 2px;
+      display: inline-flex;
+      border-radius: 4px;
+      transition: all 0.15s ease;
+    }
+
+    .loaded-doc-del:hover {
+      color: var(--color-danger);
+      background: rgba(239, 68, 68, 0.1);
+    }
+
+    .loaded-add-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px dashed rgba(53, 99, 233, 0.35);
+      color: var(--color-primary);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .loaded-add-btn:hover {
+      background: #ffffff;
+      border-color: var(--color-primary);
+    }
+
+    /* --------------------------------------------------------------------------
+       2. 下方输入框（高度更少，收敛精致，垂直基线绝对对齐）
+       -------------------------------------------------------------------------- */
+    .prompt-card textarea.doc-prompt-textarea {
+      width: 100%;
+      min-height: 38px;
+      max-height: 140px;
+      padding: 8px 4px 4px;
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--color-text-primary);
+      border: 0;
+      background: transparent;
+      outline: none;
+      font-family: inherit;
+      resize: none;
+      box-sizing: border-box;
+    }
+
+    .prompt-card textarea.doc-prompt-textarea::placeholder {
+      font-size: 14.5px;
+      color: var(--color-text-muted);
+    }
+
+    /* --------------------------------------------------------------------------
+       3. 底栏工具条：去掉左下角原上传小按钮（因已升格至顶部大舱），保持极度清爽
+       -------------------------------------------------------------------------- */
+    .prompt-card .composer-toolbar {
+      padding: 2px 2px 2px;
+      margin-top: 0;
+      border-top: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-stage">
+    <!-- 100% 还原图2的展开态主壳层 -->
+    <main class="home-shell" id="homeShell">
+      <!-- 极光背景 -->
+      <div class="hero-aurora" aria-hidden="true">
+        <span class="aurora-blob aurora-blob-1"></span>
+        <span class="aurora-blob aurora-blob-2"></span>
+        <span class="aurora-blob aurora-blob-3"></span>
+        <span class="aurora-grid"></span>
+      </div>
+
+      <!-- 100% 像素级对齐图2的真实侧边栏（展开态） -->
+      <nav class="history-sidebar" id="historySidebar" aria-label="历史创建">
+        <!-- 顶部品牌 -->
+        <button
+          class="sidebar-brand"
+          type="button"
+          onclick="toggleSidebar()"
+          title="收起侧边栏"
+          aria-label="收起侧边栏"
+          aria-expanded="true"
+        >
+          <span class="brand-glyph" aria-hidden="true">
+            <img src="/stars-page-logo-simple.png" alt="" width="28" height="28" />
+          </span>
+          <span class="brand-text">
+            <span class="brand-name-cn">星页</span>
+            <span class="brand-name-en">StarPage</span>
+          </span>
+        </button>
+
+        <div class="sidebar-section-divider" aria-hidden="true"></div>
+
+        <!-- + 新对话 -->
+        <button
+          class="new-chat-button is-active"
+          type="button"
+          onclick="startNewChat()"
+          title="新对话"
+          aria-label="新对话"
+          aria-current="page"
+        >
+          <span class="sidebar-icon">
+            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </span>
+          <span class="sidebar-label">新对话</span>
+        </button>
+
+        <!-- 收藏 -->
+        <button
+          class="favorite-filter-button"
+          type="button"
+          onclick="toggleFavorite(this)"
+          title="显示全部历史"
+          aria-label="显示全部历史"
+          aria-pressed="false"
+        >
+          <span class="sidebar-icon">
+            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="12 2 15.1 8.4 22 9.3 17 14.2 18.2 21 12 17.8 5.8 21 7 14.2 2 9.3 8.4 12 2"></polygon>
+            </svg>
+          </span>
+          <span class="sidebar-label">收藏</span>
+        </button>
+
+        <!-- 历史创建列表（与图2真实历史数据一致） -->
+        <div class="history-content" aria-hidden="false">
+          <div class="history-title-row">
+            <div class="history-title">历史创建</div>
+          </div>
+          <label class="history-search">
+            <span class="history-search-icon">
+              <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+            </span>
+            <input type="search" placeholder="检索历史记录" oninput="filterHistory(this.value)" />
+          </label>
+
+          <div class="history-list" id="historyList">
+            <div class="history-item">
+              <span class="history-item-main">
+                <span class="history-item-title">请根据我上传的文...</span>
+                <small>4 模型 · 06/27 22:16</small>
+              </span>
+            </div>
+            <div class="history-item">
+              <span class="history-item-main">
+                <span class="history-item-title">请根据我上传的文...</span>
+                <small>2 模型 · 06/10 01:02</small>
+              </span>
+            </div>
+            <div class="history-item">
+              <span class="history-item-main">
+                <span class="history-item-title">给我生成一个精致...</span>
+                <small>4 模型 · 06/07 17:29</small>
+              </span>
+            </div>
+            <div class="history-item">
+              <span class="history-item-main">
+                <span class="history-item-title">请根据我上传的文...</span>
+                <small>4 模型 · 06/07 16:05</small>
+              </span>
+            </div>
+            <div class="history-item">
+              <span class="history-item-main">
+                <span class="history-item-title">参考文档</span>
+                <small>4 模型 · 06/07 15:33</small>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部算力卡片与已登录用户（与图2数据与双按钮完全一致） -->
+        <div class="sidebar-user-footer">
+          <div class="sidebar-billing-card">
+            <div class="billing-row">
+              <span class="billing-label">当前积分</span>
+              <span class="billing-amount">4,830</span>
+              <span class="billing-sub">≈ ¥48.30</span>
+            </div>
+            <div class="billing-actions">
+              <a class="billing-link is-primary" href="javascript:void(0)" onclick="alert('进入充值中心')">充值</a>
+              <a class="billing-link" href="javascript:void(0)" onclick="alert('进入财务后台')">财务后台</a>
+            </div>
+          </div>
+
+          <div class="sidebar-account-row">
+            <button class="sidebar-user-button" type="button" title="当前用户 158****8805">
+              <span class="sidebar-user-avatar">
+                <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="8" r="4"></circle>
+                </svg>
+              </span>
+              <span class="sidebar-user-text">
+                <strong>158****8805</strong>
+                <small>账号已登录</small>
+              </span>
+            </button>
+            <button class="sidebar-logout-button" type="button" title="退出登录" aria-label="退出登录" onclick="alert('退出登录')">
+              <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- 核心页面舞台（100% 继承图2） -->
+      <section class="page-shell">
+        <div class="hero">
+          <div class="brand-mark" data-anim-stagger="true">
+            <img
+              src="/stars-page-logo-simple.png"
+              alt="星页 StarPage"
+              class="brand-logo"
+              width="56"
+              height="56"
+            />
+          </div>
+
+          <!-- 原版大标题与副标题，一字不差 -->
+          <h1 data-anim-stagger="true">想做什么页面？</h1>
+          <p class="subtitle" data-anim-stagger="true">
+            说说你的想法，或上传文件，<strong class="brand-inline">星页 StarPage</strong> 帮你生成可对比的网页。
+          </p>
+
+          <!-- 核心卡片容器：只改动有关文件的部分（5-A：上方文档区更高、下方输入框更少、保持极致美观） -->
+          <div class="prompt-form-wrap hero-wrap">
+            <form class="prompt-card hero-prompt doc-focused-card" id="promptForm" onsubmit="event.preventDefault(); handleSubmit();">
+              <input type="file" id="realFileInput" hidden multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleRealFile(this.files)" />
+
+              <!-- 1. 文档主舱（高度 68px，开阔透气，彻底消除框套框与割裂感） -->
+              <div
+                class="doc-hero-chamber is-empty"
+                id="docHeroChamber"
+                onclick="handleChamberClick()"
+                ondragover="handleDragOver(event)"
+                ondragleave="handleDragLeave(event)"
+                ondrop="handleDrop(event)"
+              >
+                <!-- 动态填充空态或挂载态 -->
+              </div>
+
+              <!-- 2. 微调输入框（高度更收敛，支持无文档直接手动输入，支持自适应撑高） -->
+              <textarea
+                id="promptTextarea"
+                class="doc-prompt-textarea"
+                placeholder="说说你想做的页面，例如「面向客户的产品介绍页」…"
+                rows="1"
+                oninput="handleTextareaInput()"
+                onkeydown="handleKeyDown(event)"
+              ></textarea>
+
+              <!-- 3. 底栏工具条（完全继承原版结构与样式） -->
+              <div class="composer-toolbar">
+                <div class="composer-tools">
+                  <!-- 原版模型选择器 Pill -->
+                  <div class="model-picker" id="modelPickerWrap">
+                    <button type="button" class="model-picker-trigger" onclick="toggleModelMenu(event)">
+                      <span class="model-picker-dots">
+                        <span class="model-dot" style="background: #3b82f6;"></span>
+                        <span class="model-dot" style="background: #10b981;"></span>
+                      </span>
+                      <span class="model-picker-text" id="modelPickerLabel">2 个模型</span>
+                      <span class="model-picker-caret">
+                        <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </span>
+                    </button>
+
+                    <!-- 模型下拉浮层 -->
+                    <div class="model-menu" id="modelMenu" style="display: none;">
+                      <div class="model-menu-head">
+                        <strong>生成模型</strong>
+                        <span>可多选 · 并排生成便于对比</span>
+                      </div>
+                      <div class="model-menu-list">
+                        <button type="button" class="model-menu-item is-active" onclick="toggleModelItem(this)">
+                          <span class="model-dot" style="background: #3b82f6;"></span>
+                          <span class="model-menu-item-label">通义千问 3.8 Max</span>
+                          <span class="model-menu-check">
+                            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          </span>
+                        </button>
+                        <button type="button" class="model-menu-item is-active" onclick="toggleModelItem(this)">
+                          <span class="model-dot" style="background: #10b981;"></span>
+                          <span class="model-menu-item-label">DeepSeek V3</span>
+                          <span class="model-menu-check">
+                            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          </span>
+                        </button>
+                        <button type="button" class="model-menu-item" onclick="toggleModelItem(this)">
+                          <span class="model-dot" style="background: #f59e0b;"></span>
+                          <span class="model-menu-item-label">智谱 GLM-4</span>
+                          <span class="model-menu-check"></span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 原版圆形发送按钮（有文档或有文字时自动点亮） -->
+                <button
+                  class="composer-send is-empty"
+                  type="submit"
+                  id="sendBtn"
+                  aria-label="创建页面"
+                >
+                  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                    <polyline points="5 12 12 5 19 12"></polyline>
+                  </svg>
+                </button>
+              </div>
+            </form>
+
+            <!-- 100% 对齐图2的原版灵感 Chips -->
+            <div class="prompt-inspirations" role="list" aria-label="灵感建议" data-anim-stagger="true">
+              <span class="prompt-inspirations-lead" aria-hidden="true">试试</span>
+              <button type="button" role="listitem" class="prompt-inspiration-chip" onclick="insertPreset('面向客户的产品介绍页')">
+                <span class="preset-emoji" aria-hidden="true">🚀</span>产品介绍页
+              </button>
+              <button type="button" role="listitem" class="prompt-inspiration-chip" onclick="insertPreset('2026年Q3工作汇报与成果复盘')">
+                <span class="preset-emoji" aria-hidden="true">📊</span>工作汇报
+              </button>
+              <button type="button" role="listitem" class="prompt-inspiration-chip" onclick="insertPreset('全栈工程师个人简历与作品集')">
+                <span class="preset-emoji" aria-hidden="true">👤</span>个人简历
+              </button>
+              <button type="button" role="listitem" class="prompt-inspiration-chip" onclick="insertPreset('线下技术沙龙活动邀请函')">
+                <span class="preset-emoji" aria-hidden="true">🎉</span>活动邀请
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 原版网站备案信息 -->
+        <footer class="site-footer" aria-label="网站备案信息">
+          <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer">
+            粤ICP备2026071100号
+          </a>
+        </footer>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    let attachedFiles = [];
+    let isMenuOpen = false;
+
+    function renderChamber() {
+      const chamber = document.getElementById("docHeroChamber");
+      const textarea = document.getElementById("promptTextarea");
+      const sendBtn = document.getElementById("sendBtn");
+      const hasText = textarea.value.trim().length > 0;
+      const hasFiles = attachedFiles.length > 0;
+      const canSubmit = hasFiles || hasText;
+
+      // 只要有文件或有字，发送按钮立刻点亮
+      if (canSubmit) {
+        sendBtn.classList.remove("is-empty");
+      } else {
+        sendBtn.classList.add("is-empty");
+      }
+
+      if (hasFiles) {
+        chamber.className = "doc-hero-chamber is-loaded";
+        textarea.placeholder = "补充排版或风格要求（如：面向高管汇报，突出 Q3 利润率），选填";
+
+        let chipsHtml = attachedFiles.map((f, idx) => `
+          <div class="loaded-doc-chip">
+            <span class="loaded-doc-badge ${f.type}">${f.typeLabel}</span>
+            <span title="${f.name}">${f.name}</span>
+            <span class="loaded-doc-size">${f.size}</span>
+            <button type="button" class="loaded-doc-del" onclick="removeFile(event, ${idx})" title="移除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        `).join("");
+
+        if (attachedFiles.length < 3) {
+          chipsHtml += `
+            <button type="button" class="loaded-add-btn" onclick="triggerUpload(event)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span>继续添加</span>
+            </button>
+          `;
+        }
+
+        chamber.innerHTML = `
+          <div class="loaded-row">
+            ${chipsHtml}
+          </div>
+          <span style="font-size: 11.5px; color: var(--color-success); font-weight: 600; white-space: nowrap;">● 解析就绪</span>
+        `;
+      } else {
+        chamber.className = "doc-hero-chamber is-empty";
+        textarea.placeholder = "说说你想做的页面，例如「面向客户的产品介绍页」，或上传上方文档…";
+
+        chamber.innerHTML = `
+          <div class="chamber-left">
+            <div class="chamber-icon-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path>
+              </svg>
+            </div>
+            <div class="chamber-text">
+              <span class="chamber-title">上传或拖入文档转网页</span>
+              <span class="chamber-sub">支持 Word · Excel · PDF · PPT（单文件 ≤ 50MB）</span>
+            </div>
+          </div>
+          <div class="chamber-right">
+            <button type="button" class="chamber-browse-btn" onclick="triggerUpload(event)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              <span>选择文档</span>
+            </button>
+          </div>
+        `;
+      }
+    }
+
+    function handleChamberClick() {
+      if (attachedFiles.length === 0) {
+        document.getElementById("realFileInput").click();
+      }
+    }
+
+    function triggerUpload(e) {
+      if (e) e.stopPropagation();
+      document.getElementById("realFileInput").click();
+    }
+
+    function removeFile(e, idx) {
+      e.stopPropagation();
+      attachedFiles.splice(idx, 1);
+      renderChamber();
+    }
+
+    function handleRealFile(files) {
+      if (!files || files.length === 0) return;
+      Array.from(files).forEach(f => {
+        if (attachedFiles.length >= 3) return;
+        let type = "word", typeLabel = "DOC";
+        if (f.name.endsWith(".xlsx") || f.name.endsWith(".xls")) { type = "excel"; typeLabel = "XLS"; }
+        else if (f.name.endsWith(".pdf")) { type = "pdf"; typeLabel = "PDF"; }
+        else if (f.name.endsWith(".pptx")) { type = "ppt"; typeLabel = "PPT"; }
+        attachedFiles.push({
+          name: f.name,
+          size: (f.size / (1024 * 1024)).toFixed(1) + " MB",
+          type: type,
+          typeLabel: typeLabel
+        });
+      });
+      renderChamber();
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      document.getElementById("docHeroChamber").classList.add("is-dragover");
+    }
+
+    function handleDragLeave(e) {
+      e.preventDefault();
+      document.getElementById("docHeroChamber").classList.remove("is-dragover");
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      document.getElementById("docHeroChamber").classList.remove("is-dragover");
+      if (e.dataTransfer && e.dataTransfer.files) {
+        handleRealFile(e.dataTransfer.files);
+      }
+    }
+
+    function handleTextareaInput() {
+      const textarea = document.getElementById("promptTextarea");
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 140) + "px";
+      renderChamber();
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit();
+      }
+    }
+
+    function insertPreset(text) {
+      const textarea = document.getElementById("promptTextarea");
+      textarea.value = text;
+      handleTextareaInput();
+      textarea.focus();
+    }
+
+    function toggleSidebar() {
+      const shell = document.getElementById("homeShell");
+      const sidebar = document.getElementById("historySidebar");
+      const isCollapsed = sidebar.classList.toggle("collapsed");
+      shell.classList.toggle("sidebar-collapsed", isCollapsed);
+    }
+
+    function startNewChat() {
+      attachedFiles = [];
+      document.getElementById("promptTextarea").value = "";
+      renderChamber();
+    }
+
+    function toggleFavorite(btn) {
+      btn.classList.toggle("is-active");
+    }
+
+    function filterHistory(kw) {
+      const items = document.querySelectorAll(".history-item");
+      items.forEach(it => {
+        const title = it.querySelector(".history-item-title").innerText;
+        it.style.display = (!kw || title.includes(kw)) ? "flex" : "none";
+      });
+    }
+
+    function toggleModelMenu(e) {
+      e.stopPropagation();
+      isMenuOpen = !isMenuOpen;
+      const menu = document.getElementById("modelMenu");
+      const wrap = document.getElementById("modelPickerWrap");
+      menu.style.display = isMenuOpen ? "block" : "none";
+      wrap.classList.toggle("is-open", isMenuOpen);
+    }
+
+    function toggleModelItem(btn) {
+      btn.classList.toggle("is-active");
+      const check = btn.querySelector(".model-menu-check");
+      check.innerHTML = btn.classList.contains("is-active")
+        ? `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+        : "";
+      const count = document.querySelectorAll(".model-menu-item.is-active").length;
+      document.getElementById("modelPickerLabel").innerText = `${count} 个模型`;
+    }
+
+    document.addEventListener("click", () => {
+      if (isMenuOpen) {
+        isMenuOpen = false;
+        document.getElementById("modelMenu").style.display = "none";
+        document.getElementById("modelPickerWrap").classList.remove("is-open");
+      }
+    });
+
+    function handleSubmit() {
+      const prompt = document.getElementById("promptTextarea").value.trim();
+      const hasFiles = attachedFiles.length > 0;
+      if (!hasFiles && !prompt) return;
+
+      const fileNames = hasFiles ? attachedFiles.map(f => f.name).join("、") : "（无文档）";
+      alert(`[星页 StarPage 提交]\n\n【已挂载文档】：${fileNames}\n【补充指令】：${prompt || "（无额外指令，直接根据文档智能生成）"}`);
+    }
+
+    // 默认展示空态
+    renderChamber();
+  </script>
+</body>
+</html>

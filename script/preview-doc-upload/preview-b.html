@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案二：复合指令卡</title>
+  <link rel="stylesheet" href="_common.css" />
+  <style>
+    /* ==========================================================================
+       方案二特化样式：复合指令卡 (Unified Composite Dock)
+       - 上下咬合的一体化工作卡片：上层文档挂载舱 + 下层常驻 Chat 微调条
+       - 兼顾多文档管理与多模型对比选择，心智自由无门槛
+       ========================================================================== */
+
+    .composite-card {
+      background: #ffffff;
+      border-radius: var(--radius-xl);
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-xl);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: all 0.3s ease;
+    }
+
+    /* 上半段：文档挂载舱 */
+    .dock-upper {
+      padding: 24px 28px;
+      background: linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .dock-section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .dock-title-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--color-text-primary);
+    }
+
+    .dock-title-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: var(--radius-pill);
+      background: var(--color-primary-soft);
+      color: var(--color-primary);
+    }
+
+    .dock-title-right {
+      font-size: 12px;
+      color: var(--color-text-tertiary);
+    }
+
+    /* 文档网格：支持展示已上传卡片与内嵌虚线上传槽 */
+    .dock-files-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px;
+    }
+
+    .dock-file-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: #ffffff;
+      border: 1px solid var(--color-border-strong);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-sm);
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .dock-file-item:hover {
+      border-color: var(--color-primary);
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+
+    .dock-file-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    .dock-file-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+
+    .dock-file-icon.is-word { background: var(--color-doc-word); }
+    .dock-file-icon.is-excel { background: var(--color-doc-excel); }
+    .dock-file-icon.is-pdf { background: var(--color-doc-pdf); }
+    .dock-file-icon.is-ppt { background: var(--color-doc-ppt); }
+
+    .dock-file-texts {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .dock-file-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .dock-file-sub {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .dock-status-ready {
+      color: var(--color-accent-emerald);
+      font-weight: 600;
+    }
+
+    .dock-remove-btn {
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    .dock-remove-btn:hover {
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.1);
+    }
+
+    /* 紧凑内嵌投放槽卡片 */
+    .dock-upload-dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      border: 2px dashed rgba(53, 99, 233, 0.3);
+      border-radius: var(--radius-md);
+      background: var(--color-surface-soft);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: center;
+      position: relative;
+    }
+
+    .dock-upload-dropzone:hover, .dock-upload-dropzone.is-dragover {
+      border-color: var(--color-primary);
+      background: #eff6ff;
+    }
+
+    .dock-upload-dropzone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .dock-upload-icon {
+      color: var(--color-primary);
+      margin-bottom: 4px;
+    }
+
+    .dock-upload-text {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--color-primary);
+    }
+
+    .dock-upload-hint {
+      font-size: 10px;
+      color: var(--color-text-muted);
+      margin-top: 2px;
+    }
+
+    /* 下半段：常驻 Chat 微调输入 */
+    .dock-lower {
+      padding: 24px 28px 20px;
+      background: #ffffff;
+    }
+
+    .dock-chat-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .dock-chat-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dock-chat-optional {
+      font-size: 11px;
+      color: var(--color-text-muted);
+    }
+
+    .dock-chat-textarea {
+      width: 100%;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--color-text-primary);
+      background: var(--color-surface-soft);
+      resize: vertical;
+      min-height: 84px;
+      font-family: inherit;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .dock-chat-textarea:focus {
+      background: #ffffff;
+      border-color: var(--color-primary);
+      box-shadow: var(--shadow-focus);
+    }
+
+    .dock-tags-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .dock-tag-pill {
+      font-size: 12px;
+      background: #ffffff;
+      border: 1px solid var(--color-border);
+      padding: 4px 10px;
+      border-radius: var(--radius-pill);
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .dock-tag-pill:hover {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+      background: var(--color-primary-soft);
+    }
+
+    /* 底栏：模型选择器 + 提交 */
+    .dock-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 28px;
+      background: #f8fafc;
+      border-top: 1px solid var(--color-border);
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .model-selector-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .model-selector-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--color-text-tertiary);
+    }
+
+    .model-checkbox-list {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .model-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--radius-pill);
+      font-size: 12px;
+      font-weight: 600;
+      background: #ffffff;
+      border: 1px solid var(--color-border-strong);
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+    }
+
+    .model-chip input {
+      display: none;
+    }
+
+    .model-chip.is-checked {
+      background: var(--color-primary-soft);
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+
+    .model-chip .check-circle {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid var(--color-border-strong);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+    }
+
+    .model-chip.is-checked .check-circle {
+      background: var(--color-primary);
+      border-color: var(--color-primary);
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <!-- 顶部全局导航 -->
+  <header class="top-nav">
+    <a href="/" class="nav-brand">
+      <img src="stars-page-logo-simple.png" alt="StarPage Logo" />
+      <span class="nav-brand-title">星页 StarPage</span>
+      <span class="nav-brand-tag">方案评审 Demo</span>
+    </a>
+    <nav class="nav-tabs">
+      <a href="http://localhost:3001/" class="nav-tab-item">
+        方案一：渐进展开舱 <span class="nav-tab-badge">:3001</span>
+      </a>
+      <a href="http://localhost:3002/" class="nav-tab-item is-active">
+        方案二：复合指令卡 <span class="nav-tab-badge">:3002</span>
+      </a>
+      <a href="http://localhost:3003/" class="nav-tab-item">
+        方案三：向导阶段流 <span class="nav-tab-badge">:3003</span>
+      </a>
+    </nav>
+  </header>
+
+  <main class="layout-container">
+    <div class="hero-header">
+      <div class="hero-scheme-pill">
+        <span class="dot"></span> 方案二 · 复合指令卡（Unified Composite Dock）
+      </div>
+      <h1 class="hero-title">文档挂载 + 对话指令<span class="gradient-text">一体咬合</span></h1>
+      <p class="hero-subtitle">
+        上方管理作为内容基座的文档，下方直接补充排版意图；兼顾自由度与容错度，任何时候都能一键生成。
+      </p>
+    </div>
+
+    <!-- 方案二主卡片：复合指令卡 -->
+    <div class="composite-card">
+      <!-- 上段：文档挂载舱 -->
+      <div class="dock-upper">
+        <div class="dock-section-title">
+          <div class="dock-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+            </svg>
+            <span>网页内容基座</span>
+            <span class="dock-title-badge">主信息源</span>
+          </div>
+          <div class="dock-title-right">
+            已挂载 <strong id="docCountText" style="color: var(--color-primary)">2</strong> / 3 个文档（支持 Word / Excel / PDF / PPT）
+          </div>
+        </div>
+
+        <div class="dock-files-container" id="dockFilesContainer">
+          <!-- 动态渲染已挂载文档 -->
+        </div>
+      </div>
+
+      <!-- 下段：Chat 微调指令条 -->
+      <div class="dock-lower">
+        <div class="dock-chat-head">
+          <div class="dock-chat-title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+            </svg>
+            补充排版风格与展示侧重
+          </div>
+          <span class="dock-chat-optional">选填 · 不填将自动推断最佳网页版式</span>
+        </div>
+
+        <textarea
+          id="dockChatPrompt"
+          class="dock-chat-textarea"
+          placeholder="说说你想要的视觉风格或业务侧重，例如：「提炼核心数据做成可视化大屏，重点突出前三季度利润率」或「设计为面向客户介绍的落地页」…"
+        ></textarea>
+
+        <div class="dock-tags-row">
+          <span style="font-size: 11px; color: var(--color-text-muted); font-weight: 600;">常用要求：</span>
+          <button class="dock-tag-pill" type="button" onclick="appendTag(this.innerText)">📊 提取表格并转为互动图表</button>
+          <button class="dock-tag-pill" type="button" onclick="appendTag(this.innerText)">📑 双栏沉浸式阅读 + 左侧目录</button>
+          <button class="dock-tag-pill" type="button" onclick="appendTag(this.innerText)">🎯 提炼高管决策摘要</button>
+          <button class="dock-tag-pill" type="button" onclick="appendTag(this.innerText)">📱 优先适配手机端浏览</button>
+          <button class="dock-tag-pill" type="button" onclick="appendTag(this.innerText)">🌙 极简科技深色主题</button>
+        </div>
+      </div>
+
+      <!-- 底栏：多模型并行对比选择 + 一键生成 -->
+      <div class="dock-footer">
+        <div class="model-selector-group">
+          <span class="model-selector-label">并行对比生成：</span>
+          <div class="model-checkbox-list">
+            <label class="model-chip is-checked" onclick="toggleModel(this)">
+              <div class="check-circle">✓</div>
+              智谱 GLM-4
+            </label>
+            <label class="model-chip is-checked" onclick="toggleModel(this)">
+              <div class="check-circle">✓</div>
+              字节 Doubao
+            </label>
+            <label class="model-chip" onclick="toggleModel(this)">
+              <div class="check-circle"></div>
+              MiniMax
+            </label>
+          </div>
+        </div>
+
+        <button class="btn-primary" type="button" onclick="handleDockGenerate()">
+          <span>生成对比页面</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 演示状态快速切换 -->
+    <div class="demo-control-bar">
+      <div class="demo-control-label">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        方案二场景切换：
+      </div>
+      <div class="demo-actions">
+        <button class="demo-pill-btn" onclick="setDocPreset('empty')">清空文档（纯聊天/纯指令）</button>
+        <button class="demo-pill-btn is-active" onclick="setDocPreset('excel')">单个 Excel 财报</button>
+        <button class="demo-pill-btn" onclick="setDocPreset('hybrid')">Word 战略方案 + Excel 预算表</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let dockDocs = [
+      { name: "2026年Q3经营分析报表.xlsx", size: "2.4 MB", type: "excel", label: "XLS", rows: "已识别 4 张数据表" }
+    ];
+
+    function renderDockFiles() {
+      const container = document.getElementById("dockFilesContainer");
+      container.innerHTML = "";
+
+      dockDocs.forEach((doc, idx) => {
+        const item = document.createElement("div");
+        item.className = "dock-file-item";
+        item.innerHTML = `
+          <div class="dock-file-info">
+            <div class="dock-file-icon is-${doc.type}">${doc.label}</div>
+            <div class="dock-file-texts">
+              <span class="dock-file-name" title="${doc.name}">${doc.name}</span>
+              <span class="dock-file-sub"><span class="dock-status-ready">●</span> ${doc.size} · ${doc.rows}</span>
+            </div>
+          </div>
+          <button class="dock-remove-btn" title="删除" onclick="removeDockDoc(${idx})">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        `;
+        container.appendChild(item);
+      });
+
+      if (dockDocs.length < 3) {
+        const dropCard = document.createElement("div");
+        dropCard.className = "dock-upload-dropzone";
+        dropCard.innerHTML = `
+          <input type="file" multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleDockUpload(this.files)" />
+          <div class="dock-upload-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </div>
+          <span class="dock-upload-text">拖拽或点击添加文档</span>
+          <span class="dock-upload-hint">支持 Word、Excel、PDF、PPT</span>
+        `;
+        container.appendChild(dropCard);
+      }
+
+      document.getElementById("docCountText").innerText = dockDocs.length;
+    }
+
+    function removeDockDoc(idx) {
+      dockDocs.splice(idx, 1);
+      renderDockFiles();
+    }
+
+    function handleDockUpload(files) {
+      if (!files || files.length === 0) return;
+      Array.from(files).forEach(f => {
+        if (dockDocs.length >= 3) return;
+        let type = "word", label = "DOC";
+        if (f.name.endsWith(".xlsx") || f.name.endsWith(".xls")) { type = "excel"; label = "XLS"; }
+        else if (f.name.endsWith(".pdf")) { type = "pdf"; label = "PDF"; }
+        else if (f.name.endsWith(".pptx")) { type = "ppt"; label = "PPT"; }
+        dockDocs.push({
+          name: f.name,
+          size: (f.size / (1024 * 1024)).toFixed(1) + " MB",
+          type: type,
+          label: label,
+          rows: "已解析结构"
+        });
+      });
+      renderDockFiles();
+    }
+
+    function appendTag(tagText) {
+      const textarea = document.getElementById("dockChatPrompt");
+      const clean = tagText.replace(/^[^\s]+\s*/, '');
+      if (textarea.value) {
+        textarea.value += "；" + clean;
+      } else {
+        textarea.value = clean;
+      }
+      textarea.focus();
+    }
+
+    function toggleModel(el) {
+      el.classList.toggle("is-checked");
+      const circle = el.querySelector(".check-circle");
+      circle.innerText = el.classList.contains("is-checked") ? "✓" : "";
+    }
+
+    function setDocPreset(type) {
+      if (type === "empty") {
+        dockDocs = [];
+      } else if (type === "excel") {
+        dockDocs = [
+          { name: "2026年Q3经营分析报表.xlsx", size: "2.4 MB", type: "excel", label: "XLS", rows: "已识别 4 张数据表" }
+        ];
+      } else if (type === "hybrid") {
+        dockDocs = [
+          { name: "StarPage战略规划2026.docx", size: "3.6 MB", type: "word", label: "DOC", rows: "已识别 5 个章节" },
+          { name: "年度研发预算明细.xlsx", size: "1.8 MB", type: "excel", label: "XLS", rows: "已识别 2 张数据表" }
+        ];
+      }
+      renderDockFiles();
+    }
+
+    function handleDockGenerate() {
+      const prompt = document.getElementById("dockChatPrompt").value;
+      const count = dockDocs.length;
+      alert(`[Demo 演示] 复合卡片提交！\n\n【挂载文档】：${count > 0 ? dockDocs.map(d=>d.name).join("、") : "未挂载（纯指令生成）"}\n【补充指令】：${prompt || "（自动优化）"}\n【并行模型】：已选中的模型将并发输出`);
+    }
+
+    // 初始化渲染
+    renderDockFiles();
+  </script>
+</body>
+</html>

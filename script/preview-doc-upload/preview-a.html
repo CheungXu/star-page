@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案一：渐进展开舱</title>
+  <link rel="stylesheet" href="_common.css" />
+  <style>
+    /* ==========================================================================
+       方案一特化样式：渐进展开舱 (Progressive Drop Capsule)
+       - 首屏中心超大投放舱，强调“把文件交给我”
+       - 拖入文件后就地平滑折叠为挂载卡片，顺滑露出 Chat 微调输入
+       ========================================================================== */
+
+    .capsule-wrapper {
+      background: #ffffff;
+      border-radius: var(--radius-xl);
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-xl);
+      padding: 32px;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    /* 空态：超大投放区 */
+    .dropzone-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 56px 32px;
+      border: 2px dashed rgba(53, 99, 233, 0.25);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
+      cursor: pointer;
+      transition: all 0.25s ease;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .dropzone-stage:hover, .dropzone-stage.is-dragover {
+      border-color: var(--color-primary);
+      background: #eff6ff;
+      box-shadow: var(--shadow-drop-active);
+      transform: scale(1.006);
+    }
+
+    .dropzone-stage input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      z-index: 10;
+    }
+
+    .drop-icon-cloud {
+      position: relative;
+      width: 72px;
+      height: 72px;
+      border-radius: 20px;
+      background: var(--color-primary-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-primary);
+      margin-bottom: 20px;
+      box-shadow: 0 4px 14px rgba(53, 99, 233, 0.18);
+    }
+
+    .drop-icon-cloud svg {
+      width: 36px;
+      height: 36px;
+    }
+
+    .drop-main-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--color-text-primary);
+      margin-bottom: 8px;
+    }
+
+    .drop-sub-text {
+      font-size: 14px;
+      color: var(--color-text-tertiary);
+      max-width: 460px;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    .format-pills-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* 已上传文件抽屉 / 列表条 */
+    .attached-docs-section {
+      display: none;
+      margin-bottom: 20px;
+      animation: fadeInSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes fadeInSlide {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .attached-docs-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .attached-docs-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .attached-file-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .attached-file-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      background: var(--color-surface-soft);
+      border: 1px solid var(--color-border);
+      transition: all 0.2s ease;
+    }
+
+    .attached-file-card:hover {
+      background: #ffffff;
+      border-color: var(--color-border-strong);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .file-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .file-type-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      color: #ffffff;
+      flex-shrink: 0;
+    }
+
+    .file-type-icon.is-word { background: var(--color-doc-word); }
+    .file-type-icon.is-excel { background: var(--color-doc-excel); }
+    .file-type-icon.is-ppt { background: var(--color-doc-ppt); }
+    .file-type-icon.is-pdf { background: var(--color-doc-pdf); }
+
+    .file-details {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .file-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-meta {
+      font-size: 12px;
+      color: var(--color-text-muted);
+    }
+
+    .file-remove-btn {
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    .file-remove-btn:hover {
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.1);
+    }
+
+    .add-more-card {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      border: 1px dashed var(--color-border-strong);
+      color: var(--color-primary);
+      font-size: 13px;
+      font-weight: 600;
+      background: #ffffff;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .add-more-card:hover {
+      background: var(--color-primary-soft);
+      border-color: var(--color-primary);
+    }
+
+    /* Chat 补充输入区 */
+    .optional-chat-section {
+      display: none;
+      animation: fadeInSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+      border-top: 1px solid var(--color-border);
+      padding-top: 20px;
+    }
+
+    .chat-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .chat-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chat-optional-tag {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--color-text-muted);
+      background: var(--color-surface-soft);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .chat-textarea {
+      width: 100%;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--color-text-primary);
+      background: var(--color-surface-soft);
+      resize: vertical;
+      min-height: 72px;
+      font-family: inherit;
+      transition: all 0.2s ease;
+      outline: none;
+    }
+
+    .chat-textarea:focus {
+      background: #ffffff;
+      border-color: var(--color-primary);
+      box-shadow: var(--shadow-focus);
+    }
+
+    .chat-chips-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .chip-lead {
+      font-size: 12px;
+      color: var(--color-text-muted);
+      font-weight: 500;
+    }
+
+    .chat-chip {
+      background: #ffffff;
+      border: 1px solid var(--color-border);
+      padding: 4px 10px;
+      border-radius: var(--radius-pill);
+      font-size: 12px;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+    }
+
+    .chat-chip:hover {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+      background: var(--color-primary-soft);
+    }
+
+    /* 底部操作条 */
+    .capsule-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .footer-hints {
+      font-size: 13px;
+      color: var(--color-text-tertiary);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .footer-hints span {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* 状态切换控制：空态 / 已挂载 */
+    .has-docs .dropzone-stage {
+      display: none;
+    }
+
+    .has-docs .attached-docs-section,
+    .has-docs .optional-chat-section {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <!-- 顶部全局导航 -->
+  <header class="top-nav">
+    <a href="/" class="nav-brand">
+      <img src="stars-page-logo-simple.png" alt="StarPage Logo" />
+      <span class="nav-brand-title">星页 StarPage</span>
+      <span class="nav-brand-tag">方案评审 Demo</span>
+    </a>
+    <nav class="nav-tabs">
+      <a href="http://localhost:3001/" class="nav-tab-item is-active">
+        方案一：渐进展开舱 <span class="nav-tab-badge">:3001</span>
+      </a>
+      <a href="http://localhost:3002/" class="nav-tab-item">
+        方案二：复合指令卡 <span class="nav-tab-badge">:3002</span>
+      </a>
+      <a href="http://localhost:3003/" class="nav-tab-item">
+        方案三：向导阶段流 <span class="nav-tab-badge">:3003</span>
+      </a>
+    </nav>
+  </header>
+
+  <main class="layout-container">
+    <div class="hero-header">
+      <div class="hero-scheme-pill">
+        <span class="dot"></span> 方案一 · 渐进展开舱（Progressive Drop Capsule）
+      </div>
+      <h1 class="hero-title">将文档一键转为<span class="gradient-text">高品质网页</span></h1>
+      <p class="hero-subtitle">
+        告别冗长 Prompt。上传 Word、Excel 或 PDF，直接解析文档内容与数据大纲；随时在下方补充风格要求。
+      </p>
+    </div>
+
+    <!-- 方案一主卡片：渐进展开舱 -->
+    <div class="capsule-wrapper" id="capsuleRoot">
+      <!-- 初始态：超大投放区 -->
+      <div class="dropzone-stage" id="dropzone" onclick="triggerFileUpload()">
+        <input type="file" id="realFileInput" multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleRealFile(this.files)" />
+        <div class="drop-icon-cloud">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/>
+            <path d="M12 12v9"/>
+            <path d="m16 16-4-4-4 4"/>
+          </svg>
+        </div>
+        <div class="drop-main-text">将文档拖到这里，或点击选择</div>
+        <div class="drop-sub-text">支持单次上传 1 ~ 3 个文档，单个文件 ≤ 50MB。系统将智能提炼数据表、结构大纲与核心亮点。</div>
+        
+        <div class="format-pills-row">
+          <span class="file-format-badge doc-word">DOCX Word</span>
+          <span class="file-format-badge doc-excel">XLSX Excel</span>
+          <span class="file-format-badge doc-pdf">PDF 报告</span>
+          <span class="file-format-badge doc-ppt">PPTX 演示</span>
+        </div>
+      </div>
+
+      <!-- 渐进态：已挂载文档列表 -->
+      <div class="attached-docs-section" id="attachedSection">
+        <div class="attached-docs-header">
+          <div class="attached-docs-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            已挂载文档内容源（将作为网页事实基础）
+          </div>
+          <span style="font-size: 12px; color: var(--color-accent-emerald); font-weight: 600;">✓ 解析就绪</span>
+        </div>
+        
+        <div class="attached-file-grid" id="fileListGrid">
+          <!-- 动态渲染或模拟展示 -->
+        </div>
+      </div>
+
+      <!-- 渐进态：选填 Chat 微调输入 -->
+      <div class="optional-chat-section" id="chatSection">
+        <div class="chat-header-row">
+          <label class="chat-label" for="chatPrompt">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            补充特殊要求与设计风格
+            <span class="chat-optional-tag">选填，不填将自动提取最优版式</span>
+          </label>
+        </div>
+        <textarea
+          id="chatPrompt"
+          class="chat-textarea"
+          placeholder="例如：「面向高管汇报，突出 Q3 营收与利润，图表采用深蓝配色」或「制作成可在线分享的白皮书」…"
+        ></textarea>
+
+        <div class="chat-chips-row">
+          <span class="chip-lead">快捷指令：</span>
+          <button class="chat-chip" type="button" onclick="insertChip(this.innerText)">📊 提取核心表格与数据看板</button>
+          <button class="chat-chip" type="button" onclick="insertChip(this.innerText)">📑 梳理为沉浸式多章节白皮书</button>
+          <button class="chat-chip" type="button" onclick="insertChip(this.innerText)">🎯 突出核心结论与行动号召</button>
+          <button class="chat-chip" type="button" onclick="insertChip(this.innerText)">🌙 暗黑极简科技风</button>
+        </div>
+      </div>
+
+      <!-- 底部操作与提交 -->
+      <div class="capsule-footer">
+        <div class="footer-hints">
+          <span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
+            预计生成耗时 ~25 秒
+          </span>
+          <span>·</span>
+          <span>消耗 3 算力</span>
+        </div>
+
+        <button class="btn-primary" type="button" id="submitBtn" onclick="handleGenerate()">
+          <span id="submitBtnText">开始生成网页</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 交互演示控制器：切换状态体验 -->
+    <div class="demo-control-bar">
+      <div class="demo-control-label">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        交互演示切换（无需真找文件，点击即可感受不同状态）：
+      </div>
+      <div class="demo-actions">
+        <button class="demo-pill-btn is-active" id="btnStateEmpty" onclick="setDemoState('empty')">1. 首屏空态（超大投放舱）</button>
+        <button class="demo-pill-btn" id="btnStateSingle" onclick="setDemoState('single')">2. 挂载单文档（Q3财报.xlsx）</button>
+        <button class="demo-pill-btn" id="btnStateMulti" onclick="setDemoState('multi')">3. 挂载双文档（报告+数据表）</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const sampleFiles = {
+      single: [
+        { name: "2026年Q3经营分析报表.xlsx", size: "2.4 MB", type: "excel", typeLabel: "XLS" }
+      ],
+      multi: [
+        { name: "StarPage新一代产品架构白皮书.docx", size: "4.8 MB", type: "word", typeLabel: "DOC" },
+        { name: "核心性能与转化指标对比.xlsx", size: "1.1 MB", type: "excel", typeLabel: "XLS" }
+      ]
+    };
+
+    let currentFiles = [];
+
+    function setDemoState(state) {
+      document.querySelectorAll(".demo-pill-btn").forEach(btn => btn.classList.remove("is-active"));
+      const root = document.getElementById("capsuleRoot");
+
+      if (state === "empty") {
+        document.getElementById("btnStateEmpty").classList.add("is-active");
+        root.classList.remove("has-docs");
+        currentFiles = [];
+        document.getElementById("submitBtnText").innerText = "请先投放文档";
+        document.getElementById("submitBtn").style.opacity = "0.7";
+      } else if (state === "single") {
+        document.getElementById("btnStateSingle").classList.add("is-active");
+        currentFiles = [...sampleFiles.single];
+        renderFiles();
+        root.classList.add("has-docs");
+        document.getElementById("submitBtnText").innerText = "一键生成 HTML 网页";
+        document.getElementById("submitBtn").style.opacity = "1";
+      } else if (state === "multi") {
+        document.getElementById("btnStateMulti").classList.add("is-active");
+        currentFiles = [...sampleFiles.multi];
+        renderFiles();
+        root.classList.add("has-docs");
+        document.getElementById("submitBtnText").innerText = "一键生成 HTML 网页";
+        document.getElementById("submitBtn").style.opacity = "1";
+      }
+    }
+
+    function renderFiles() {
+      const grid = document.getElementById("fileListGrid");
+      grid.innerHTML = "";
+
+      currentFiles.forEach((file, index) => {
+        const card = document.createElement("div");
+        card.className = "attached-file-card";
+        card.innerHTML = `
+          <div class="file-left">
+            <div class="file-type-icon is-${file.type}">${file.typeLabel}</div>
+            <div class="file-details">
+              <span class="file-name" title="${file.name}">${file.name}</span>
+              <span class="file-meta">${file.size} · 已提取数据表格</span>
+            </div>
+          </div>
+          <button class="file-remove-btn" title="移除文件" onclick="removeFile(${index})">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        `;
+        grid.appendChild(card);
+      });
+
+      // 添加“+ 继续添加”按钮
+      if (currentFiles.length < 3) {
+        const addCard = document.createElement("div");
+        addCard.className = "add-more-card";
+        addCard.onclick = () => document.getElementById("realFileInput").click();
+        addCard.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          添加补充文档
+        `;
+        grid.appendChild(addCard);
+      }
+    }
+
+    function removeFile(index) {
+      currentFiles.splice(index, 1);
+      if (currentFiles.length === 0) {
+        setDemoState("empty");
+      } else {
+        renderFiles();
+      }
+    }
+
+    function insertChip(text) {
+      const textarea = document.getElementById("chatPrompt");
+      const cleanText = text.replace(/^[^\s]+\s*/, ''); // 去除前面的 emoji
+      if (textarea.value) {
+        textarea.value += "；" + cleanText;
+      } else {
+        textarea.value = cleanText;
+      }
+      textarea.focus();
+    }
+
+    function triggerFileUpload() {
+      // 外部 dropzone 会触发真正的文件选择
+    }
+
+    function handleRealFile(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      currentFiles = Array.from(fileList).slice(0, 3).map(f => {
+        let type = "word";
+        let label = "DOC";
+        if (f.name.endsWith(".xlsx") || f.name.endsWith(".xls")) { type = "excel"; label = "XLS"; }
+        else if (f.name.endsWith(".pdf")) { type = "pdf"; label = "PDF"; }
+        else if (f.name.endsWith(".pptx")) { type = "ppt"; label = "PPT"; }
+        return {
+          name: f.name,
+          size: (f.size / (1024 * 1024)).toFixed(1) + " MB",
+          type: type,
+          typeLabel: label
+        };
+      });
+      renderFiles();
+      document.getElementById("capsuleRoot").classList.add("has-docs");
+      document.getElementById("submitBtnText").innerText = "一键生成 HTML 网页";
+      document.getElementById("submitBtn").style.opacity = "1";
+    }
+
+    function handleGenerate() {
+      if (currentFiles.length === 0) {
+        alert("请先点击上方区域上传或通过下方演示按钮选择文档！");
+        return;
+      }
+      const prompt = document.getElementById("chatPrompt").value;
+      const fileNames = currentFiles.map(f => f.name).join("、");
+      alert(`[Demo 演示] 开始生成网页！\n\n【核心内容源】：${fileNames}\n【补充 Chat 诉求】：${prompt || "（未填写，将按文档最佳结构自动转化）"}\n\n即将进入并行生成工作区...`);
+    }
+
+    // 初始化为单文档状态，方便用户第一眼看到展开形态，同时可随时切回
+    setDemoState("single");
+  </script>
+</body>
+</html>

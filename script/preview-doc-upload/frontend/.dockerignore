@@ -1,0 +1,29 @@
+# 构建上下文忽略清单
+# 关键：排除本地 node_modules，避免 `COPY . .` 覆盖镜像内 npm install 干净安装的依赖
+node_modules
+
+# 构建产物（镜像内会重新 npm run build 生成）
+.next
+out
+
+# 版本控制与本地配置
+.git
+.gitignore
+
+# 日志与调试文件
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# 文档与镜像构建文件本身（不需要进镜像）
+README.md
+Dockerfile
+.dockerignore
+
+# 环境变量（运行时注入，不打进镜像）
+.env
+.env.*
+
+# 系统/编辑器杂项
+.DS_Store

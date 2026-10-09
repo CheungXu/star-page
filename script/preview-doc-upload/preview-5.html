@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案五：情境驱动自适应卡片 (3005)</title>
+  <link rel="stylesheet" href="_prod_base.css" />
+  <link rel="stylesheet" href="preview-patch.css" />
+  <style>
+    /* ==========================================================================
+       方案五特化：情境驱动自适应卡片（Adaptive Progressive Card）
+       空态为极简纯净投放区，拖入/选择文档后，文档平滑缩聚到卡片左上角，
+       下方就地展开微调对话框，主按钮瞬时激活，心智阻力最低
+       ========================================================================== */
+    .adaptive-stage-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      border: 1.5px dashed rgba(53, 99, 233, 0.35);
+      border-radius: var(--radius-lg);
+      background: rgba(248, 250, 255, 0.7);
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: all 0.2s ease;
+      text-align: center;
+    }
+
+    .adaptive-stage-empty:hover {
+      background: var(--color-primary-soft);
+      border-color: var(--color-primary);
+    }
+
+    .adaptive-stage-icon {
+      font-size: 24px;
+      color: var(--color-primary);
+      margin-bottom: 6px;
+    }
+
+    .adaptive-stage-title {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: var(--color-text-primary);
+      margin-bottom: 4px;
+    }
+
+    .adaptive-stage-sub {
+      font-size: 12px;
+      color: var(--color-text-tertiary);
+    }
+
+    /* 挂载后展示区 */
+    .adaptive-loaded-wrap {
+      display: none;
+      animation: fadeIn 0.25s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .adaptive-doc-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(234, 240, 255, 0.9);
+      border: 1px solid rgba(53, 99, 233, 0.25);
+      border-radius: var(--radius-md);
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      margin-bottom: 8px;
+    }
+
+    .adaptive-doc-badge .badge-icon {
+      font-size: 14px;
+    }
+
+    .adaptive-doc-badge .badge-status {
+      font-size: 11.5px;
+      color: var(--color-success);
+      font-weight: 500;
+      margin-left: 4px;
+    }
+
+    .adaptive-doc-badge .badge-del {
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      display: inline-flex;
+      padding: 2px;
+    }
+
+    .adaptive-doc-badge .badge-del:hover {
+      color: var(--color-danger);
+    }
+
+    /* 纯文字切换模式 */
+    .mode-pure-text .adaptive-stage-empty,
+    .mode-pure-text .adaptive-loaded-wrap {
+      display: none !important;
+    }
+
+    .mode-pure-text #pureTextarea {
+      display: block !important;
+    }
+
+    #pureTextarea {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <header class="preview-nav-bar">
+    <div class="preview-nav-left">
+      <img src="stars-page-logo-simple.png" width="22" height="22" alt="StarPage Logo" />
+      <span>星页微调方案对比</span>
+    </div>
+    <nav class="preview-ports">
+      <a href="http://localhost:3001/" class="preview-port-tab">3001 · 方案一：卡片内反转</a>
+      <a href="http://localhost:3002/" class="preview-port-tab">3002 · 方案二：双逻辑带</a>
+      <a href="http://localhost:3003/" class="preview-port-tab">3003 · 方案三：常驻大胶囊</a>
+      <a href="http://localhost:3004/" class="preview-port-tab">3004 · 方案四：分段切换</a>
+      <a href="http://localhost:3005/" class="preview-port-tab is-active">3005 · 方案五：自适应卡片</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <div class="hero">
+      <div class="brand-mark">
+        <img
+          src="stars-page-logo-simple.png"
+          alt="星页 StarPage"
+          class="brand-logo"
+          width="58"
+          height="58"
+        />
+      </div>
+
+      <div class="preview-scheme-badge">
+        <span class="dot"></span> 方案五：情境驱动自适应卡片（上传后自动聚焦补充框）
+      </div>
+
+      <h1>想做什么页面？</h1>
+      <p class="subtitle">
+        上传文档提取事实骨架，随时对话补充风格要求。
+      </p>
+
+      <div class="prompt-form-wrap hero-wrap">
+        <form class="prompt-card hero-prompt" id="mainCardForm" onsubmit="event.preventDefault(); handleSubmit();">
+          <input type="file" id="fileInput" hidden multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleFile(this.files)" />
+
+          <!-- 状态 1：空态投放舱 -->
+          <div class="adaptive-stage-empty" id="emptyDropArea" onclick="document.getElementById('fileInput').click()">
+            <div class="adaptive-stage-icon">
+              <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path>
+              </svg>
+            </div>
+            <div class="adaptive-stage-title">拖入或点击上传文档（Word / Excel / PDF / PPT）</div>
+            <div class="adaptive-stage-sub">单文件 ≤ 50MB · 系统将直接提炼文档内容与大纲，并可随时对话补充排版要求</div>
+          </div>
+
+          <!-- 状态 2：挂载后展开区 -->
+          <div class="adaptive-loaded-wrap" id="loadedWrap">
+            <div class="adaptive-doc-badge">
+              <span class="badge-icon">📊</span>
+              <span id="loadedDocName">2026年Q3经营分析报表.xlsx · 2.4 MB</span>
+              <span class="badge-status">● 解析就绪</span>
+              <button type="button" class="badge-del" onclick="clearLoadedDoc(event)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+            <textarea
+              id="adaptivePromptTextarea"
+              placeholder="已加载文档。可直接点击右侧生成，或在此输入个性化风格要求（选填）…"
+              rows="2"
+            ></textarea>
+          </div>
+
+          <!-- 状态 3：纯文字模式直接展示的 Textarea -->
+          <textarea
+            id="pureTextarea"
+            placeholder="说说你想做的页面，例如「面向客户的产品介绍页」"
+            rows="2"
+          ></textarea>
+
+          <!-- 底部工具栏 -->
+          <div class="composer-toolbar">
+            <div class="composer-tools">
+              <button type="button" class="composer-upload" id="modeToggleBtn" onclick="toggleMode()">
+                <span class="composer-upload-text" id="modeToggleText">💬 纯文字输入</span>
+              </button>
+
+              <div class="model-picker">
+                <button type="button" class="model-picker-trigger">
+                  <span class="model-picker-dots">
+                    <span class="model-dot" style="background: #3b82f6;"></span>
+                    <span class="model-dot" style="background: #10b981;"></span>
+                  </span>
+                  <span class="model-picker-text">2 个模型并行</span>
+                  <span class="model-picker-caret">
+                    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <button
+              class="composer-send"
+              type="submit"
+              id="sendButton"
+              aria-label="创建页面"
+            >
+              <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <line x1="12" y1="19" x2="12" y2="5"></line>
+                <polyline points="5 12 12 5 19 12"></polyline>
+              </svg>
+            </button>
+          </div>
+        </form>
+
+        <div class="prompt-inspirations" role="list">
+          <span class="prompt-inspirations-lead">试试</span>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('提取数据表并生成动态联动交互图表')">
+            <span class="preset-emoji">📊</span>提取图表与联动
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('采用两栏目录式布局，突出白皮书结构')">
+            <span class="preset-emoji">📑</span>目录式白皮书
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('重点突出核心结论，弱化细节附录')">
+            <span class="preset-emoji">🎯</span>突出核心结论
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('采用暗黑科技风设计')">
+            <span class="preset-emoji">🌙</span>暗黑科技风
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="preview-quick-toggle">
+    <span>模拟状态：</span>
+    <button class="preview-quick-btn" id="btnEmpty" onclick="simulateState('empty')">1. 初始空态</button>
+    <button class="preview-quick-btn is-active" id="btnLoaded" onclick="simulateState('loaded')">2. 上传文档自适应</button>
+    <button class="preview-quick-btn" id="btnPure" onclick="simulateState('pure')">3. 纯文字模式</button>
+  </aside>
+
+  <script>
+    let currentState = "loaded"; // "empty" | "loaded" | "pure"
+
+    function applyState(st) {
+      currentState = st;
+      const form = document.getElementById("mainCardForm");
+      const emptyArea = document.getElementById("emptyDropArea");
+      const loadedWrap = document.getElementById("loadedWrap");
+      const toggleText = document.getElementById("modeToggleText");
+      const sendBtn = document.getElementById("sendButton");
+
+      document.getElementById("btnEmpty").classList.toggle("is-active", st === "empty");
+      document.getElementById("btnLoaded").classList.toggle("is-active", st === "loaded");
+      document.getElementById("btnPure").classList.toggle("is-active", st === "pure");
+
+      if (st === "empty") {
+        form.classList.remove("mode-pure-text");
+        emptyArea.style.display = "flex";
+        loadedWrap.style.display = "none";
+        toggleText.innerText = "💬 纯文字输入";
+        sendBtn.classList.add("is-empty");
+      } else if (st === "loaded") {
+        form.classList.remove("mode-pure-text");
+        emptyArea.style.display = "none";
+        loadedWrap.style.display = "block";
+        toggleText.innerText = "💬 纯文字输入";
+        sendBtn.classList.remove("is-empty");
+        setTimeout(() => document.getElementById("adaptivePromptTextarea").focus(), 100);
+      } else if (st === "pure") {
+        form.classList.add("mode-pure-text");
+        toggleText.innerText = "📎 上传文档";
+        sendBtn.classList.remove("is-empty");
+        setTimeout(() => document.getElementById("pureTextarea").focus(), 100);
+      }
+    }
+
+    function toggleMode() {
+      if (currentState === "pure") {
+        applyState("empty");
+      } else {
+        applyState("pure");
+      }
+    }
+
+    function clearLoadedDoc(e) {
+      e.stopPropagation();
+      applyState("empty");
+    }
+
+    function handleFile(files) {
+      if (files && files[0]) {
+        document.getElementById("loadedDocName").innerText = `${files[0].name} · ${(files[0].size/1024/1024).toFixed(1)} MB`;
+        applyState("loaded");
+      }
+    }
+
+    function simulateState(st) {
+      applyState(st);
+    }
+
+    function insertPrompt(val) {
+      const activeTextarea = currentState === "pure" ? document.getElementById("pureTextarea") : document.getElementById("adaptivePromptTextarea");
+      activeTextarea.value = val;
+      activeTextarea.focus();
+    }
+
+    function handleSubmit() {
+      let promptVal = "";
+      if (currentState === "loaded") {
+        promptVal = document.getElementById("adaptivePromptTextarea").value;
+        alert(`[方案五演示 - 文档已就绪]\n文档：2026年Q3经营分析报表.xlsx\n微调诉求：${promptVal || "（无需诉求，已一键直接生成）"}`);
+      } else if (currentState === "pure") {
+        promptVal = document.getElementById("pureTextarea").value;
+        alert(`[方案五演示 - 纯文字模式]\n提示词：${promptVal || "（请先输入文字）"}`);
+      } else {
+        alert("请先点击虚线框选择文档，或切换为纯文字模式！");
+      }
+    }
+
+    applyState("loaded");
+  </script>
+</body>
+</html>

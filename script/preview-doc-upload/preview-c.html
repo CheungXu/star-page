@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案三：向导阶段流</title>
+  <link rel="stylesheet" href="_common.css" />
+  <style>
+    /* ==========================================================================
+       方案三特化样式：向导阶段流 (Stepped Workflow Deck)
+       - 步骤 1：导入文档（数据/事实骨架） + 即时文档分析透出
+       - 步骤 2：选择产物形态（数据大屏/在线白皮书/单页秀）+ Chat 细节微调
+       ========================================================================== */
+
+    .stepper-container {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .step-card {
+      background: #ffffff;
+      border-radius: var(--radius-xl);
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-lg);
+      padding: 28px 32px;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .step-card:hover {
+      box-shadow: var(--shadow-xl);
+    }
+
+    /* 步骤标题行 */
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .step-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--color-primary);
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 2px 6px rgba(53, 99, 233, 0.3);
+    }
+
+    .step-title-wrap {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .step-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--color-text-primary);
+    }
+
+    .step-desc {
+      font-size: 13px;
+      color: var(--color-text-tertiary);
+    }
+
+    /* 步骤 1 内部：文档上传与解析透视 */
+    .step-upload-area {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 20px;
+      align-items: stretch;
+    }
+
+    @media (max-width: 768px) {
+      .step-upload-area {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .step-dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      border: 2px dashed rgba(53, 99, 233, 0.3);
+      border-radius: var(--radius-md);
+      background: var(--color-surface-soft);
+      cursor: pointer;
+      text-align: center;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .step-dropzone:hover {
+      border-color: var(--color-primary);
+      background: #eff6ff;
+    }
+
+    .step-dropzone input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .step-drop-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: var(--color-primary-soft);
+      color: var(--color-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+
+    /* 文档透视面板（智能解析结果） */
+    .document-insights-panel {
+      background: #f8fafc;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .insights-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .insights-stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .insight-stat-box {
+      background: #ffffff;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      text-align: center;
+    }
+
+    .stat-val {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--color-primary);
+      line-height: 1.2;
+    }
+
+    .stat-lbl {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      margin-top: 2px;
+    }
+
+    .insights-outline-tags {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .outline-tag-item {
+      font-size: 12px;
+      color: var(--color-text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #ffffff;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--color-border);
+    }
+
+    .outline-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-accent-emerald);
+    }
+
+    /* 步骤 2 内部：形态选择卡片矩阵 */
+    .formats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .formats-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .format-choice-card {
+      border: 2px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      cursor: pointer;
+      background: #ffffff;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    .format-choice-card:hover {
+      border-color: var(--color-primary-soft-strong);
+      transform: translateY(-2px);
+    }
+
+    .format-choice-card.is-selected {
+      border-color: var(--color-primary);
+      background: #f8faff;
+      box-shadow: 0 4px 16px rgba(53, 99, 233, 0.12);
+    }
+
+    .format-radio-check {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid var(--color-border-strong);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: #ffffff;
+      font-weight: 800;
+    }
+
+    .format-choice-card.is-selected .format-radio-check {
+      background: var(--color-primary);
+      border-color: var(--color-primary);
+    }
+
+    .format-emoji {
+      font-size: 24px;
+      margin-bottom: 8px;
+      display: inline-block;
+    }
+
+    .format-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--color-text-primary);
+      margin-bottom: 4px;
+    }
+
+    .format-desc {
+      font-size: 12px;
+      color: var(--color-text-tertiary);
+      line-height: 1.4;
+    }
+
+    /* 步骤 2 补充聊天框 */
+    .step-chat-box {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: var(--color-surface-soft);
+      padding: 12px 14px;
+    }
+
+    .step-chat-box textarea {
+      width: 100%;
+      border: none;
+      background: transparent;
+      outline: none;
+      font-size: 14px;
+      color: var(--color-text-primary);
+      min-height: 52px;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    /* 最终结算卡 */
+    .summary-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 28px;
+      background: #ffffff;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-md);
+    }
+
+    .summary-text {
+      font-size: 14px;
+      color: var(--color-text-secondary);
+    }
+
+    .summary-text strong {
+      color: var(--color-text-primary);
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <!-- 顶部全局导航 -->
+  <header class="top-nav">
+    <a href="/" class="nav-brand">
+      <img src="stars-page-logo-simple.png" alt="StarPage Logo" />
+      <span class="nav-brand-title">星页 StarPage</span>
+      <span class="nav-brand-tag">方案评审 Demo</span>
+    </a>
+    <nav class="nav-tabs">
+      <a href="http://localhost:3001/" class="nav-tab-item">
+        方案一：渐进展开舱 <span class="nav-tab-badge">:3001</span>
+      </a>
+      <a href="http://localhost:3002/" class="nav-tab-item">
+        方案二：复合指令卡 <span class="nav-tab-badge">:3002</span>
+      </a>
+      <a href="http://localhost:3003/" class="nav-tab-item is-active">
+        方案三：向导阶段流 <span class="nav-tab-badge">:3003</span>
+      </a>
+    </nav>
+  </header>
+
+  <main class="layout-container">
+    <div class="hero-header">
+      <div class="hero-scheme-pill">
+        <span class="dot"></span> 方案三 · 向导阶段流（Stepped Workflow Deck）
+      </div>
+      <h1 class="hero-title">导入文档与选择形态<span class="gradient-text">两步成页</span></h1>
+      <p class="hero-subtitle">
+        第一步提取文档知识骨架并即时透出元数据，第二步定向选择形态（大屏/白皮书/单页秀）与对话微调。
+      </p>
+    </div>
+
+    <!-- 方案三主体：双阶段向导 -->
+    <div class="stepper-container">
+      <!-- 步骤 1：导入文档并解析 -->
+      <section class="step-card">
+        <div class="step-header">
+          <div class="step-badge">1</div>
+          <div class="step-title-wrap">
+            <h2 class="step-title">导入核心文档（提供网页事实与数据骨架）</h2>
+            <p class="step-desc">系统将自动解析 Word、Excel、PDF 或 PPT，提炼结构与表格数据</p>
+          </div>
+        </div>
+
+        <div class="step-upload-area">
+          <div class="step-dropzone">
+            <input type="file" multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleStepFile(this.files)" />
+            <div class="step-drop-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+            </div>
+            <strong style="font-size: 14px; color: var(--color-text-primary);">拖拽或点击更换文档</strong>
+            <span style="font-size: 12px; color: var(--color-text-muted); margin-top: 4px;">当前已就绪：<span id="activeDocName" style="color: var(--color-primary); font-weight: 600;">2026年Q3经营分析报表.xlsx</span></span>
+          </div>
+
+          <!-- 解析透视看板 -->
+          <div class="document-insights-panel">
+            <div>
+              <div class="insights-head">
+                <span>文档结构深度透视</span>
+                <span style="color: var(--color-accent-emerald);">● 已解析完成</span>
+              </div>
+              <div class="insights-stats-row">
+                <div class="insight-stat-box">
+                  <div class="stat-val" id="statChars">18.4K</div>
+                  <div class="stat-lbl">提取字符量</div>
+                </div>
+                <div class="insight-stat-box">
+                  <div class="stat-val" id="statTables">4 张</div>
+                  <div class="stat-lbl">结构化数据表</div>
+                </div>
+                <div class="insight-stat-box">
+                  <div class="stat-val" id="statSections">5 个</div>
+                  <div class="stat-lbl">大纲核心章节</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="insights-outline-tags">
+              <div class="outline-tag-item"><span class="outline-dot"></span> 识别到大纲：1. 营收与净利润概览</div>
+              <div class="outline-tag-item"><span class="outline-dot"></span> 识别到大纲：2. 区域业务线明细与环比分析</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 步骤 2：产物形态与 Chat 微调 -->
+      <section class="step-card">
+        <div class="step-header">
+          <div class="step-badge">2</div>
+          <div class="step-title-wrap">
+            <h2 class="step-title">指定网页形态并补充个性化要求</h2>
+            <p class="step-desc">根据业务场景选择最适版式，并可对话式指定细节要求</p>
+          </div>
+        </div>
+
+        <!-- 3 个形态卡片 -->
+        <div class="formats-grid">
+          <div class="format-choice-card is-selected" onclick="selectFormat(this, '交互式数据大屏')">
+            <div class="format-radio-check">✓</div>
+            <div class="format-emoji">📊</div>
+            <div class="format-name">交互式数据大屏</div>
+            <div class="format-desc">最适合 Excel/报表。表格自动升维为折线/柱状图表、KPI 关键指标大字与筛选器。</div>
+          </div>
+
+          <div class="format-choice-card" onclick="selectFormat(this, '在线沉浸白皮书')">
+            <div class="format-radio-check"></div>
+            <div class="format-emoji">📑</div>
+            <div class="format-name">在线沉浸白皮书</div>
+            <div class="format-desc">最适合 Word/长篇 PDF。带侧边大纲锚点、优雅衬线排版与重点引用高亮。</div>
+          </div>
+
+          <div class="format-choice-card" onclick="selectFormat(this, '高转化单页秀')">
+            <div class="format-radio-check"></div>
+            <div class="format-emoji">🚀</div>
+            <div class="format-name">高转化单页秀</div>
+            <div class="format-desc">最适合 PPT/商业方案。视觉化 Hero、多列特性卡片、FAQ 折叠与行动号召。</div>
+          </div>
+        </div>
+
+        <!-- 补充细节对话框 -->
+        <div class="step-chat-box">
+          <textarea
+            id="stepChatPrompt"
+            placeholder="（选填）针对所选形态补充具体指令，例如：「采用深蓝色科技感配色，第一屏放大前三季度的净利润率」…"
+          ></textarea>
+        </div>
+      </section>
+
+      <!-- 底部汇总操作条 -->
+      <div class="summary-bar">
+        <div class="summary-text">
+          已就绪：将基于 <strong id="summaryDoc">《2026年Q3经营分析报表.xlsx》</strong> 转换为 <strong id="summaryFormat" style="color: var(--color-primary)">「交互式数据大屏」</strong>
+        </div>
+        <button class="btn-primary" type="button" onclick="handleStepGenerate()">
+          <span>启动转换流程</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 演示切换控制器 -->
+    <div class="demo-control-bar">
+      <div class="demo-control-label">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        方案三快速切换样例：
+      </div>
+      <div class="demo-actions">
+        <button class="demo-pill-btn is-active" onclick="switchStepPreset('excel')">切换为：财报 Excel 样例</button>
+        <button class="demo-pill-btn" onclick="switchStepPreset('doc')">切换为：技术白皮书 Word 样例</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let currentFormat = "交互式数据大屏";
+    let activeDoc = "2026年Q3经营分析报表.xlsx";
+
+    function selectFormat(el, formatName) {
+      document.querySelectorAll(".format-choice-card").forEach(c => {
+        c.classList.remove("is-selected");
+        c.querySelector(".format-radio-check").innerText = "";
+      });
+      el.classList.add("is-selected");
+      el.querySelector(".format-radio-check").innerText = "✓";
+      currentFormat = formatName;
+      document.getElementById("summaryFormat").innerText = `「${formatName}」`;
+    }
+
+    function switchStepPreset(type) {
+      document.querySelectorAll(".demo-pill-btn").forEach(b => b.classList.remove("is-active"));
+      if (type === "excel") {
+        event.target.classList.add("is-active");
+        activeDoc = "2026年Q3经营分析报表.xlsx";
+        document.getElementById("activeDocName").innerText = activeDoc;
+        document.getElementById("summaryDoc").innerText = `《${activeDoc}》`;
+        document.getElementById("statChars").innerText = "18.4K";
+        document.getElementById("statTables").innerText = "4 张";
+        document.getElementById("statSections").innerText = "5 个";
+      } else {
+        event.target.classList.add("is-active");
+        activeDoc = "AI原生应用系统架构白皮书.docx";
+        document.getElementById("activeDocName").innerText = activeDoc;
+        document.getElementById("summaryDoc").innerText = `《${activeDoc}》`;
+        document.getElementById("statChars").innerText = "32.6K";
+        document.getElementById("statTables").innerText = "1 张";
+        document.getElementById("statSections").innerText = "12 个";
+      }
+    }
+
+    function handleStepFile(files) {
+      if (!files || files.length === 0) return;
+      activeDoc = files[0].name;
+      document.getElementById("activeDocName").innerText = activeDoc;
+      document.getElementById("summaryDoc").innerText = `《${activeDoc}》`;
+      document.getElementById("statChars").innerText = (files[0].size / 1000).toFixed(1) + "K";
+    }
+
+    function handleStepGenerate() {
+      const prompt = document.getElementById("stepChatPrompt").value;
+      alert(`[Demo 演示] 向导流执行生成！\n\n【核心文档】：${activeDoc}\n【选定形态】：${currentFormat}\n【微调指令】：${prompt || "（按所选形态默认最佳方案生成）"}`);
+    }
+  </script>
+</body>
+</html>

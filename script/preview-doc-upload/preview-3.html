@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案三：常驻大胶囊主入口 (3003)</title>
+  <link rel="stylesheet" href="_prod_base.css" />
+  <link rel="stylesheet" href="preview-patch.css" />
+  <style>
+    /* ==========================================================================
+       方案三特化：常驻大胶囊主入口（平层结构不变，强化左下角入口与场景引导）
+       完全保持当前输入卡片的平层几何形态，通过高权重上传主按钮与场景 Chips 引流
+       ========================================================================== */
+    .composer-upload.is-primary-cta {
+      background: linear-gradient(135deg, #3563e9 0%, #254edb 100%);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 2px 8px rgba(53, 99, 233, 0.35);
+      padding: 0 16px 0 14px;
+    }
+
+    .composer-upload.is-primary-cta .composer-upload-icon {
+      color: #ffffff;
+    }
+
+    .composer-upload.is-primary-cta:hover {
+      background: linear-gradient(135deg, #254edb 0%, #1d40be 100%);
+      transform: translateY(-1.5px);
+      box-shadow: 0 4px 14px rgba(53, 99, 233, 0.45);
+      color: #ffffff;
+    }
+
+    .composer-upload-rec-tag {
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.25);
+      padding: 1px 6px;
+      border-radius: 999px;
+      margin-left: 2px;
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <header class="preview-nav-bar">
+    <div class="preview-nav-left">
+      <img src="stars-page-logo-simple.png" width="22" height="22" alt="StarPage Logo" />
+      <span>星页微调方案对比</span>
+    </div>
+    <nav class="preview-ports">
+      <a href="http://localhost:3001/" class="preview-port-tab">3001 · 方案一：卡片内反转</a>
+      <a href="http://localhost:3002/" class="preview-port-tab">3002 · 方案二：双逻辑带</a>
+      <a href="http://localhost:3003/" class="preview-port-tab is-active">3003 · 方案三：常驻大胶囊</a>
+      <a href="http://localhost:3004/" class="preview-port-tab">3004 · 方案四：分段切换</a>
+      <a href="http://localhost:3005/" class="preview-port-tab">3005 · 方案五：自适应卡片</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <div class="hero">
+      <div class="brand-mark">
+        <img
+          src="stars-page-logo-simple.png"
+          alt="星页 StarPage"
+          class="brand-logo"
+          width="58"
+          height="58"
+        />
+      </div>
+
+      <div class="preview-scheme-badge">
+        <span class="dot"></span> 方案三：常驻大胶囊主入口（保持当前平层，强化左下角按钮）
+      </div>
+
+      <h1>想做什么页面？</h1>
+      <p class="subtitle">
+        上传文档或描述想法，<strong class="brand-inline">星页 StarPage</strong> 帮你生成可对比的网页。
+      </p>
+
+      <div class="prompt-form-wrap hero-wrap">
+        <form class="prompt-card hero-prompt" onsubmit="event.preventDefault(); handleSubmit();">
+          <input type="file" id="fileInput" hidden multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleFile(this.files)" />
+
+          <textarea
+            id="promptTextarea"
+            placeholder="说说你想做的页面，或直接在左下角上传 Word / Excel / PDF（无需写字即可一键生成）"
+            rows="2"
+          ></textarea>
+
+          <!-- 挂载文件展示区（沿用现网逻辑） -->
+          <div class="selected-files" id="selectedFilesArea" style="display: flex;">
+            <span class="selected-file">2026年Q3经营分析报表.xlsx · 2.4 MB</span>
+            <button class="clear-files-button" type="button" onclick="clearFiles()">
+              <span class="button-icon" aria-hidden="true">
+                <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </span>
+              清空
+            </button>
+          </div>
+
+          <!-- 底部工具栏 -->
+          <div class="composer-toolbar">
+            <div class="composer-tools">
+              <!-- 左侧大胶囊主入口 -->
+              <label class="composer-upload is-primary-cta" title="上传文档转网页" onclick="document.getElementById('fileInput').click()">
+                <span class="composer-upload-icon" aria-hidden="true">
+                  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path>
+                  </svg>
+                </span>
+                <span class="composer-upload-text">上传文档转网页</span>
+                <span class="composer-upload-rec-tag">推荐</span>
+              </label>
+
+              <!-- 模型选择器 -->
+              <div class="model-picker">
+                <button type="button" class="model-picker-trigger">
+                  <span class="model-picker-dots">
+                    <span class="model-dot" style="background: #3b82f6;"></span>
+                    <span class="model-dot" style="background: #10b981;"></span>
+                  </span>
+                  <span class="model-picker-text">2 个模型并行</span>
+                  <span class="model-picker-caret">
+                    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <button
+              class="composer-send"
+              type="submit"
+              id="sendButton"
+              aria-label="创建页面"
+            >
+              <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5"></line>
+                <polyline points="5 12 12 5 19 12"></polyline>
+              </svg>
+            </button>
+          </div>
+        </form>
+
+        <!-- 文档转换引导 Chips -->
+        <div class="prompt-inspirations" role="list">
+          <span class="prompt-inspirations-lead">试试</span>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('将 Excel 报表重构成高管数据看板，带核心 KPI 统计卡片与动态趋势')">
+            <span class="preset-emoji">📊</span>Excel 转数据看板
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('将 Word 白皮书重构成现代在线阅读文档，带左侧锚点导航与引用框')">
+            <span class="preset-emoji">📑</span>Word 转交互白皮书
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('将 PDF 简历转为个人主页，突出核心项目成就与社交链接')">
+            <span class="preset-emoji">👤</span>PDF 转个人主页
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPrompt('将 PPT 商业方案转为高转化产品介绍页')">
+            <span class="preset-emoji">🚀</span>PPT 转落地页
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="preview-quick-toggle">
+    <span>模拟状态：</span>
+    <button class="preview-quick-btn" id="btnEmpty" onclick="simulateState('empty')">未选文档</button>
+    <button class="preview-quick-btn is-active" id="btnLoaded" onclick="simulateState('loaded')">已选文档</button>
+  </aside>
+
+  <script>
+    let hasFile = true;
+
+    function renderFiles() {
+      const area = document.getElementById("selectedFilesArea");
+      area.style.display = hasFile ? "flex" : "none";
+    }
+
+    function clearFiles() {
+      hasFile = false;
+      renderFiles();
+      document.getElementById("btnEmpty").classList.add("is-active");
+      document.getElementById("btnLoaded").classList.remove("is-active");
+    }
+
+    function handleFile(files) {
+      if (files && files[0]) {
+        hasFile = true;
+        renderFiles();
+        document.getElementById("btnLoaded").classList.add("is-active");
+        document.getElementById("btnEmpty").classList.remove("is-active");
+      }
+    }
+
+    function simulateState(state) {
+      hasFile = (state === "loaded");
+      renderFiles();
+      if (hasFile) {
+        document.getElementById("btnLoaded").classList.add("is-active");
+        document.getElementById("btnEmpty").classList.remove("is-active");
+      } else {
+        document.getElementById("btnEmpty").classList.add("is-active");
+        document.getElementById("btnLoaded").classList.remove("is-active");
+      }
+    }
+
+    function insertPrompt(val) {
+      const textarea = document.getElementById("promptTextarea");
+      textarea.value = val;
+      textarea.focus();
+    }
+
+    function handleSubmit() {
+      const prompt = document.getElementById("promptTextarea").value;
+      alert(`[方案三演示]\n文档状态：${hasFile ? "已挂载《2026年Q3经营分析报表.xlsx》" : "无文档"}\n输入内容：${prompt || "（无文字直接一键生成）"}`);
+    }
+
+    renderFiles();
+  </script>
+</body>
+</html>

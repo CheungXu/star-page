@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案四：卡片外置分段切换 (3004)</title>
+  <link rel="stylesheet" href="_prod_base.css" />
+  <link rel="stylesheet" href="preview-patch.css" />
+  <style>
+    /* ==========================================================================
+       方案四特化：卡片外置分段切换器（Segmented Switcher）
+       在输入卡片上方居中放置胶囊切换栏，彻底解耦“文档转网页”与“灵感直接聊”两种心智
+       ========================================================================== */
+    .hero-mode-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px;
+      margin-top: 24px;
+      margin-bottom: -10px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.06);
+      backdrop-filter: blur(8px);
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+      z-index: 5;
+      position: relative;
+    }
+
+    .mode-tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 16px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .mode-tab-btn:hover {
+      color: var(--color-text-primary);
+    }
+
+    .mode-tab-btn.is-active {
+      background: #ffffff;
+      color: var(--color-primary);
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+    }
+
+    .mode-tab-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 999px;
+      background: rgba(53, 99, 233, 0.12);
+      color: var(--color-primary);
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <header class="preview-nav-bar">
+    <div class="preview-nav-left">
+      <img src="stars-page-logo-simple.png" width="22" height="22" alt="StarPage Logo" />
+      <span>星页微调方案对比</span>
+    </div>
+    <nav class="preview-ports">
+      <a href="http://localhost:3001/" class="preview-port-tab">3001 · 方案一：卡片内反转</a>
+      <a href="http://localhost:3002/" class="preview-port-tab">3002 · 方案二：双逻辑带</a>
+      <a href="http://localhost:3003/" class="preview-port-tab">3003 · 方案三：常驻大胶囊</a>
+      <a href="http://localhost:3004/" class="preview-port-tab is-active">3004 · 方案四：分段切换</a>
+      <a href="http://localhost:3005/" class="preview-port-tab">3005 · 方案五：自适应卡片</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <div class="hero">
+      <div class="brand-mark">
+        <img
+          src="stars-page-logo-simple.png"
+          alt="星页 StarPage"
+          class="brand-logo"
+          width="58"
+          height="58"
+        />
+      </div>
+
+      <div class="preview-scheme-badge">
+        <span class="dot"></span> 方案四：卡片外置轻量分段切换（Segmented Switcher）
+      </div>
+
+      <h1>想做什么页面？</h1>
+      <p class="subtitle" id="heroSubtitle">
+        上传文档作为内容底座，<strong class="brand-inline">星页 StarPage</strong> 帮你生成可对比的网页。
+      </p>
+
+      <!-- 核心外置分段切换器 -->
+      <div class="hero-mode-switch" role="tablist">
+        <button type="button" class="mode-tab-btn is-active" id="tabDoc" onclick="switchMode('doc')">
+          <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path>
+          </svg>
+          文档转网页
+          <span class="mode-tab-badge">推荐</span>
+        </button>
+        <button type="button" class="mode-tab-btn" id="tabChat" onclick="switchMode('chat')">
+          <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+          纯文字构思
+        </button>
+      </div>
+
+      <div class="prompt-form-wrap hero-wrap">
+        <form class="prompt-card hero-prompt" onsubmit="event.preventDefault(); handleSubmit();">
+          <input type="file" id="fileInput" hidden multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleFile(this.files)" />
+
+          <textarea
+            id="promptTextarea"
+            placeholder="补充风格倾向或重点关注内容（可选，不写将自动提炼最优版式）…"
+            rows="2"
+          ></textarea>
+
+          <div class="selected-files" id="selectedFilesArea" style="display: flex;">
+            <span class="selected-file">2026年Q3经营分析报表.xlsx · 2.4 MB</span>
+            <button class="clear-files-button" type="button" onclick="clearFiles()">
+              <span class="button-icon" aria-hidden="true">
+                <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </span>
+              清空
+            </button>
+          </div>
+
+          <div class="composer-toolbar">
+            <div class="composer-tools">
+              <label class="composer-upload" id="uploadLabelBtn" title="更换文档" onclick="document.getElementById('fileInput').click()">
+                <span class="composer-upload-icon" aria-hidden="true">
+                  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path>
+                  </svg>
+                </span>
+                <span class="composer-upload-text" id="uploadBtnText">更换文档</span>
+              </label>
+
+              <div class="model-picker">
+                <button type="button" class="model-picker-trigger">
+                  <span class="model-picker-dots">
+                    <span class="model-dot" style="background: #3b82f6;"></span>
+                    <span class="model-dot" style="background: #10b981;"></span>
+                  </span>
+                  <span class="model-picker-text">2 个模型并行</span>
+                  <span class="model-picker-caret">
+                    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <button
+              class="composer-send"
+              type="submit"
+              id="sendButton"
+              aria-label="创建页面"
+            >
+              <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <line x1="12" y1="19" x2="12" y2="5"></line>
+                <polyline points="5 12 12 5 19 12"></polyline>
+              </svg>
+            </button>
+          </div>
+        </form>
+
+        <div class="prompt-inspirations" id="chipsContainer" role="list">
+          <!-- 动态渲染 chips -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="preview-quick-toggle">
+    <span>模拟状态：</span>
+    <button class="preview-quick-btn" id="btnEmpty" onclick="simulateState('empty')">未选文档</button>
+    <button class="preview-quick-btn is-active" id="btnLoaded" onclick="simulateState('loaded')">已选文档</button>
+  </aside>
+
+  <script>
+    let activeMode = "doc"; // "doc" | "chat"
+    let hasFile = true;
+
+    const docChips = [
+      { emoji: "📊", text: "Excel 转数据看板", prompt: "将 Excel 报表重构成高管数据看板，带核心 KPI 统计卡片与动态趋势" },
+      { emoji: "📑", text: "Word 转交互白皮书", prompt: "将 Word 白皮书重构成现代在线阅读文档，带左侧锚点导航与引用框" },
+      { emoji: "👤", text: "PDF 转个人主页", prompt: "将 PDF 简历转为个人主页，突出核心项目成就与社交链接" },
+      { emoji: "🚀", text: "PPT 转落地页", prompt: "将 PPT 商业方案转为高转化产品介绍页" }
+    ];
+
+    const chatChips = [
+      { emoji: "🚀", text: "产品介绍页", prompt: "面向客户的高端 SaaS 产品介绍官网" },
+      { emoji: "📊", text: "工作汇报", prompt: "2026 Q3 季度产品研发进展复盘" },
+      { emoji: "👤", text: "个人简历", prompt: "全栈工程师个人主页，注重项目成果展示" },
+      { emoji: "🎉", text: "活动邀请", prompt: "线下开发者沙龙发布会报名页" }
+    ];
+
+    function switchMode(mode) {
+      activeMode = mode;
+      document.getElementById("tabDoc").classList.toggle("is-active", mode === "doc");
+      document.getElementById("tabChat").classList.toggle("is-active", mode === "chat");
+
+      const subtitle = document.getElementById("heroSubtitle");
+      const textarea = document.getElementById("promptTextarea");
+      const uploadBtn = document.getElementById("uploadLabelBtn");
+      const filesArea = document.getElementById("selectedFilesArea");
+
+      if (mode === "doc") {
+        subtitle.innerHTML = `上传文档作为内容底座，<strong class="brand-inline">星页 StarPage</strong> 帮你生成可对比的网页。`;
+        textarea.placeholder = "补充风格倾向或重点关注内容（可选，不写将自动提炼最优版式）…";
+        uploadBtn.style.display = "inline-flex";
+        filesArea.style.display = hasFile ? "flex" : "none";
+        renderChips(docChips);
+      } else {
+        subtitle.innerHTML = `说说你的想法，<strong class="brand-inline">星页 StarPage</strong> 帮你生成可对比的网页。`;
+        textarea.placeholder = "说说你想做的页面，例如「面向客户的产品介绍页」";
+        uploadBtn.style.display = "inline-flex";
+        filesArea.style.display = "none";
+        renderChips(chatChips);
+      }
+    }
+
+    function renderChips(chips) {
+      const container = document.getElementById("chipsContainer");
+      container.innerHTML = `<span class="prompt-inspirations-lead">试试</span>`;
+      chips.forEach(c => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "prompt-inspiration-chip";
+        btn.onclick = () => insertPrompt(c.prompt);
+        btn.innerHTML = `<span class="preset-emoji">${c.emoji}</span>${c.text}`;
+        container.appendChild(btn);
+      });
+    }
+
+    function clearFiles() {
+      hasFile = false;
+      document.getElementById("selectedFilesArea").style.display = "none";
+      document.getElementById("uploadBtnText").innerText = "上传文档";
+      document.getElementById("btnEmpty").classList.add("is-active");
+      document.getElementById("btnLoaded").classList.remove("is-active");
+    }
+
+    function handleFile(files) {
+      if (files && files[0]) {
+        hasFile = true;
+        document.getElementById("selectedFilesArea").style.display = "flex";
+        document.getElementById("uploadBtnText").innerText = "更换文档";
+        document.getElementById("btnLoaded").classList.add("is-active");
+        document.getElementById("btnEmpty").classList.remove("is-active");
+      }
+    }
+
+    function simulateState(state) {
+      hasFile = (state === "loaded");
+      if (activeMode === "doc") {
+        document.getElementById("selectedFilesArea").style.display = hasFile ? "flex" : "none";
+      }
+      document.getElementById("uploadBtnText").innerText = hasFile ? "更换文档" : "上传文档";
+      if (hasFile) {
+        document.getElementById("btnLoaded").classList.add("is-active");
+        document.getElementById("btnEmpty").classList.remove("is-active");
+      } else {
+        document.getElementById("btnEmpty").classList.add("is-active");
+        document.getElementById("btnLoaded").classList.remove("is-active");
+      }
+    }
+
+    function insertPrompt(val) {
+      const textarea = document.getElementById("promptTextarea");
+      textarea.value = val;
+      textarea.focus();
+    }
+
+    function handleSubmit() {
+      const prompt = document.getElementById("promptTextarea").value;
+      alert(`[方案四演示 - ${activeMode === 'doc' ? '文档模式' : '文字模式'}]\n文档：${activeMode === 'doc' && hasFile ? '已挂载' : '无'}\n提示词：${prompt || '（自动优化）'}`);
+    }
+
+    switchMode("doc");
+  </script>
+</body>
+</html>

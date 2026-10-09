@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页 StarPage · 方案5-A：高质感文档主舱 + 紧凑对话微调 (3001)</title>
+  <link rel="stylesheet" href="_base5.css" />
+  <style>
+    /* ==========================================================================
+       方案 5-A 最终落地版：
+       - 文档区域高度提升：充足的投放呼吸感与尊崇感，明确“文档为核心内容源”
+       - 输入框高度收敛：紧凑轻盈，作为排版与风格的次级“可选微调条”
+       - 原版高级质感 100% 传承：流光呼吸渐变边框、玻璃拟态、多层柔和弥散投影
+       ========================================================================== */
+
+    /* 卡片容器：微调内边距，呈现更协调的垂直节奏 */
+    .prompt-card.hero-prompt {
+      padding: 14px 16px 12px;
+      gap: 10px;
+    }
+
+    /* --------------------------------------------------------------------------
+       1. 顶部文档投放与挂载主舱（高质感 Drop & Mount Chamber）
+       -------------------------------------------------------------------------- */
+    .doc-stage-chamber {
+      position: relative;
+      width: 100%;
+      border-radius: var(--radius-lg);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+      overflow: hidden;
+    }
+
+    /* 空态：开阔、轻灵的文档投放舱（高度 86px，既宽敞又不过分占据首屏） */
+    .doc-stage-chamber.is-empty {
+      height: 92px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      background: linear-gradient(180deg, rgba(246, 249, 255, 0.75) 0%, rgba(240, 245, 255, 0.45) 100%);
+      border: 1.5px dashed rgba(53, 99, 233, 0.28);
+      cursor: pointer;
+    }
+
+    .doc-stage-chamber.is-empty:hover {
+      background: linear-gradient(180deg, rgba(238, 244, 255, 0.95) 0%, rgba(230, 240, 255, 0.7) 100%);
+      border-color: rgba(53, 99, 233, 0.55);
+      box-shadow: 0 4px 16px -4px rgba(53, 99, 233, 0.15);
+      transform: translateY(-0.5px);
+    }
+
+    /* 拖拽悬停高亮态 */
+    .doc-stage-chamber.is-dragover {
+      background: rgba(224, 235, 255, 0.95) !important;
+      border-color: var(--color-primary) !important;
+      box-shadow: 0 0 0 4px rgba(53, 99, 233, 0.18), 0 8px 24px -4px rgba(53, 99, 233, 0.25) !important;
+      transform: scale(1.008);
+    }
+
+    .chamber-empty-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    /* 图标徽标容器：柔和品牌色背景 + 质感投影 */
+    .chamber-icon-box {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #eff5ff 0%, #dbe8fe 100%);
+      border: 1px solid rgba(53, 99, 233, 0.2);
+      color: var(--color-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px -2px rgba(53, 99, 233, 0.2);
+      transition: transform 0.2s ease;
+    }
+
+    .doc-stage-chamber.is-empty:hover .chamber-icon-box {
+      transform: translateY(-1px) scale(1.05);
+    }
+
+    .chamber-text-group {
+      display: flex;
+      flex-direction: column;
+      text-align: left;
+      gap: 3px;
+    }
+
+    .chamber-main-title {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: var(--color-text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chamber-main-title .rec-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--color-primary-soft-strong);
+      color: var(--color-primary);
+    }
+
+    .chamber-sub-hint {
+      font-size: 12.5px;
+      color: var(--color-text-tertiary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chamber-empty-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 文件格式微型药丸群 */
+    .chamber-format-badges {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .fmt-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2.5px 7px;
+      border-radius: 6px;
+      letter-spacing: 0.02em;
+    }
+
+    .fmt-pill.word { background: #eff6ff; color: #1e40af; border: 1px solid #dbeafe; }
+    .fmt-pill.excel { background: #f0fdf4; color: #166534; border: 1px solid #dcfce7; }
+    .fmt-pill.pdf { background: #fef2f2; color: #991b1b; border: 1px solid #fee2e2; }
+    .fmt-pill.ppt { background: #fff7ed; color: #9a3412; border: 1px solid #ffedd5; }
+
+    /* --------------------------------------------------------------------------
+       已挂载状态（Loaded Stage）：有存在感的卡片化结构
+       -------------------------------------------------------------------------- */
+    .doc-stage-chamber.is-loaded {
+      min-height: 80px;
+      padding: 12px 16px;
+      background: linear-gradient(180deg, rgba(240, 246, 255, 0.9) 0%, rgba(234, 242, 255, 0.7) 100%);
+      border: 1px solid rgba(53, 99, 233, 0.26);
+      box-shadow:
+        0 1px 3px rgba(53, 99, 233, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 8px;
+      cursor: default;
+    }
+
+    .chamber-loaded-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--color-text-tertiary);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      padding: 0 2px;
+    }
+
+    .chamber-loaded-head .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--color-success);
+      font-weight: 600;
+    }
+
+    .chamber-loaded-head .status-badge::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-success);
+      box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
+    }
+
+    .chamber-file-list {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .doc-file-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 12px 7px 10px;
+      background: #ffffff;
+      border: 1px solid rgba(53, 99, 233, 0.16);
+      border-radius: var(--radius-md);
+      box-shadow:
+        0 1px 3px rgba(15, 23, 42, 0.04),
+        0 4px 12px -4px rgba(53, 99, 233, 0.1);
+      transition: all 0.18s ease;
+    }
+
+    .doc-file-card:hover {
+      border-color: rgba(53, 99, 233, 0.35);
+      box-shadow: 0 4px 16px -2px rgba(53, 99, 233, 0.16);
+    }
+
+    .file-type-badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 800;
+      flex-shrink: 0;
+      letter-spacing: 0.02em;
+    }
+
+    .file-type-badge.excel { background: linear-gradient(135deg, #107c41, #16a34a); }
+    .file-type-badge.word { background: linear-gradient(135deg, #185abd, #2563eb); }
+    .file-type-badge.pdf { background: linear-gradient(135deg, #c43126, #dc2626); }
+    .file-type-badge.ppt { background: linear-gradient(135deg, #d83b01, #ea580c); }
+
+    .file-name-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      text-align: left;
+    }
+
+    .file-name-text {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      max-width: 320px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-size-text {
+      font-size: 11px;
+      color: var(--color-text-tertiary);
+    }
+
+    .file-del-btn {
+      background: none;
+      border: none;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      margin-left: 2px;
+    }
+
+    .file-del-btn:hover {
+      color: var(--color-danger);
+      background: rgba(180, 35, 24, 0.08);
+    }
+
+    .add-more-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 7px 12px;
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px dashed rgba(53, 99, 233, 0.32);
+      color: var(--color-primary);
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .add-more-pill:hover {
+      background: #ffffff;
+      border-color: var(--color-primary);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* --------------------------------------------------------------------------
+       2. 收敛更紧凑的 Textarea（排版与风格微调栏）
+       -------------------------------------------------------------------------- */
+    .compact-prompt-box {
+      width: 100%;
+      position: relative;
+    }
+
+    .prompt-card textarea.compact-prompt-input {
+      min-height: 40px;
+      max-height: 160px;
+      padding: 8px 10px 4px;
+      font-size: 14.5px;
+      line-height: 1.5;
+      color: var(--color-text-primary);
+      border-radius: var(--radius-sm);
+      transition: background 0.18s ease;
+    }
+
+    .prompt-card textarea.compact-prompt-input:focus {
+      background: rgba(255, 255, 255, 0.6);
+    }
+
+    .prompt-card textarea.compact-prompt-input::placeholder {
+      font-size: 14px;
+      color: var(--color-text-muted);
+    }
+
+    /* --------------------------------------------------------------------------
+       3. 底部工具条与发送按钮联动
+       -------------------------------------------------------------------------- */
+    .composer-toolbar {
+      padding-top: 2px;
+      border-top: 1px solid rgba(15, 23, 42, 0.04);
+      margin-top: 2px;
+    }
+
+    .action-tip-text {
+      font-size: 12px;
+      color: var(--color-text-muted);
+      margin-left: 8px;
+    }
+
+    .action-tip-text.is-ready {
+      color: var(--color-primary);
+      font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-aurora" aria-hidden="true">
+    <span class="aurora-blob aurora-blob-1"></span>
+    <span class="aurora-blob aurora-blob-2"></span>
+    <span class="aurora-blob aurora-blob-3"></span>
+    <span class="aurora-grid"></span>
+  </div>
+
+  <!-- 顶部 3 个版本对比导航 -->
+  <header class="top-nav-switcher">
+    <div class="nav-brand-group">
+      <img src="stars-page-logo-simple.png" alt="StarPage Logo" />
+      <span>自适应优化版</span>
+    </div>
+    <nav class="nav-tabs-group">
+      <a href="http://localhost:3001/" class="nav-tab-pill is-active">方案 5-A：高质感文档主舱 (:3001)</a>
+      <a href="http://localhost:3002/" class="nav-tab-pill">方案 5-B：下置式全景挂载底条 (:3002)</a>
+      <a href="http://localhost:3003/" class="nav-tab-pill">方案 5-C：全域拖吸大平层 (:3003)</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <div class="hero">
+      <div class="brand-mark">
+        <img
+          src="stars-page-logo-simple.png"
+          alt="星页 StarPage"
+          class="brand-logo"
+          width="58"
+          height="58"
+        />
+      </div>
+
+      <div class="scheme-tag">
+        <span class="dot"></span> 方案 5-A 落地效果 · 高质感文档主舱 + 紧凑对话微调
+      </div>
+
+      <h1>想做什么页面？</h1>
+      <p class="subtitle">
+        上传文档提取事实内容，随时对话补充风格要求，<strong class="brand-inline">星页 StarPage</strong> 帮你生成可对比的网页。
+      </p>
+
+      <div class="prompt-form-wrap hero-wrap">
+        <form class="prompt-card hero-prompt" id="promptForm" onsubmit="event.preventDefault(); handleSubmit();">
+          <input type="file" id="realFileInput" hidden multiple accept=".docx,.xlsx,.pptx,.pdf,.txt,.md" onchange="handleRealFile(this.files)" />
+
+          <!-- 1. 高度提升的文档主舱（高度由原本 34px 提升至 92px，空态/已挂载自适应） -->
+          <div
+            class="doc-stage-chamber is-empty"
+            id="docChamber"
+            onclick="handleChamberClick()"
+            ondragover="handleChamberDragOver(event)"
+            ondragleave="handleChamberDragLeave(event)"
+            ondrop="handleChamberDrop(event)"
+          >
+            <!-- 动态渲染空态或已挂载卡片 -->
+          </div>
+
+          <!-- 2. 高度收敛、紧凑的 Textarea（排版与风格微调） -->
+          <div class="compact-prompt-box">
+            <textarea
+              id="promptTextarea"
+              class="compact-prompt-input"
+              placeholder="补充排版或风格要求（如：面向高管汇报，突出 Q3 利润率），选填"
+              rows="1"
+              oninput="handleTextareaInput()"
+              onkeydown="handleTextareaKeyDown(event)"
+            ></textarea>
+          </div>
+
+          <!-- 3. 底部精巧工具条 -->
+          <div class="composer-toolbar">
+            <div class="composer-tools">
+              <div class="model-picker">
+                <button type="button" class="model-picker-trigger">
+                  <span class="model-picker-dots">
+                    <span class="model-dot" style="background: #3b82f6;"></span>
+                    <span class="model-dot" style="background: #10b981;"></span>
+                  </span>
+                  <span class="model-picker-text">2 个模型并行</span>
+                  <span class="model-picker-caret">
+                    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </span>
+                </button>
+              </div>
+
+              <span class="action-tip-text" id="actionTipText">可直接点击或拖入上方文档</span>
+            </div>
+
+            <button
+              class="composer-send is-empty"
+              type="submit"
+              id="sendBtn"
+              aria-label="创建页面"
+            >
+              <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5"></line>
+                <polyline points="5 12 12 5 19 12"></polyline>
+              </svg>
+            </button>
+          </div>
+        </form>
+
+        <!-- 灵感建议 Chips -->
+        <div class="prompt-inspirations" role="list">
+          <span class="prompt-inspirations-lead">试试</span>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPreset('提取核心表格并转为互动可视化看板')">
+            <span class="preset-emoji">📊</span>提取表格数据看板
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPreset('生成高质感在线白皮书，带左侧锚点大纲')">
+            <span class="preset-emoji">📑</span>在线白皮书排版
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPreset('提炼高管汇报摘要，突出核心业绩增长')">
+            <span class="preset-emoji">🎯</span>高管汇报摘要
+          </button>
+          <button type="button" class="prompt-inspiration-chip" onclick="insertPreset('极简科技深色主题')">
+            <span class="preset-emoji">🌙</span>极简科技深色
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 右下角体验模拟器 -->
+  <aside class="quick-simulator">
+    <span>体验模拟：</span>
+    <button class="quick-sim-btn" id="simEmpty" onclick="simulateState('empty')">1. 空态（支持直接打字）</button>
+    <button class="quick-sim-btn is-active" id="simSingle" onclick="simulateState('single')">2. 挂载 Q3财报.xlsx</button>
+    <button class="quick-sim-btn" id="simMulti" onclick="simulateState('multi')">3. 挂载双文档</button>
+  </aside>
+
+  <script>
+    let attachedFiles = [
+      { name: "2026年Q3经营分析报表.xlsx", size: "2.4 MB", type: "excel", typeLabel: "XLS" }
+    ];
+
+    function renderChamber() {
+      const chamber = document.getElementById("docChamber");
+      const textarea = document.getElementById("promptTextarea");
+      const sendBtn = document.getElementById("sendBtn");
+      const tipText = document.getElementById("actionTipText");
+      const hasText = textarea.value.trim().length > 0;
+      const hasFiles = attachedFiles.length > 0;
+      const canSubmit = hasFiles || hasText;
+
+      // 发送按钮自适应点亮：只要有文件 OR 有文字，均立即激活
+      if (canSubmit) {
+        sendBtn.classList.remove("is-empty");
+      } else {
+        sendBtn.classList.add("is-empty");
+      }
+
+      if (hasFiles) {
+        chamber.className = "doc-stage-chamber is-loaded";
+        tipText.className = "action-tip-text is-ready";
+        tipText.innerText = "已挂载文档底座 · 可直接点生成";
+        textarea.placeholder = "补充排版或风格要求（如：面向高管汇报，突出 Q3 利润率），选填";
+
+        let cardsHtml = attachedFiles.map((f, idx) => `
+          <div class="doc-file-card">
+            <div class="file-type-badge ${f.type}">${f.typeLabel}</div>
+            <div class="file-name-meta">
+              <span class="file-name-text" title="${f.name}">${f.name}</span>
+              <span class="file-size-text">${f.size}</span>
+            </div>
+            <button type="button" class="file-del-btn" onclick="removeFile(event, ${idx})" title="移除此文件">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        `).join("");
+
+        if (attachedFiles.length < 3) {
+          cardsHtml += `
+            <div class="add-more-pill" onclick="triggerUpload(event)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span>继续添加</span>
+            </div>
+          `;
+        }
+
+        chamber.innerHTML = `
+          <div class="chamber-loaded-head">
+            <span>已锚定内容基座（${attachedFiles.length}/3）</span>
+            <span class="status-badge">解析就绪</span>
+          </div>
+          <div class="chamber-file-list">
+            ${cardsHtml}
+          </div>
+        `;
+      } else {
+        chamber.className = "doc-stage-chamber is-empty";
+        tipText.className = "action-tip-text";
+        tipText.innerText = hasText ? "可按回车直接生成纯文字页面" : "可直接输入文字，或上传上方文档";
+        textarea.placeholder = "说说你想做的页面，例如「面向客户的产品介绍页」，或上传上方文档…";
+
+        chamber.innerHTML = `
+          <div class="chamber-empty-left">
+            <div class="chamber-icon-box">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/>
+                <path d="M12 12v9"/>
+                <path d="m16 16-4-4-4 4"/>
+              </svg>
+            </div>
+            <div class="chamber-text-group">
+              <div class="chamber-main-title">
+                <span>将文档拖入此处，或点击浏览</span>
+                <span class="rec-pill">核心推荐</span>
+              </div>
+              <div class="chamber-sub-hint">
+                <span>支持单次上传 1 ~ 3 个文档，单文件 ≤ 50MB</span>
+              </div>
+            </div>
+          </div>
+          <div class="chamber-empty-right">
+            <div class="chamber-format-badges">
+              <span class="fmt-pill word">Word</span>
+              <span class="fmt-pill excel">Excel</span>
+              <span class="fmt-pill pdf">PDF</span>
+              <span class="fmt-pill ppt">PPT</span>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    function handleChamberClick() {
+      if (attachedFiles.length === 0) {
+        document.getElementById("realFileInput").click();
+      }
+    }
+
+    function triggerUpload(e) {
+      e.stopPropagation();
+      document.getElementById("realFileInput").click();
+    }
+
+    function removeFile(e, idx) {
+      e.stopPropagation();
+      attachedFiles.splice(idx, 1);
+      renderChamber();
+      syncSimButtons();
+    }
+
+    function handleRealFile(files) {
+      if (!files || files.length === 0) return;
+      Array.from(files).forEach(f => {
+        if (attachedFiles.length >= 3) return;
+        let type = "word", typeLabel = "DOC";
+        if (f.name.endsWith(".xlsx") || f.name.endsWith(".xls")) { type = "excel"; typeLabel = "XLS"; }
+        else if (f.name.endsWith(".pdf")) { type = "pdf"; typeLabel = "PDF"; }
+        else if (f.name.endsWith(".pptx")) { type = "ppt"; typeLabel = "PPT"; }
+        attachedFiles.push({
+          name: f.name,
+          size: (f.size / (1024 * 1024)).toFixed(1) + " MB",
+          type: type,
+          typeLabel: typeLabel
+        });
+      });
+      renderChamber();
+      syncSimButtons();
+    }
+
+    function handleChamberDragOver(e) {
+      e.preventDefault();
+      document.getElementById("docChamber").classList.add("is-dragover");
+    }
+
+    function handleChamberDragLeave(e) {
+      e.preventDefault();
+      document.getElementById("docChamber").classList.remove("is-dragover");
+    }
+
+    function handleChamberDrop(e) {
+      e.preventDefault();
+      document.getElementById("docChamber").classList.remove("is-dragover");
+      if (e.dataTransfer && e.dataTransfer.files) {
+        handleRealFile(e.dataTransfer.files);
+      }
+    }
+
+    function handleTextareaInput() {
+      const textarea = document.getElementById("promptTextarea");
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 160) + "px";
+      renderChamber();
+    }
+
+    function handleTextareaKeyDown(e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit();
+      }
+    }
+
+    function insertPreset(text) {
+      const textarea = document.getElementById("promptTextarea");
+      textarea.value = text;
+      handleTextareaInput();
+      textarea.focus();
+    }
+
+    function simulateState(state) {
+      if (state === "empty") {
+        attachedFiles = [];
+      } else if (state === "single") {
+        attachedFiles = [
+          { name: "2026年Q3经营分析报表.xlsx", size: "2.4 MB", type: "excel", typeLabel: "XLS" }
+        ];
+      } else if (state === "multi") {
+        attachedFiles = [
+          { name: "StarPage系统架构白皮书.docx", size: "3.6 MB", type: "word", typeLabel: "DOC" },
+          { name: "2026年Q3经营分析报表.xlsx", size: "2.4 MB", type: "excel", typeLabel: "XLS" }
+        ];
+      }
+      renderChamber();
+      syncSimButtons();
+    }
+
+    function syncSimButtons() {
+      document.getElementById("simEmpty").classList.toggle("is-active", attachedFiles.length === 0);
+      document.getElementById("simSingle").classList.toggle("is-active", attachedFiles.length === 1);
+      document.getElementById("simMulti").classList.toggle("is-active", attachedFiles.length > 1);
+    }
+
+    function handleSubmit() {
+      const prompt = document.getElementById("promptTextarea").value.trim();
+      const hasFiles = attachedFiles.length > 0;
+      if (!hasFiles && !prompt) return;
+
+      const fileNames = hasFiles ? attachedFiles.map(f => f.name).join("、") : "（无文档，直接按文本指令生成）";
+      alert(`[方案 5-A 最终效果提交]\n\n【已挂载文档】：${fileNames}\n【补充微调指令】：${prompt || "（无额外指令，直接根据文档智能生成）"}\n\n即将进入并行生成工作区...`);
+    }
+
+    // 初始化渲染为单文档挂载态，让用户第一时间直观审阅提升后的质感
+    renderChamber();
+  </script>
+</body>
+</html>
