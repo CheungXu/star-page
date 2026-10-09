@@ -150,7 +150,7 @@ LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时百炼系模
 
 费用：`pricing.tiers[]` 维护各模型分段单价（元/百万 tokens），后端按 API 返回的 `usage` 自算（接口不返回 cost）。详见 `wiki/llm-provider-abstraction.md`。
 
-默认勾选：`default_models` 当前为 `["qwen", "doubao"]`（产品确认后可切为 deepseek-v4 组合）。可选：`LLM_DEFAULT_MODELS=qwen,doubao` 覆盖默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
+默认勾选：登录用户 `default_models` 当前为 `["qwen", "doubao"]`（通义 3.8 Max + 豆包 2.1 Pro）。未登录用 `config/billing.json` 的 `anon_default_models`，当前为 `qwen-plus`（通义 3.8 Flash）和 `doubao-code`（豆包 2.1 Turbo）。`anon_allowed_models` 目前是 DeepSeek V4.1 Flash、通义 3.8 Flash、豆包 2.1 Turbo；豆包 2.1 Pro 不在其中。可选：`LLM_DEFAULT_MODELS=qwen,doubao` 只覆盖登录用户的默认勾选；`LLM_MODELS_FILE` 覆盖目录文件路径。
 
 ## 阿里云 OSS
 

@@ -37,14 +37,11 @@
 - **双语品牌文案（侧边栏展开态）**：双层结构 `<span className="brand-name-cn">星页</span><span className="brand-name-en">StarPage</span>`。中文 16px / 800 / `letter-spacing: -0.01em` / primary 色；英文 12px / 700 / `letter-spacing: 0.04em` / secondary 色；容器 `align-items: center` + `line-height: 1` 强制几何中线对齐，避免 baseline 对齐造成文字相对图标偏上 1-2px。
 - **Hero 副标题品牌词高亮**：副标题中"星页 StarPage"使用 `<strong className="brand-inline">` 包裹，主题蓝 `var(--color-primary)` + `font-weight: 600`，在长串灰色副标题里形成"一眼锁定"的视觉聚焦点。
 - **背景光晕（Hero Aurora）**：固定层叠 3 个 `radial-gradient` 色块（品牌蓝/紫罗兰/天蓝）+ 极淡网格 `mask-image`，搭配缓慢的 `aurora-float-*` 动画，营造专业的空间感；网格通过 `mask-image` 在视觉焦点向外淡出，避免画面"飘"。受 `prefers-reduced-motion` 控制。
-- **Prompt Card（玻璃焦点卡）**：自上而下微渐变白底 + `backdrop-filter: blur(18px) saturate(150%)` 玻璃质感；阴影升级为「1px 描边 + 近/中/远三层弥散投影 + 顶部 inset 高光」四层体系，营造高级悬浮感；focus / drag 态切换为「品牌色描边 + 柔光环 + 品牌色投影」。首屏 `textarea` 收紧到 2 行起（`min-height: 56px`、`16px` 字号），避免大片空洞。底部工具栏只保留"上传资料"按钮 + 右侧"创建"主 CTA。
-- **环境光（`hero-wrap::before` / `brand-mark::before`）**：在 composer 背后投出品牌蓝 + 紫的双层柔和辉光（`blur(34px)`），让输入卡片像在"发光"、成为首屏焦点；logo 背后叠一圈径向柔光，让徽标更"立"。
-- **标题渐变文字**：`h1` 用 `linear-gradient(180deg,#0b1220,#2a3550)` + `background-clip:text`，比纯黑更有质感与纵深；字重 760、字距 `-0.035em`。
-- **主 CTA「创建」立体化**：品牌蓝 `135deg` 渐变 + 品牌色投影 + 顶部 `inset` 高光，hover 加深渐变并上浮 1.5px、箭头图标同步上移，作为全页唯一视觉焦点。
-- **灵感建议（`prompt-inspirations`）**：置于 Prompt Card **下方**并居中，引导词「试试」+ emoji 文案的精致浮起胶囊（半透明玻璃白底 + 细边 `999px` 全圆角 + `--shadow-sm`），hover 时上浮 1px、染品牌浅蓝并加深投影。与卡片内「上传资料/创建」等实心操作按钮在样式与位置上明确区分，避免被误认为标签或功能按钮；用户开始输入文本后自动隐藏，把空间还给内容。
-- **创建按钮三态**：空态灰底 `#e2e8f0`（`is-empty`）；可提交时品牌蓝实心 + hover 上浮；生成中浅蓝 + spinner。
-- **Composer 单行工具栏（`composer-toolbar`）**：彻底重构为轻量"输入条"——textarea 下只留一行工具栏，左侧上传按钮 + 模型选择器，右侧圆形发送钮（`composer-send`）。卡片 `padding` 收紧到 `10px 12px`、`textarea rows=2`，告别此前"三段堆叠"的臃肿。
-- **上传文件入口（`composer-upload`，核心卖点）**：上传**不是**普通工具钮：升级为「回形针图标 + 文字」的强调胶囊「上传文件」，品牌蓝弱底渐变 + 品牌描边，视觉权重**刻意高于**中性的模型选择器。hero 副标题为「说说你的想法，或上传文件，星页 StarPage 帮你生成可对比的网页。」，品牌高亮仍落在「星页 StarPage」。compact（工作区续写）态收成短标签「上传」。
+- **Prompt Card 与首屏文档主舱（v1.1 升级）**：
+  - 自上而下微渐变白底 + `backdrop-filter: blur(18px) saturate(150%)` 玻璃质感；阴影升级为「1px 描边 + 近/中/远三层弥散投影 + 顶部 inset 高光」四层体系；focus / drag 态切换为「品牌色描边 + 柔光环 + 品牌色投影」。
+  - **首屏文档投放主舱（`hero-dropzone`）**：位于 `textarea` 上方，垂直基线与输入文字绝对齐平。空态高度 74px，浅蓝弱底细虚线，呈现「上传文档，一键转为网页」核心主标、副信息「支持 Word · Excel · PDF · PPT」与「选择文件」药丸；支持全局与就地拖入；挂载后就地展示文件卡片并支持重新选择与清空。
+  - **微调输入框**：首屏 `textarea` 设为单行 `min-height: 44px`，无文档时引导直接打字（敲字即点亮发送键），有文档时引导输入选填微调（有文档无需打字直接可点生成）；输入增多时平滑自适应撑高。
+  - **底栏工具栏**：首屏左下角原上传小按钮上移至主舱，底栏只保留模型选择器 + 右侧圆形发送钮，空间极度清爽；工作区 compact 态续写仍保留紧凑上传入口。
 - **模型选择器（`model-picker` 弹出浮层）**：常态只占一个紧凑 pill（叠放的品牌色彩点 + 「N 个模型 / 模型名」+ caret），点击**向下**弹出毛玻璃浮层（`model-menu`，`top: 100%`，多层阴影 + `model-menu-in` 入场缩放动效）多选。**之所以向下弹**：工具栏在卡片底部，向上弹会遮挡输入框。浮层项带品牌色圆点 + 选中细勾，选中态品牌浅蓝底；点击外部 / Esc 关闭。**注意**：浮层需溢出卡片展开，Prompt Card 不能用 `overflow: hidden`；下方紧邻灵感 chips 时，菜单打开会给 `hero-wrap` 加 `model-menu-open`，让 chips 下移预留空间，避免与浮层重叠。
 - **圆形发送钮（`composer-send`）**：极简圆钮替代文字按钮——品牌蓝 `135deg` 渐变 + 品牌色投影 + 顶部内高光，hover 上浮放大 1.04×、active 回弹 0.98×。空态灰禁用（`is-empty`）、工作区续写次级浅蓝（`is-secondary`）、生成中 spinner（`is-loading`）。作为全页唯一主焦点。
 - **侧边栏导航**：首页 idle 仅「新对话」Active（收起浅底 / 展开柔光环）；品牌 logo 始终中性，不做 Tab 选中。

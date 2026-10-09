@@ -229,6 +229,7 @@ class BillingConfig:
     free_trial_generations: int
     signup_bonus_credits: int
     anon_allowed_models: list[str]
+    anon_default_models: list[str]
     anon_max_models_per_gen: int
     anon_daily_id_limit_per_ip: int
     anon_daily_free_generation_limit_per_ip: int
@@ -275,6 +276,7 @@ def get_billing_config() -> BillingConfig:
         free_trial_generations=int(data.get("free_trial_generations", 2)),
         signup_bonus_credits=int(data.get("signup_bonus_credits", 1000)),
         anon_allowed_models=[str(item) for item in (data.get("anon_allowed_models") or [])],
+        anon_default_models=[str(item) for item in (data.get("anon_default_models") or [])],
         anon_max_models_per_gen=int(data.get("anon_max_models_per_gen", 2)),
         anon_daily_id_limit_per_ip=int(data.get("anon_daily_id_limit_per_ip", 3)),
         anon_daily_free_generation_limit_per_ip=int(data.get("anon_daily_free_generation_limit_per_ip", 5)),

@@ -944,9 +944,192 @@ h1 {
   line-height: 1.6;
 }
 
-/* 首屏输入区：两行高度即可，避免大片空洞；输入增多时自动撑高 */
+/* 首屏输入区：文档区承担主入口，输入框收为一行补充说明；输入增多时自动撑高 */
 .hero-prompt textarea {
-  min-height: 56px;
+  min-height: 44px;
+}
+
+/* ==========================================================================
+   首屏文档投放区：卡片内的主入口，左右与 textarea 文字起笔对齐
+   ========================================================================== */
+.hero-dropzone {
+  position: relative;
+  z-index: 2;
+  margin-bottom: 2px;
+  border: 1px dashed rgba(53, 99, 233, 0.3);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(234, 240, 255, 0.55), rgba(234, 240, 255, 0.25));
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.hero-dropzone:hover,
+.prompt-card.is-drag-over .hero-dropzone {
+  border-color: rgba(53, 99, 233, 0.55);
+  background: linear-gradient(180deg, rgba(234, 240, 255, 0.9), rgba(234, 240, 255, 0.5));
+}
+
+.hero-dropzone input {
+  display: none;
+}
+
+.hero-dropzone-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 74px;
+  padding: 0 16px 0 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.hero-dropzone-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid rgba(53, 99, 233, 0.18);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--color-primary);
+  font-size: 19px;
+  box-shadow: 0 4px 12px -6px rgba(53, 99, 233, 0.45);
+}
+
+.hero-dropzone-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hero-dropzone-text strong {
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.hero-dropzone-text small {
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+}
+
+.hero-dropzone-cta {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0 14px;
+  border: 1px solid rgba(53, 99, 233, 0.28);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--color-primary-active);
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.hero-dropzone-empty:hover .hero-dropzone-cta {
+  border-color: rgba(53, 99, 233, 0.45);
+  background: var(--color-primary-soft);
+}
+
+.hero-dropzone.has-files {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 12px;
+  border-style: solid;
+  border-color: rgba(53, 99, 233, 0.22);
+}
+
+.hero-dropzone-files {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hero-dropzone-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 36px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  font-size: 13px;
+}
+
+.hero-dropzone-file-icon {
+  display: inline-flex;
+  color: var(--color-primary);
+  font-size: 15px;
+}
+
+.hero-dropzone-file-name {
+  overflow: hidden;
+  max-width: 260px;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero-dropzone-file-size {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.hero-dropzone-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.hero-dropzone-link {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background 0.15s ease;
+}
+
+.hero-dropzone-link:hover {
+  background: rgba(53, 99, 233, 0.08);
+}
+
+.hero-dropzone-link.is-muted {
+  color: var(--color-text-tertiary);
+}
+
+.hero-dropzone-link.is-muted:hover {
+  background: var(--color-surface-soft);
+  color: var(--color-danger);
+}
+
+@media (max-width: 640px) {
+  .hero-dropzone-cta,
+  .hero-dropzone-text small {
+    display: none;
+  }
 }
 
 /* placeholder 必须是"提示"而不是"内容"，调淡到能识别但不抢戏 */

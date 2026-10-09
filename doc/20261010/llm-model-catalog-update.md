@@ -17,7 +17,7 @@
 | 智谱 GLM-5.3 | `glm-5.3` | `glm-5.3` | 8 / 28 / 2 |
 | Kimi K3 | `kimi-k3` | `kimi-k3` | 20 / 100 / 2 |
 
-默认勾选仍是通义 Max + 豆包 Pro。匿名可用模型首位改为 DeepSeek V4.1 Flash，另外两个仍是通义 Flash 槽和豆包 Pro。
+登录用户默认勾选仍是通义 Max + 豆包 Pro。未登录默认勾选通义 3.8 Flash 和豆包 2.1 Turbo。匿名可用只有 DeepSeek V4.1 Flash、通义 3.8 Flash、豆包 2.1 Turbo；豆包 2.1 Pro 未登录可见但不可选。
 
 ## 取舍
 

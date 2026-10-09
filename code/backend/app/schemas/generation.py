@@ -35,6 +35,7 @@ class ModelInfo(BaseModel):
     is_default: bool
     available: bool
     anon_allowed: bool = True
+    anon_default: bool = False
 
 
 class GenerationEventPayload(BaseModel):

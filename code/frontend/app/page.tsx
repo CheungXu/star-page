@@ -19,6 +19,7 @@ type ModelInfo = {
   is_default: boolean;
   available: boolean;
   anon_allowed?: boolean;
+  anon_default?: boolean;
 };
 
 type AuthUser = {
@@ -1118,7 +1119,7 @@ export default function HomePage() {
     writeCurrentSession(session);
   }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, appliedSkill, roundIndex, continueBase]);
 
-  async function initializeAuthState(): Promise<void> {
+  async function initializeAuthState(): Promise<AuthUser | null> {
     const user = await loadMe();
     if (!user) {
       // 未登录也可能是已分配匿名 cookie 的访客：尝试拉取其历史。
@@ -1128,7 +1129,7 @@ export default function HomePage() {
         localStorage.removeItem(CURRENT_SESSION_KEY);
       }
       hasHydratedRef.current = true;
-      return;
+      return null;
     }
 
     await loadHistory(historyScope, historySearch, user);
@@ -1137,6 +1138,7 @@ export default function HomePage() {
       localStorage.removeItem(CURRENT_SESSION_KEY);
     }
     hasHydratedRef.current = true;
+    return user;
   }
 
   async function loadMe(): Promise<AuthUser | null> {
@@ -1178,6 +1180,7 @@ export default function HomePage() {
       setAuthUser(null);
       setHistoryItems([]);
       setShowPasswordPrompt(false);
+      setSelectedModelKeys(chooseSelectedModelKeys(availableModels, null));
       startNewChat();
     }
   }
@@ -1219,27 +1222,14 @@ export default function HomePage() {
     setAccount(data);
   }
 
-  async function loadModels(): Promise<void> {
+  async function loadModels(user: AuthUser | null): Promise<void> {
     try {
       const response = await apiFetch("/api/models");
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const data = (await response.json()) as ModelInfo[];
       setAvailableModels(data);
-
-      const stored = readSelectedModels();
-      const availableKeys = new Set(data.filter((model) => model.available).map((model) => model.key));
-      const restored = (stored ?? []).filter((key) => availableKeys.has(key));
-      if (restored.length) {
-        setSelectedModelKeys(restored);
-        return;
-      }
-      const defaults = data.filter((model) => model.available && model.is_default).map((model) => model.key);
-      if (defaults.length) {
-        setSelectedModelKeys(defaults);
-        return;
-      }
-      const firstAvailable = data.find((model) => model.available);
-      if (firstAvailable) setSelectedModelKeys([firstAvailable.key]);
+      const next = chooseSelectedModelKeys(data, user);
+      if (next.length) setSelectedModelKeys(next);
     } catch {
       setAvailableModels([]);
     }
@@ -1252,9 +1242,11 @@ export default function HomePage() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void initializeAuthState();
-      void loadModels();
-      void refreshAccount();
+      void (async () => {
+        const user = await initializeAuthState();
+        await loadModels(user);
+        await refreshAccount();
+      })();
     }, 0);
     return () => window.clearTimeout(timer);
     // 首屏初始化只执行一次，内部函数会读当前存储和服务端登录态。
@@ -2092,15 +2084,71 @@ export default function HomePage() {
               松开即可上传资料
             </div>
           )}
+          {!compact && (
+            <div className={`hero-dropzone ${selectedFiles.length > 0 ? "has-files" : ""}`}>
+              {selectedFiles.length > 0 ? (
+                <>
+                  <div className="hero-dropzone-files" aria-label="已选择文件">
+                    {selectedFiles.map((file, index) => (
+                      <span className="hero-dropzone-file" key={`${file.name}-${file.size}-${index}`}>
+                        <span className="hero-dropzone-file-icon" aria-hidden="true"><AttachmentIcon /></span>
+                        <span className="hero-dropzone-file-name">{file.name}</span>
+                        <span className="hero-dropzone-file-size">{formatFileSize(file.size)}</span>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="hero-dropzone-actions">
+                    <label className="hero-dropzone-link" title={FILE_UPLOAD_TITLE}>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept={ACCEPTED_FILE_TYPES}
+                        disabled={isGenerating}
+                        onChange={(event) => handleFileChange(event.target.files)}
+                      />
+                      重新选择
+                    </label>
+                    <button className="hero-dropzone-link is-muted" type="button" onClick={clearSelectedFiles} disabled={isGenerating}>
+                      清空
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <label className="hero-dropzone-empty" title={FILE_UPLOAD_TITLE} aria-label="上传文件">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept={ACCEPTED_FILE_TYPES}
+                    disabled={isGenerating}
+                    onChange={(event) => handleFileChange(event.target.files)}
+                  />
+                  <span className="hero-dropzone-icon" aria-hidden="true"><AttachmentIcon /></span>
+                  <span className="hero-dropzone-text">
+                    <strong>上传文档，一键转为网页</strong>
+                    <small>支持 Word · Excel · PDF · PPT</small>
+                  </span>
+                  <span className="hero-dropzone-cta">选择文件</span>
+                </label>
+              )}
+            </div>
+          )}
           <textarea
             ref={promptTextareaRef}
             value={prompt}
             onChange={handlePromptChange}
-            placeholder={compact ? "继续描述你想调整的方向…" : "说说你想做的页面，例如「面向客户的产品介绍页」"}
-            rows={compact ? 1 : 2}
+            placeholder={
+              compact
+                ? "继续描述你想调整的方向…"
+                : selectedFiles.length > 0
+                  ? "补充说明（选填），例如页面用途、风格偏好或重点内容"
+                  : "或直接说说你想做的页面，例如「面向客户的产品介绍页」"
+            }
+            rows={1}
             disabled={isGenerating}
           />
-          {selectedFiles.length > 0 && (
+          {compact && selectedFiles.length > 0 && (
             <div className="selected-files" aria-label="已选择文件">
               {selectedFiles.map((file, index) => (
                 <span className="selected-file" key={`${file.name}-${file.size}-${index}`}>
@@ -2115,22 +2163,20 @@ export default function HomePage() {
           )}
           <div className={`composer-toolbar ${compact ? "is-compact" : ""}`}>
             <div className="composer-tools">
-              <label
-                className={`composer-upload ${compact ? "is-compact" : ""}`}
-                title={FILE_UPLOAD_TITLE}
-                aria-label="上传文件"
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept={ACCEPTED_FILE_TYPES}
-                  disabled={isGenerating}
-                  onChange={(event) => handleFileChange(event.target.files)}
-                />
-                <span className="composer-upload-icon" aria-hidden="true"><AttachmentIcon /></span>
-                {compact ? <span className="composer-upload-text">上传</span> : <span className="composer-upload-text">上传文件</span>}
-              </label>
+              {compact && (
+                <label className="composer-upload is-compact" title={FILE_UPLOAD_TITLE} aria-label="上传文件">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept={ACCEPTED_FILE_TYPES}
+                    disabled={isGenerating}
+                    onChange={(event) => handleFileChange(event.target.files)}
+                  />
+                  <span className="composer-upload-icon" aria-hidden="true"><AttachmentIcon /></span>
+                  <span className="composer-upload-text">上传</span>
+                </label>
+              )}
               {!compact && renderModelPicker()}
             </div>
             <button
@@ -2475,6 +2521,28 @@ function readCurrentSession(): StoredSession | null {
 
 function writeCurrentSession(session: StoredSession): void {
   localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(session));
+}
+
+function chooseSelectedModelKeys(data: ModelInfo[], user: AuthUser | null): string[] {
+  const availableKeys = new Set(data.filter((model) => model.available).map((model) => model.key));
+  const restored = (readSelectedModels() ?? []).filter((key) => availableKeys.has(key));
+  // 未登录：本机记录里只要混有注册后才可用的模型，就改用匿名默认，而不是留下半套勾选。
+  if (!user) {
+    const allowed = new Set(
+      data.filter((model) => model.available && model.anon_allowed !== false).map((model) => model.key),
+    );
+    const anonRestored = restored.filter((key) => allowed.has(key));
+    if (restored.length > 0 && anonRestored.length === restored.length) {
+      return anonRestored.slice(0, ANON_MAX_MODELS);
+    }
+    const anonDefaults = data.filter((model) => model.available && model.anon_default).map((model) => model.key);
+    if (anonDefaults.length) return anonDefaults;
+  }
+  if (restored.length) return restored;
+  const defaults = data.filter((model) => model.available && model.is_default).map((model) => model.key);
+  if (defaults.length) return defaults;
+  const firstAvailable = data.find((model) => model.available);
+  return firstAvailable ? [firstAvailable.key] : [];
 }
 
 function readSelectedModels(): string[] | null {

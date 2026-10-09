@@ -32,8 +32,10 @@ router = APIRouter(tags=["conversations"])
 @router.get("/api/models", response_model=list[ModelInfo])
 async def list_models() -> list[ModelInfo]:
     registry = get_model_registry()
+    billing = get_billing_config()
     defaults = set(registry.default_model_keys)
-    anon_allowed = set(get_billing_config().anon_allowed_models)
+    anon_allowed = set(billing.anon_allowed_models)
+    anon_defaults = set(billing.anon_default_models)
     return [
         ModelInfo(
             key=model.key,
@@ -42,6 +44,7 @@ async def list_models() -> list[ModelInfo]:
             is_default=model.key in defaults,
             available=model.available,
             anon_allowed=model.key in anon_allowed,
+            anon_default=model.key in anon_defaults,
         )
         for model in registry.models.values()
     ]
