@@ -138,3 +138,18 @@ pkill -f preview-transition/serve.py
 曾评估的方案二（View Transitions）/ 方案一（纯 CSS）因维护成本放弃，完整三级版留档在
 git 分支 `full-animation-mode`。决策见 `wiki/frontend-home-workspace-transition.md` 与
 `doc/20260529/frontend-transition-animation-plan.md`。原型三套实现保留作选型留档。
+
+## 场景案例生成与挑选
+
+`scene-showcase/` 用于给首页「别人做的页面」准备案例，只在测试环境使用。
+
+1. `generate_variants.py`：四个场景各用多个模型并行生成一份候选页，结果写入 JSON。已成功的场景会跳过，可以断点续跑。`--models` 指定模型，默认通义 Max、豆包 Pro、GLM-5.3、Kimi K3。
+2. `shoot_variants.py`：把候选页截成手机和桌面两张图，并按场景拼成对比图，供人工挑选。
+
+挑中后调用 `POST /api/publications` 发布固定链接，再用 `POST /api/admin/scenes/showcases` 设为案例。
+
+```bash
+cd code/backend && . .venv/bin/activate
+python ../../script/scene-showcase/generate_variants.py --token-file /tmp/sp-test-session.txt
+python ../../script/scene-showcase/shoot_variants.py --variants /tmp/scene-audit/variants.json
+```

@@ -18,3 +18,17 @@ class LocalStorageProvider(StorageProvider):
     async def get_text(self, key: str) -> str:
         path = self.base_dir / key
         return await asyncio.to_thread(path.read_text, "utf-8")
+
+    async def put_bytes(self, key: str, content: bytes, content_type: str) -> None:
+        del content_type
+        path = self.base_dir / key
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_bytes, content)
+
+    async def get_bytes(self, key: str) -> bytes:
+        path = self.base_dir / key
+        return await asyncio.to_thread(path.read_bytes)
+
+    async def delete(self, key: str) -> None:
+        path = self.base_dir / key
+        await asyncio.to_thread(path.unlink, True)

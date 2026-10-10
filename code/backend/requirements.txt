@@ -18,3 +18,5 @@ alibabacloud_bssopenapi20171214
 volcengine
 wechatpayv3
 tqdm
+segno
+pillow

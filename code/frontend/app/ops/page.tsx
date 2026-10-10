@@ -147,7 +147,7 @@ type OpsCaseDetail = OpsCase & {
   events: OpsCaseEvent[];
 };
 
-type Tab = "realtime" | "growth" | "retention" | "engagement" | "quality" | "virality" | "monetization" | "users" | "cases";
+type Tab = "realtime" | "growth" | "retention" | "engagement" | "quality" | "virality" | "monetization" | "users" | "cases" | "scenes";
 
 const TAB_LABELS: Record<Tab, string> = {
   realtime: "实时看板",
@@ -159,6 +159,7 @@ const TAB_LABELS: Record<Tab, string> = {
   monetization: "商业化",
   users: "用户明细",
   cases: "Case 查看",
+  scenes: "场景",
 };
 
 // ---------------- 格式化 ----------------
@@ -340,6 +341,7 @@ export default function OpsPage() {
       {tab === "monetization" && <MonetizationView />}
       {tab === "users" && <UsersView />}
       {tab === "cases" && <CasesView />}
+      {tab === "scenes" && <ScenesView />}
     </main>
   );
 }
@@ -1106,6 +1108,94 @@ function CaseDetailPanel({ detail, onClose }: { detail: OpsCaseDetail; onClose: 
         </div>
       </div>
     </div>
+  );
+}
+
+type SceneFunnelRow = {
+  scene_key: string;
+  name: string;
+  priority: string;
+  landing_views: number;
+  generate_clicks: number;
+  conversations: number;
+  tasks: number;
+  tasks_succeeded: number;
+  publications: number;
+  external_views: number;
+};
+
+function ScenesView() {
+  const [rows, setRows] = useState<SceneFunnelRow[]>([]);
+  const [sceneKey, setSceneKey] = useState("resume");
+  const [pageId, setPageId] = useState("");
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    const response = await apiFetch("/api/admin/scenes/funnel");
+    if (!response.ok) return;
+    const data = (await response.json()) as { scenes: SceneFunnelRow[] };
+    setRows(data.scenes ?? []);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function markCase() {
+    setMessage("");
+    const response = await apiFetch("/api/admin/scenes/showcases", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scene_key: sceneKey, page_id: pageId.trim(), title, summary }),
+    });
+    setMessage(response.ok ? "已标为案例" : "标记失败，确认页面 ID 和场景");
+    if (response.ok) void load();
+  }
+
+  return (
+    <section>
+      <div className="ops-section-head"><h3>分场景漏斗</h3></div>
+      <p className="ops-tip">落地访问、生成点击、会话、成功任务、固定链接和外部访问。数字来自明细，不依赖日聚合。</p>
+      <div className="ops-table-scroll">
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>场景</th><th>落地</th><th>点击生成</th><th>会话</th><th>任务</th><th>成功</th><th>发布</th><th>外部访问</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.scene_key}>
+                <td>{row.name} · {row.priority}</td>
+                <td>{fmtInt(row.landing_views)}</td>
+                <td>{fmtInt(row.generate_clicks)}</td>
+                <td>{fmtInt(row.conversations)}</td>
+                <td>{fmtInt(row.tasks)}</td>
+                <td>{fmtInt(row.tasks_succeeded)}</td>
+                <td>{fmtInt(row.publications)}</td>
+                <td>{fmtInt(row.external_views)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <h3>把公开页标成案例</h3>
+      <div className="scene-funnel-form">
+        <select value={sceneKey} onChange={(event) => setSceneKey(event.target.value)}>
+          <option value="resume">网页简历</option>
+          <option value="creator-home">博主主页</option>
+          <option value="landing">产品落地页</option>
+          <option value="invitation">活动邀请函</option>
+        </select>
+        <input value={pageId} onChange={(event) => setPageId(event.target.value)} placeholder="页面 ID" />
+        <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="案例标题，可空" />
+        <input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="一句话说明，可空" />
+        <button type="button" onClick={() => void markCase()}>标记</button>
+      </div>
+      {message && <p className="ops-tip">{message}</p>}
+    </section>
   );
 }
 

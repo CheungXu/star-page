@@ -62,7 +62,12 @@ journalctl -u star-page-backend.service -f
 - `GET /api/models`：返回多模型目录（含可用性）供前端勾选。
 - `GET /api/pages`：旧版页面级历史接口，当前左侧历史已切到会话级接口。
 - `GET /api/pages/{page_id}`：获取页面元数据。
-- `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。会话被软删后其下节点链接同步失效（404）。
+- `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。会话被软删后其下节点链接同步失效（404）。返回前会补上 Open Graph 标题和描述；`?print=1` 会在加载后调起打印。
+- `GET /api/scenes`、`GET /api/scenes/{key}`：场景目录与案例。生成请求可带 `scene_key`，新建会话时按 `config/scenes.json` 强制技能。
+- `POST /api/publications`、`GET /u/{slug}`：把某个已完成节点发布成固定链接。重新发布只切换版本。同路径下有 `og.png`、`poster.png`、`qr.png`。
+- `GET /assets/{id}`：用户上传的头像、二维码等图片，供生成页引用。
+- `GET /api/pages/{page_id}/stats`：作者查看该会话的外部访问次数。
+- `GET /api/admin/scenes/funnel`、`POST /api/admin/scenes/showcases`：分场景漏斗，以及把公开页标成案例。
 
 ### 计费接口（积分制，1 元 = 100 积分）
 

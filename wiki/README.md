@@ -22,6 +22,7 @@
 - `multi-model-preview-comparison.md`：多模型结果预览对比设计——复用固定视口缩放、按 N 自适应网格 + 单元聚焦、对比模式加宽预览栏、各单元独立信息与动作、先完成先展示。
 - `multi-port-static-preview-for-design-variants.md`：前端"方案 A/B/C 对比"模式，单进程 Python `http.server` + `ThreadingTCPServer` 同时绑定多个端口、每个端口默认入口指向对应方案 HTML，零依赖、零编译、零构建。
 - `png-logo-transparent-and-trim.md`：白底 PNG logo 透明化 + 自动裁剪流程，覆盖 GIMP color-to-alpha 算法、近白色伪影清理、按 alpha bbox 裁剪，配套 CSS `drop-shadow` 最佳实践。本仓库另有"轻量阈值法"版本适用于干净白底无伪影的源图，记录在 `script/README.md`。
+- `scene-positioning-framework.md`：生成类产品的场景化增长与落地框架——配置驱动解耦场景、拒绝生硬表单向导的“Prompt 阈值预填 + 素材槽位分解”交互范式、所见即所得真实案例渲染与主体点击直达、节点链接 vs 固定发布链接双层架构、Shadow DOM 隔离的自传播浮标与微信长图海报服务端生成，以及场景端到端闭环度量。
 - `skill-discovery-and-injection.md`：技能（Skill）发现与注入的通用做法——技能目录(SKILL.md=元数据+正文) + 选择器(关键词/轻量 LLM 路由/Agentic 工具发现三范式) + 注入(包装成 system 叠加)；含默认开启+自动选+手动覆盖、路由兜底不可阻断、batch 级一次定调、持久化多轮延用、渐进式披露省成本、选择器做接口平滑演进(B→C)、技能目录不在构建上下文的部署陷阱。
 - `site-icp-filing-footer.md`：网站 ICP 备案号首页页脚展示——合规要点、fixed vs 静态沉底取舍、SPA idle/工作区分离策略与视觉克制原则。
 - `systemd-nextjs-fastapi-deployment.md`：Next.js + FastAPI 早期 MVP 使用 systemd 常驻运行的部署要点；含 standalone 静态资源教训、"代码更新需重启（无 `--reload`）"、SSE 长连接导致停止卡 90s 应设 `TimeoutStopSec`。

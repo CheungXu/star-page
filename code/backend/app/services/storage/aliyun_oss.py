@@ -20,5 +20,16 @@ class AliyunOssStorageProvider(StorageProvider):
         await asyncio.to_thread(self.bucket.put_object, key, content.encode("utf-8"), headers=headers)
 
     async def get_text(self, key: str) -> str:
+        data = await self.get_bytes(key)
+        return data.decode("utf-8")
+
+    async def put_bytes(self, key: str, content: bytes, content_type: str) -> None:
+        headers = {"Content-Type": content_type}
+        await asyncio.to_thread(self.bucket.put_object, key, content, headers=headers)
+
+    async def get_bytes(self, key: str) -> bytes:
         result = await asyncio.to_thread(self.bucket.get_object, key)
-        return result.read().decode("utf-8")
+        return result.read()
+
+    async def delete(self, key: str) -> None:
+        await asyncio.to_thread(self.bucket.delete_object, key)

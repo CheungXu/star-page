@@ -21,6 +21,8 @@
 - Docker Hub 镜像拉取加速器，或改用阿里云 ACR 镜像
 - CDN、监控、备份等生产配置
 
+场景定义在 `scenes.json`：网页简历、博主主页、产品落地页、活动邀请函。后端 `GET /api/scenes` 读取这份文件。
+
 ## MVP 应用端口
 
 当前 MVP 采用 Next.js 前端 + FastAPI 后端：

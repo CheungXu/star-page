@@ -29,6 +29,7 @@ from app.services.llm.client import create_llm_client
 from app.services.llm.cost import cost_to_payload, estimate_llm_cost, merge_llm_usage, usage_to_payload
 from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, HTML_PAGE_TAILWIND_CORRECTION_PROMPT, build_skill_system_message
 from app.services.llm.types import LlmCostBreakdown, LlmMessage, LlmUsage
+from app.services.scenes.catalog import get_scene
 from app.services.skills.registry import get_skill_registry
 from app.services.skills.selector import SkillSelectionResult, select_skill_for_prompt
 from app.services.sse import SseEvent
@@ -98,6 +99,8 @@ class GenerationService:
         compression_prompt: str | None = None,
         conversation_id: uuid.UUID | None = None,
         base_page_id: uuid.UUID | None = None,
+        scene_key: str | None = None,
+        utm_source: str | None = None,
         user: User,
         client_ip: str | None = None,
     ) -> BatchCreation:
@@ -140,11 +143,25 @@ class GenerationService:
             else:
                 parent_for_model = await self._latest_node_per_model(conversation.id, model_keys)
         else:
-            conversation = Conversation(owner_user_id=user.id, title=title, origin="new")
+            conversation = Conversation(
+                owner_user_id=user.id,
+                title=title,
+                origin="new",
+                scene_key=scene_key,
+                utm_source=utm_source,
+            )
             self.session.add(conversation)
             await self.session.flush()
             kind = "create"
             parent_for_model = {key: None for key in model_keys}
+
+        # 续写沿用会话上的场景，避免同一棵树中途换场景导致技能和链接口径不一致。
+        effective_scene_key = conversation.scene_key or scene_key
+        scene = get_scene(effective_scene_key)
+        forced_skill = scene.skill_key if scene else None
+        extra_skills = list(scene.extra_skill_keys) if scene else []
+        if scene and not conversation.scene_key:
+            conversation.scene_key = scene.key
 
         batch = GenerationBatch(
             conversation_id=conversation.id,
@@ -156,6 +173,7 @@ class GenerationService:
             input_file_names=input_file_names or [],
             extracted_file_text=extracted_file_text or None,
             compression_prompt=compression_prompt,
+            scene_key=scene.key if scene else None,
             status="pending",
         )
         self.session.add(batch)
@@ -178,6 +196,8 @@ class GenerationService:
                 model_key=model_key,
                 model_provider=model.provider if model else None,
                 model_name=model.model if model else None,
+                scene_key=scene.key if scene else None,
+                skill_key=forced_skill,
             )
             self.session.add(page)
             await self.session.flush()
@@ -195,6 +215,9 @@ class GenerationService:
                 extracted_file_text=extracted_file_text or None,
                 compression_prompt=compression_prompt,
                 model_prompt=prompt,
+                skill_key=forced_skill,
+                extra_skill_keys=extra_skills,
+                scene_key=scene.key if scene else None,
                 status="pending",
             )
             permission = PagePermission(page_id=page.id, user_id=user.id, role="owner")
@@ -229,6 +252,10 @@ class GenerationService:
         """按 task 决定技能 key：续写延用 parent 链路；新建则用当前生成模型做 LLM 路由。"""
         if not self.settings.page_skills_enabled:
             return SkillSelectionResult(None, None)
+
+        # 场景在创建任务时已经写好技能，跳过路由。
+        if task.skill_key:
+            return SkillSelectionResult(task.skill_key, None)
 
         if page.parent_page_id is not None:
             inherited = await self._skill_key_from_chain(page.parent_page_id)
@@ -305,8 +332,17 @@ class GenerationService:
     def _build_system_messages(self, task: GenerationTask) -> list[LlmMessage]:
         """通用系统提示 + （如选中技能则）该技能的专项指南。"""
         messages = [LlmMessage(role="system", content=HTML_PAGE_SYSTEM_PROMPT)]
-        if self.settings.page_skills_enabled and task.skill_key:
-            skill = get_skill_registry().get(task.skill_key)
+        if not self.settings.page_skills_enabled:
+            return messages
+        registry = get_skill_registry()
+        keys: list[str] = []
+        if task.skill_key:
+            keys.append(task.skill_key)
+        for key in task.extra_skill_keys or []:
+            if key not in keys:
+                keys.append(key)
+        for key in keys:
+            skill = registry.get(key)
             if skill is not None:
                 messages.append(LlmMessage(role="system", content=build_skill_system_message(skill)))
         return messages

@@ -100,6 +100,8 @@ class Conversation(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     origin: Mapped[str] = mapped_column(String(16), default="new", nullable=False)
     root_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    utm_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_favorite: Mapped[bool] = mapped_column(default=False, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -130,6 +132,7 @@ class Page(Base, TimestampMixin):
     model_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     owner: Mapped[User] = relationship("User")
 
@@ -192,6 +195,7 @@ class GenerationBatch(Base):
     extracted_file_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -216,6 +220,8 @@ class GenerationTask(Base):
     extracted_file_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    extra_skill_keys: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_html_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -435,6 +441,57 @@ class RetentionCohort(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class PageAsset(Base):
+    """用户上传的图片素材。页面通过 /assets/{id} 引用，不暴露存储键。"""
+
+    __tablename__ = "page_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), default="image", nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class PagePublication(Base, TimestampMixin):
+    """会话的固定发布链接。重新发布只切换 page_id，slug 保持不变。"""
+
+    __tablename__ = "page_publications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pages.id", ondelete="CASCADE"), nullable=False)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    og_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    og_image_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    poster_image_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class SceneShowcase(Base):
+    """运营标记的场景案例，供场景页展示和「做同款」。"""
+
+    __tablename__ = "scene_showcases"
+    __table_args__ = (UniqueConstraint("scene_key", "page_id", name="uq_scene_showcases_scene_page"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scene_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pages.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class FunnelDaily(Base):

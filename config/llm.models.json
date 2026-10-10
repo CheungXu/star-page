@@ -180,7 +180,7 @@
       "model": "kimi-k3",
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
-      "params": {},
+      "params": { "temperature": null },
       "extra_body": { "enable_thinking": true },
       "pricing": {
         "currency": "CNY",

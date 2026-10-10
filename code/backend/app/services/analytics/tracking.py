@@ -34,6 +34,9 @@ ALLOWED_EVENTS: frozenset[str] = frozenset(
         "recharge_view",      # 充值页/弹窗曝光
         "recharge_click",     # 点击某充值套餐
         "page_share_click",   # 点击分享生成页（传播意图）
+        "scene_landing_view", # 场景落地页访问（带来源 utm）
+        "scene_remix_click",  # 场景页点击「做同款」
+        "scene_publish",      # 发布固定链接（后端也会直接写入）
     }
 )
 
@@ -73,6 +76,28 @@ def allow_event(ip_hash: str | None) -> bool:
             return False
         bucket.append(now)
         return True
+
+
+_BOT_MARKERS = (
+    "bot",
+    "spider",
+    "crawler",
+    "mpcrawler",
+    "facebookexternalhit",
+    "slackbot",
+    "twitterbot",
+    "telegrambot",
+    "whatsapp",
+    "bytespider",
+    "baiduspider",
+    "googlebot",
+)
+
+
+def is_preview_bot(user_agent: str | None) -> bool:
+    """分享卡片抓取和搜索爬虫不算真人访问。微信里真人打开仍带 MicroMessenger，不在这里排除。"""
+    ua = (user_agent or "").lower()
+    return any(marker in ua for marker in _BOT_MARKERS)
 
 
 def _clip(value: str | None, limit: int) -> str | None:

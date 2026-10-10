@@ -10,7 +10,10 @@ from app.api.routes_auth import router as auth_router
 from app.api.routes_billing import router as billing_router
 from app.api.routes_conversations import router as conversations_router
 from app.api.routes_generation import router as generation_router
+from app.api.routes_assets import router as assets_router
 from app.api.routes_pages import router as pages_router
+from app.api.routes_publications import router as publications_router
+from app.api.routes_scenes import router as scenes_router
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -29,6 +32,9 @@ app.include_router(generation_router)
 app.include_router(auth_router)
 app.include_router(conversations_router)
 app.include_router(pages_router)
+app.include_router(assets_router)
+app.include_router(publications_router)
+app.include_router(scenes_router)
 app.include_router(billing_router)
 app.include_router(admin_router)
 app.include_router(analytics_router)

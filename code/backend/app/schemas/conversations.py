@@ -69,6 +69,7 @@ class ConversationDetail(BaseModel):
     id: UUID
     title: str
     origin: str
+    scene_key: str | None = None
     created_at: datetime
     updated_at: datetime
     batches: list[ConversationBatch]

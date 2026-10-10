@@ -6,6 +6,7 @@
 
 ## 当前记录
 
+- `20261010/scene-positioning-implementation.md`：场景定位落地记录。四个场景（网页简历、博主主页、产品落地页、活动邀请函）共用场景配置、强制技能、固定发布链接、分场景漏斗，历经三轮打磨：首屏“别人做的页面”所见即所得真实案例（带微光加载）、点击直达全屏预览、右上角做同款、输入框 Prompt 预填 + 场景化素材拆分、生成页 Shadow DOM 浮标与微信长图海报弹窗、Kimi K3 temperature 参数修复。
 - `20261010/china-market-growth-strategy.md`：星页 StarPage 中国大陆地区产品增长策略规划（从通用生成到垂直爆款场景破局、产品内生裂变 PLG、本土小红书/科技圈获客矩阵、商业化权益设计与合规护城河）。
 - `20261010/llm-model-catalog-update.md`：模型目录更新与探活。通义 Max 升到 3.8、Plus 槽改为 3.8 Flash、豆包 Pro 升到 Seed 2.1、DeepSeek Flash 升到 V4.1、GLM 升到 5.3、Kimi 升到 K3。
 - `20260522/html-page-builder-architecture-plan.md`：自然语言 HTML 页面生成网站架构规划。

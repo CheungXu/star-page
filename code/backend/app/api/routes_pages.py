@@ -2,44 +2,24 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 
-from app.core.auth import get_client_ip, get_optional_actor, get_optional_user
+from app.core.auth import get_client_ip, get_optional_actor
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.urls import build_page_url
-from app.models.entities import Conversation, GenerationTask, Page, PagePermission, PageVersion
+from app.models.entities import Conversation, GenerationTask, Page, PagePermission, PageVersion, PageViewEvent
 from app.schemas.pages import PageHistoryItem, PageResponse
 from app.services.analytics import record_page_view
+from app.services.analytics.tracking import is_preview_bot
+from app.services.page_delivery import build_remix_url, render_page_html
 from app.services.permission_service import can_view_page
+from app.services.scenes.catalog import get_scene
 from app.services.storage.factory import create_storage_provider
 
 router = APIRouter(tags=["pages"])
-
-
-def _build_page_csp() -> str:
-    """生成页统一的展示型 CSP：sandbox 把页面关进不透明 origin（碰不到主站凭证），
-    connect-src 'none' 禁止一切对外网络（防钓鱼/信标），脚本/样式放行内联与可信 CDN。"""
-    cdn = " ".join(get_settings().generated_page_cdn_sources)
-    script_src = ("'unsafe-inline' " + cdn).strip()
-    style_src = ("'unsafe-inline' " + cdn).strip()
-    return "; ".join(
-        [
-            "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox",
-            "default-src 'none'",
-            f"script-src {script_src}",
-            f"style-src {style_src}",
-            "img-src https: data:",
-            "font-src https: data:",
-            "media-src https: data:",
-            "connect-src 'none'",
-            "form-action 'none'",
-            "base-uri 'none'",
-            "frame-ancestors 'self'",
-        ]
-    )
 
 
 @router.get("/api/pages", response_model=list[PageHistoryItem])
@@ -118,10 +98,36 @@ async def get_page(page_id: uuid.UUID, request: Request) -> PageResponse:
         )
 
 
+@router.get("/api/pages/{page_id}/stats")
+async def page_stats(page_id: uuid.UUID, request: Request) -> dict[str, int]:
+    """作者查看该会话下的外部访问次数。续写换了节点也不清零。"""
+    async with AsyncSessionLocal() as session:
+        user = await get_optional_actor(session, request)
+        page = await session.get(Page, page_id)
+        if page is None or page.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="页面不存在")
+        if user is None or user.id != page.owner_user_id:
+            raise HTTPException(status_code=403, detail="无权查看访问数据")
+        result = await session.execute(
+            select(func.count())
+            .select_from(PageViewEvent)
+            .where(
+                PageViewEvent.conversation_id == page.conversation_id,
+                PageViewEvent.is_owner_view.is_(False),
+            )
+        )
+        external = int(result.scalar_one() or 0)
+    return {"external_view_count": external}
+
+
 @router.get("/p/{conversation_id}/{page_id}")
 async def serve_page(
-    conversation_id: uuid.UUID, page_id: uuid.UUID, request: Request, background_tasks: BackgroundTasks
-) -> HTMLResponse:
+    conversation_id: uuid.UUID,
+    page_id: uuid.UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    print_mode: int = Query(default=0, alias="print"),
+):
     async with AsyncSessionLocal() as session:
         page = await session.get(Page, page_id)
         if page is None or page.deleted_at is not None:
@@ -136,7 +142,7 @@ async def serve_page(
         if conversation is None or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="页面不存在")
 
-        user = await get_optional_user(session, request)
+        user = await get_optional_actor(session, request)
         if not await can_view_page(session, page, user):
             raise HTTPException(status_code=403, detail="无权访问该页面")
 
@@ -154,27 +160,36 @@ async def serve_page(
         owner_user_id = page.owner_user_id
         viewer_user_id = user.id if user is not None else None
         is_owner_view = bool(user is not None and user.id == owner_user_id)
+        page_title = page.title
+        scene = get_scene(page.scene_key)
 
     storage = create_storage_provider()
     html = await storage.get_text(version.storage_key)
 
     # 访问埋点：放到 BackgroundTask，响应返回后再异步写，绝不阻塞页面访问热路径。
-    background_tasks.add_task(
-        record_page_view,
-        page_id=page_id,
-        conversation_id=conversation_id,
-        owner_user_id=owner_user_id,
-        viewer_user_id=viewer_user_id,
-        is_owner_view=is_owner_view,
-        ip=get_client_ip(request),
-        referer=request.headers.get("referer"),
-        user_agent=request.headers.get("user-agent"),
-    )
+    # 分享卡片爬虫不记，避免「外部访问」在发出去之前就被刷高。
+    if not is_preview_bot(request.headers.get("user-agent")):
+        background_tasks.add_task(
+            record_page_view,
+            page_id=page_id,
+            conversation_id=conversation_id,
+            owner_user_id=owner_user_id,
+            viewer_user_id=viewer_user_id,
+            is_owner_view=is_owner_view,
+            ip=get_client_ip(request),
+            referer=request.headers.get("referer"),
+            user_agent=request.headers.get("user-agent"),
+        )
 
-    return HTMLResponse(
-        content=html,
-        headers={
-            "Content-Security-Policy": _build_page_csp(),
-            "X-Content-Type-Options": "nosniff",
-        },
+    settings = get_settings()
+    page_url = build_page_url(settings, conversation_id, page_id)
+    description = scene.tagline if scene and scene.tagline else f"{page_title} · 由星页 StarPage 生成"
+    return render_page_html(
+        html,
+        title=page_title,
+        description=description,
+        image_url=None,
+        page_url=page_url,
+        print_after_load=print_mode == 1,
+        remix_url=build_remix_url(scene.key if scene else None, str(page_id)),
     )

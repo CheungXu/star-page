@@ -18,7 +18,9 @@ skills/page-skills/
 | key | 名称 | 适用场景 | 来源 |
 | --- | --- | --- | --- |
 | `landing` | 产品落地页 | 营销/转化型单页，强调首屏冲击与 CTA | 自研 |
-| `resume` | 简历页 | 个人简历/求职 CV 展示 | 自研 |
+| `resume` | 简历页 | 个人简历/求职 CV 展示，含三种风格、联系方式打码与打印样式 | 自研 |
+| `creator-home` | 博主主页 | 移动端 Bento 个人主页，聚合平台入口与微信二维码 | 自研 |
+| `invitation` | 活动邀请函 | 婚礼/沙龙/派对竖屏邀请函，报名走外链或二维码 | 自研 |
 | `report` | 数据报告 | 数据分析/统计报告展示 | 自研 |
 | `distinctive-design` | 强风格设计 | 追求高辨识度、避免"AI 套路感"的品牌页/作品集/概念站 | 改编自 Anthropic `frontend-design` |
 | `creative-poster` | 创意海报 | 海报/主视觉/封面/邀请函等"视觉为主、文字极简"的设计型单页 | 改编自 Anthropic `canvas-design` |

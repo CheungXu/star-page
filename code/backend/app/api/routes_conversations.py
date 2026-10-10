@@ -222,6 +222,7 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
             id=conversation.id,
             title=conversation.title,
             origin=conversation.origin,
+            scene_key=conversation.scene_key,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
             batches=batch_items,

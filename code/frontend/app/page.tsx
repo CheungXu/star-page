@@ -208,6 +208,7 @@ type ConversationDetailResponse = {
   id: string;
   title: string;
   origin: string;
+  scene_key?: string | null;
   created_at: string;
   updated_at: string;
   batches: ConversationBatchResponse[];
@@ -274,6 +275,19 @@ const SELECTED_MODELS_KEY = "star-page-selected-models";
 const ANON_MAX_MODELS = 2;
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
+const SCENE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+
+function isSceneImageFile(file: File): boolean {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+}
+
+function sceneImageProblem(file: File): string {
+  if (!/\.(png|jpe?g|webp|gif)$/i.test(file.name) && !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+    return `${file.name} 不是 PNG、JPEG、WEBP 或 GIF`;
+  }
+  if (file.size > SCENE_IMAGE_MAX_BYTES) return `${file.name} 超过 2MB，请压缩后再上传`;
+  return "";
+}
 const MAX_FILE_COUNT = 3;
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const MAX_TOTAL_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -441,33 +455,144 @@ function modelAccent(key: string): string {
   return MODEL_ACCENTS[hash % MODEL_ACCENTS.length];
 }
 
-/* Chip 用 emoji：面向年轻白领与学生群体，emoji 比单色线性图标更活泼亲切 */
-type PromptPreset = { id: string; emoji: string; label: string; prompt: string };
+/* 场景卡片：来自 /api/scenes，点击后绑定 scene_key，而不只是回填一句话。 */
+type SceneGuideField = { key: string; label: string; placeholder: string };
+type SceneStyleOption = { key: string; label: string; hint: string };
+type ImageSlot = { key: string; label: string };
+type SceneDefinition = {
+  key: string;
+  name: string;
+  emoji: string;
+  priority: string;
+  tagline: string;
+  prompt_template: string;
+  guide_fields: SceneGuideField[];
+  styles: SceneStyleOption[];
+  accepts_documents: boolean;
+  accepts_images: boolean;
+  image_slots: ImageSlot[];
+  features: string[];
+};
+type SceneCase = { page_id: string; remix_prompt: string };
+type ShowcaseCase = { sceneKey: string; sceneName: string; title: string; pageUrl: string };
 
-const PROMPT_PRESETS: PromptPreset[] = [
+/** 案例缩略图：按手机宽度渲染真实页面，再按卡片宽度等比缩小。 */
+const CASE_THUMB_VIEWPORT = 390;
+
+function CaseThumb({ url, title }: { url: string; title: string }) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(0.45);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const update = () => setScale(box.clientWidth / CASE_THUMB_VIEWPORT);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div className={`case-thumb ${ready ? "is-ready" : ""}`} ref={boxRef} aria-hidden="true">
+      <iframe
+        title={title}
+        src={toAbsoluteUrl(url)}
+        sandbox="allow-scripts"
+        tabIndex={-1}
+        // 生成页大多带入场动画，加载完再等一会儿才显示，避免露出半截动画。
+        onLoad={() => window.setTimeout(() => setReady(true), 900)}
+        style={{ width: CASE_THUMB_VIEWPORT, height: CASE_THUMB_VIEWPORT * 1.6, transform: `scale(${scale})` }}
+      />
+    </div>
+  );
+}
+
+/** 接口未返回前也要画出来，避免首屏空白。字段与 config/scenes.json 对齐。 */
+const FALLBACK_SCENES: SceneDefinition[] = [
   {
-    id: "product",
-    emoji: "🚀",
-    label: "产品介绍页",
-    prompt: "结合我上传的产品资料，做一个面向客户的介绍页，风格简洁、高级，包含核心卖点与适用场景。",
-  },
-  {
-    id: "report",
-    emoji: "📊",
-    label: "工作汇报",
-    prompt: "根据我的内容，做一份图文并茂的工作汇报页面，结构清晰，突出关键数据与下一步计划。",
-  },
-  {
-    id: "resume",
+    key: "resume",
+    name: "网页简历",
     emoji: "👤",
-    label: "个人简历",
-    prompt: "帮我生成一个精致的个人作品集 / 简历单页，突出履历、项目和联系方式。",
+    priority: "P0",
+    tagline: "旧简历变成 HR 愿意点开的网页",
+    prompt_template: "帮我把上传的简历做成一份网页简历：大厂极简风格，第一屏突出姓名、目标职位和三项最亮眼的成绩，电话和邮箱默认打码。",
+    guide_fields: [
+      { key: "name", label: "姓名", placeholder: "例如：林晓" },
+      { key: "target_role", label: "目标职位", placeholder: "例如：前端工程师" },
+      { key: "highlight", label: "最想被看到的一点", placeholder: "例如：独立负责过活动页改版" },
+    ],
+    styles: [
+      { key: "bigtech", label: "大厂极简", hint: "风格：大厂极简。单栏或左栏加右主栏，主色用沉稳蓝或墨绿，信息清楚、留白干净。" },
+      { key: "portfolio", label: "设计师作品集", hint: "风格：设计师作品集。项目用大卡片，视觉有辨识度，同时保证经历可读。" },
+      { key: "graduate", label: "应届生", hint: "风格：应届生。教育和项目的权重大于工作经历，语气积极，结构清楚。" },
+    ],
+    accepts_documents: true,
+    accepts_images: false,
+    image_slots: [],
+    features: ["print_pdf", "stable_link", "view_count"],
   },
   {
-    id: "event",
+    key: "creator-home",
+    name: "博主主页",
+    emoji: "✦",
+    priority: "P0",
+    tagline: "放进简介的个人主页",
+    prompt_template: "帮我做一个博主个人主页。昵称「」，一句话介绍「」。放上我的小红书、公众号等平台入口和代表作品，头像和微信二维码用我上传的图片，二维码放在最显眼的位置。",
+    guide_fields: [
+      { key: "name", label: "昵称", placeholder: "例如：星野" },
+      { key: "positioning", label: "一句话定位", placeholder: "例如：帮独立开发者做增长" },
+      { key: "links", label: "平台链接", placeholder: "小红书 / 公众号 / B站，每行一个" },
+      { key: "works", label: "代表作品", placeholder: "作品或课程名称，每行一个" },
+    ],
+    styles: [],
+    accepts_documents: false,
+    accepts_images: true,
+    image_slots: [
+      { key: "avatar", label: "头像" },
+      { key: "qrcode", label: "微信二维码" },
+    ],
+    features: ["stable_link", "view_count", "images"],
+  },
+  {
+    key: "landing",
+    name: "产品落地页",
+    emoji: "🚀",
+    priority: "P1",
+    tagline: "一份资料，几种设计",
+    prompt_template: "根据我上传的产品资料做一个产品落地页：首屏一句话讲清卖点并配一个主按钮，接着介绍核心功能和使用步骤。不要编造用户数和价格。",
+    guide_fields: [
+      { key: "product_name", label: "产品名", placeholder: "例如：星页" },
+      { key: "one_liner", label: "一句话卖点", placeholder: "例如：一份文档，变成一个网页" },
+      { key: "audience", label: "目标用户", placeholder: "例如：独立开发者" },
+    ],
+    styles: [],
+    accepts_documents: true,
+    accepts_images: true,
+    image_slots: [{ key: "hero", label: "产品图" }],
+    features: ["stable_link", "seo"],
+  },
+  {
+    key: "invitation",
+    name: "活动邀请函",
     emoji: "🎉",
-    label: "活动邀请",
-    prompt: "做一个活动邀请落地页，包含活动主题、时间地点、亮点议程和报名引导。",
+    priority: "P1",
+    tagline: "转进微信就能看",
+    prompt_template: "帮我做一张竖屏活动邀请函。活动名「」，时间「」，地点「」，报名方式「」。包含议程和着装提示，背景用我上传的图片。",
+    guide_fields: [
+      { key: "title", label: "活动主题", placeholder: "例如：周六设计沙龙" },
+      { key: "when_where", label: "时间地点", placeholder: "例如：5 月 16 日 14:00 · 广州" },
+      { key: "rsvp", label: "报名方式", placeholder: "外部报名链接，或写“见二维码”" },
+    ],
+    styles: [],
+    accepts_documents: false,
+    accepts_images: true,
+    image_slots: [
+      { key: "hero", label: "背景图" },
+      { key: "qrcode", label: "报名二维码" },
+    ],
+    features: ["stable_link", "poster"],
   },
 ];
 
@@ -631,6 +756,9 @@ function PreviewCell({
   selectedAsBase,
   dimmedByBase,
   shareGate,
+  sceneFeatures,
+  onRequireLogin,
+  onNotice,
 }: {
   run: RunState;
   onOpenPreview: () => void;
@@ -639,6 +767,9 @@ function PreviewCell({
   selectedAsBase: boolean;
   dimmedByBase: boolean;
   shareGate?: () => boolean;
+  sceneFeatures: string[];
+  onRequireLogin: (message: string) => void;
+  onNotice: (message: string) => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -649,8 +780,34 @@ function PreviewCell({
   });
   const [copied, setCopied] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState("");
+  const [externalViews, setExternalViews] = useState<number | null>(null);
+  const [published, setPublished] = useState<{ url: string; posterUrl: string; qrUrl: string } | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [posterOpen, setPosterOpen] = useState(false);
 
   const absoluteUrl = useMemo(() => toAbsoluteUrl(run.pageUrl), [run.pageUrl]);
+
+  useEffect(() => {
+    if (!posterOpen) return;
+    const close = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setPosterOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [posterOpen]);
+
+  useEffect(() => {
+    if (run.status !== "completed" || !run.pageId) return;
+    let cancelled = false;
+    void apiFetch(`/api/pages/${run.pageId}/stats`).then(async (response) => {
+      if (!response.ok || cancelled) return;
+      const data = (await response.json()) as { external_view_count?: number };
+      if (!cancelled) setExternalViews(data.external_view_count ?? 0);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [run.pageId, run.status]);
 
   function recomputeMetrics() {
     const stage = stageRef.current;
@@ -677,6 +834,60 @@ function PreviewCell({
 
   function handlePreviewLoad() {
     recomputeMetrics();
+  }
+
+  async function publishStableLink() {
+    if (!run.pageId || publishing) return;
+    setPublishing(true);
+    try {
+      const response = await apiFetch("/api/publications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page_id: run.pageId }),
+      });
+      if (response.status === 401) {
+        onRequireLogin("登录后才能发布固定链接");
+        return;
+      }
+      if (!response.ok) {
+        onNotice("发布没有成功，请再试一次");
+        return;
+      }
+      const data = (await response.json()) as {
+        url: string;
+        poster_url: string;
+        qr_url: string;
+        republished?: boolean;
+        external_view_count?: number;
+      };
+      const version = Date.now();
+      setPublished({
+        url: data.url,
+        posterUrl: `${toAbsoluteUrl(data.poster_url)}?v=${version}`,
+        qrUrl: `${toAbsoluteUrl(data.qr_url)}?v=${version}`,
+      });
+      if (typeof data.external_view_count === "number") setExternalViews(data.external_view_count);
+      try {
+        await copyTextToClipboard(data.url);
+        onNotice(data.republished ? "公开链接还是原来的地址，内容已换成这一版" : "已复制固定链接");
+      } catch {
+        onNotice("链接已发布，复制失败，请从下方地址手动复制");
+      }
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function exportPdf() {
+    const target = published?.url || absoluteUrl;
+    if (!target) return;
+    const join = target.includes("?") ? "&" : "?";
+    const opened = window.open(`${target}${join}print=1`, "_blank");
+    if (!opened) {
+      onNotice("浏览器拦住了打印窗口，请允许弹窗后再试");
+      return;
+    }
+    opened.opener = null;
   }
 
   async function copyUrl() {
@@ -751,6 +962,19 @@ function PreviewCell({
                 <CopyIcon />
                 <span>{copied ? "已复制" : copyFeedback || "复制"}</span>
               </button>
+              <button className="link-icon-button" type="button" onClick={() => void publishStableLink()} disabled={publishing}>
+                <span>{publishing ? "发布中" : published ? "更新公开链接" : "发布固定链接"}</span>
+              </button>
+              {sceneFeatures.includes("print_pdf") && (
+                <button className="link-icon-button" type="button" onClick={exportPdf}>
+                  <span>打印或存为 PDF</span>
+                </button>
+              )}
+              {published && (
+                <button className="link-icon-button" type="button" onClick={() => setPosterOpen(true)}>
+                  <span>发朋友圈</span>
+                </button>
+              )}
             </div>
             {canContinue && (
               <button className="continue-button" type="button" onClick={onContinue} aria-pressed={selectedAsBase}>
@@ -759,6 +983,36 @@ function PreviewCell({
               </button>
             )}
           </div>
+          {sceneFeatures.includes("view_count") && externalViews !== null && (
+            <p className="scene-view-count">{externalViews === 0 ? "还没有别人打开" : `别人打开 ${externalViews} 次`}</p>
+          )}
+          {published && (
+            <div className="scene-publish-result">
+              <img src={published.qrUrl} alt="固定链接二维码" width={96} height={96} />
+              <p className="scene-published-url">{published.url}</p>
+            </div>
+          )}
+          {published && posterOpen && (
+            <div className="poster-modal-backdrop" role="presentation" onClick={() => setPosterOpen(false)}>
+              <section
+                className="poster-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="朋友圈海报"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <img src={published.posterUrl} alt={`${run.modelLabel} 页面海报`} />
+                <p className="poster-modal-tip">手机上长按图片保存，再发到朋友圈</p>
+                <p className="poster-modal-sub">海报里的二维码会打开这条固定链接</p>
+                <div className="poster-modal-actions">
+                  <a className="poster-modal-primary" href={published.posterUrl} download="星页海报.png">
+                    下载海报
+                  </a>
+                  <button type="button" onClick={() => setPosterOpen(false)}>关闭</button>
+                </div>
+              </section>
+            </div>
+          )}
         </>
       ) : run.status === "failed" ? (
         <div className="preview-cell-error">
@@ -1060,6 +1314,12 @@ export default function HomePage() {
   const [account, setAccount] = useState<BillingAccount | null>(null);
   const [notice, setNotice] = useState("");
   const noticeTimerRef = useRef<number | null>(null);
+  const [scenes, setScenes] = useState<SceneDefinition[]>(FALLBACK_SCENES);
+  const [activeSceneKey, setActiveSceneKey] = useState<string | null>(null);
+  const [sceneImages, setSceneImages] = useState<Record<string, File | null>>({});
+  const [utmSource, setUtmSource] = useState("");
+  const [showcaseCases, setShowcaseCases] = useState<ShowcaseCase[]>([]);
+  const activeScene = scenes.find((item) => item.key === activeSceneKey) ?? null;
 
   const eventSourcesRef = useRef<EventSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1073,6 +1333,64 @@ export default function HomePage() {
   // 运营埋点：落地访问（漏斗第一步），每次页面加载上报一次。
   useEffect(() => {
     track("landing_view");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await apiFetch("/api/scenes");
+        if (!response.ok) return;
+        const data = (await response.json()) as { scenes?: SceneDefinition[] };
+        const list = data.scenes ?? [];
+        if (!cancelled) setScenes(list);
+        const details = await Promise.all(
+          list.map(async (scene) => {
+            try {
+              const detailResponse = await apiFetch(`/api/scenes/${encodeURIComponent(scene.key)}`);
+              if (!detailResponse.ok) return null;
+              const detail = (await detailResponse.json()) as { cases?: { title: string; page_url: string }[] };
+              const first = detail.cases?.[0];
+              if (!first) return null;
+              return { sceneKey: scene.key, sceneName: scene.name, title: first.title, pageUrl: first.page_url };
+            } catch {
+              return null;
+            }
+          }),
+        );
+        if (!cancelled) setShowcaseCases(details.filter((item): item is ShowcaseCase => item !== null));
+      } catch {
+        // 场景目录不可用时，首页仍可直接输入。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sceneKey = params.get("scene");
+    const source = params.get("utm_source") || "";
+    const remix = params.get("remix");
+    if (source) setUtmSource(source.slice(0, 64));
+    if (!sceneKey) return;
+    // 开发环境会把 effect 跑两遍，状态更新不能靠 ref 挡住第二次，否则深链场景选不中。
+    setActiveSceneKey((current) => current ?? sceneKey);
+    const linked = FALLBACK_SCENES.find((item) => item.key === sceneKey);
+    if (linked) setPrompt((current) => current || linked.prompt_template);
+    if (!remix) return;
+    let cancelled = false;
+    void (async () => {
+      const response = await apiFetch(`/api/scenes/${encodeURIComponent(sceneKey)}`);
+      if (!response.ok || cancelled) return;
+      const detail = (await response.json()) as { cases?: SceneCase[] };
+      const item = (detail.cases ?? []).find((entry) => entry.page_id === remix);
+      if (item?.remix_prompt && !cancelled) setPrompt(item.remix_prompt);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1301,8 +1619,12 @@ export default function HomePage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitFiles = selectedFiles.length > 0 ? selectedFiles : Array.from(fileInputRef.current?.files ?? []);
+    const inConversation = phase === "active" && Boolean(conversationId);
     const trimmedPrompt = prompt.trim();
-    const effectivePrompt = trimmedPrompt || (submitFiles.length > 0 ? "请根据我上传的文件生成一个网页。" : "");
+    const effectivePrompt =
+      trimmedPrompt ||
+      (!inConversation && activeScene ? activeScene.prompt_template : "") ||
+      (submitFiles.length > 0 ? "请根据我上传的文件生成一个网页。" : "");
     const validationError = validateFiles(submitFiles);
 
     if (!effectivePrompt) {
@@ -1312,7 +1634,9 @@ export default function HomePage() {
     track("generate_click", {
       model_count: selectedModelKeys.length,
       has_file: submitFiles.length > 0,
-      in_conversation: phase === "active" && Boolean(conversationId),
+      in_conversation: inConversation,
+      scene_key: inConversation ? undefined : activeSceneKey ?? undefined,
+      utm_source: utmSource || undefined,
     });
     if (validationError) {
       setFileError(validationError);
@@ -1344,16 +1668,17 @@ export default function HomePage() {
     //  - 选中了某个结果节点(continueBase) -> 以该节点为基分支；
     //  - 未选中 -> 每个模型各自接上自己上一轮结果，并行继续。
     // 首页(idle)提交则新建会话。
-    const inConversation = phase === "active" && Boolean(conversationId);
     const fileNames = submitFiles.map((file) => file.name);
     const hasFile = fileNames.length > 0;
     closeAllSources();
 
     const pendingRuns: RunState[] = selectedModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), hasFile));
 
+    const shownPrompt = trimmedPrompt || effectivePrompt;
+
     playTransition(() => {
       setPhase("active");
-      setSubmittedPrompt(effectivePrompt);
+      setSubmittedPrompt(shownPrompt);
       setSubmittedFileNames(fileNames);
       setRuns(pendingRuns);
       setActiveModelKey(pendingRuns[0]?.modelKey ?? "");
@@ -1371,6 +1696,15 @@ export default function HomePage() {
       if (inConversation) {
         formData.append("conversation_id", conversationId);
         if (continueBase) formData.append("base_page_id", continueBase.pageId);
+      } else if (activeScene) {
+        formData.append("scene_key", activeScene.key);
+        if (utmSource) formData.append("utm_source", utmSource);
+        activeScene.image_slots.forEach((slot) => {
+          const file = sceneImages[slot.key];
+          if (!file) return;
+          formData.append("images", file);
+          formData.append("image_roles", slot.key);
+        });
       }
 
       const response = await apiFetch("/api/generations", { method: "POST", body: formData });
@@ -1394,6 +1728,17 @@ export default function HomePage() {
           }, 900);
         }
         void refreshAccount();
+        return;
+      }
+      if (response.status === 422) {
+        const message = await readErrorMessage(response, "图片或资料没有通过检查");
+        playTransition(() => {
+          setPhase("idle");
+          setRuns([]);
+          setPrompt(trimmedPrompt);
+        });
+        setFileError(message);
+        showNotice(message);
         return;
       }
       if (!response.ok) throw new Error(await readErrorMessage(response));
@@ -1542,6 +1887,8 @@ export default function HomePage() {
       setSelectedFiles([]);
       setFileError("");
       setRuns([]);
+      setActiveSceneKey(null);
+      setSceneImages({});
       setActiveModelKey("");
       setFullscreenRun(null);
       setThinkingExpanded(true);
@@ -1561,6 +1908,7 @@ export default function HomePage() {
       }
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const detail = (await response.json()) as ConversationDetailResponse;
+      setActiveSceneKey(detail.scene_key ?? null);
       const session = buildSessionFromDetail(detail);
       writeCurrentSession(session);
       playTransition(() => applyStoredSession(session));
@@ -1686,7 +2034,7 @@ export default function HomePage() {
     });
   }
 
-  function handleFileChange(files: FileList | null) {
+  function handleFileChange(files: FileList | File[] | null) {
     const nextFiles = Array.from(files ?? []);
     const validationError = validateFiles(nextFiles);
     setSelectedFiles(validationError ? [] : nextFiles);
@@ -1710,9 +2058,34 @@ export default function HomePage() {
     }
   }
 
-  function handlePresetClick(preset: PromptPreset) {
+  function isScenePrompt(text: string): boolean {
+    const clean = text.trim();
+    return !clean || scenes.some((item) => item.prompt_template.trim() === clean);
+  }
+
+  function handleSceneClick(scene: SceneDefinition, options: { keepActive?: boolean } = {}) {
     if (isGenerating) return;
-    setPrompt(preset.prompt);
+    if (activeSceneKey === scene.key && !options.keepActive) {
+      setActiveSceneKey(null);
+      setSceneImages({});
+      if (prompt.trim() === scene.prompt_template.trim()) setPrompt("");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("scene");
+      url.searchParams.delete("remix");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      return;
+    }
+    setActiveSceneKey(scene.key);
+    setSceneImages({});
+    // 只替换空输入或另一个场景的模板，用户自己写的字不覆盖。
+    if (isScenePrompt(prompt)) setPrompt(scene.prompt_template);
+    window.setTimeout(() => {
+      const textarea = promptTextareaRef.current;
+      if (!textarea) return;
+      resizePromptTextarea(textarea);
+      textarea.scrollIntoView({ behavior: "smooth", block: "center" });
+      textarea.focus({ preventScroll: true });
+    }, 60);
   }
 
   function handleEmptySubmitHint() {
@@ -1745,11 +2118,39 @@ export default function HomePage() {
     dragCounterRef.current = 0;
     setIsDragOver(false);
     if (isGenerating) return;
+    const dropped = Array.from(event.dataTransfer.files);
+    if (activeScene && activeScene.image_slots.length > 0) {
+      const images = dropped.filter(isSceneImageFile);
+      const documents = dropped.filter((file) => !isSceneImageFile(file));
+      if (images.length > 0) {
+        const problem = sceneImageProblem(images[0]);
+        if (problem) {
+          setFileError(problem);
+        } else {
+          const emptySlots = activeScene.image_slots.filter((slot) => !sceneImages[slot.key]);
+          if (emptySlots.length > 1) {
+            setFileError("请点下方对应的位置上传");
+          } else if (emptySlots.length === 0) {
+            setFileError("图片位置已经满了");
+          } else {
+            const slot = emptySlots[0];
+            setSceneImages((current) => ({ ...current, [slot.key]: images[0] }));
+            setFileError("");
+          }
+        }
+      }
+      if (documents.length > 0 && activeScene.accepts_documents !== false) {
+        handleFileChange(documents);
+      } else if (images.length === 0) {
+        setFileError("这个场景请上传图片");
+      }
+      return;
+    }
     handleFileChange(event.dataTransfer.files);
   }
 
   const isGenerating = runs.some((run) => run.status === "thinking" || run.status === "creating");
-  const canSubmit = Boolean(prompt.trim()) || selectedFiles.length > 0;
+  const canSubmit = Boolean(prompt.trim()) || selectedFiles.length > 0 || (phase === "idle" && Boolean(activeScene));
   const isLongPrompt = submittedPrompt.length > 260;
   const overallStatus = computeOverallStatus(runs);
   const isMulti = runs.length > 1;
@@ -2081,10 +2482,12 @@ export default function HomePage() {
         >
           {isDragOver && (
             <div className="prompt-drag-overlay" aria-hidden="true">
-              松开即可上传资料
+              {activeScene && activeScene.image_slots.length > 0 && activeScene.accepts_documents === false
+                ? "松开即可放入图片"
+                : "松开即可上传资料"}
             </div>
           )}
-          {!compact && (
+          {!compact && activeScene?.accepts_documents !== false && (
             <div className={`hero-dropzone ${selectedFiles.length > 0 ? "has-files" : ""}`}>
               {selectedFiles.length > 0 ? (
                 <>
@@ -2126,12 +2529,55 @@ export default function HomePage() {
                   />
                   <span className="hero-dropzone-icon" aria-hidden="true"><AttachmentIcon /></span>
                   <span className="hero-dropzone-text">
-                    <strong>上传文档，一键转为网页</strong>
+                    <strong>{activeScene ? `上传资料，做成${activeScene.name}` : "上传文档，一键转为网页"}</strong>
                     <small>支持 Word · Excel · PDF · PPT</small>
                   </span>
                   <span className="hero-dropzone-cta">选择文件</span>
                 </label>
               )}
+            </div>
+          )}
+          {!compact && activeScene && activeScene.image_slots.length > 0 && (
+            <div className="hero-asset-row" aria-label="上传图片">
+              {activeScene.image_slots.map((slot) => {
+                const file = sceneImages[slot.key];
+                return file ? (
+                  <span className="hero-asset-chip is-filled" key={slot.key}>
+                    <span className="hero-asset-chip-label">{slot.label}</span>
+                    <span className="hero-asset-chip-name">{file.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`移除${slot.label}`}
+                      onClick={() => setSceneImages((current) => ({ ...current, [slot.key]: null }))}
+                      disabled={isGenerating}
+                    >
+                      <CloseIcon />
+                    </button>
+                  </span>
+                ) : (
+                  <label className="hero-asset-chip" key={slot.key}>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      disabled={isGenerating}
+                      onChange={(event) => {
+                        const picked = event.target.files?.[0] ?? null;
+                        event.target.value = "";
+                        if (!picked) return;
+                        const problem = sceneImageProblem(picked);
+                        if (problem) {
+                          setFileError(problem);
+                          return;
+                        }
+                        setFileError("");
+                        setSceneImages((current) => ({ ...current, [slot.key]: picked }));
+                      }}
+                    />
+                    <span aria-hidden="true">＋</span>
+                    上传{slot.label}
+                  </label>
+                );
+              })}
             </div>
           )}
           <textarea
@@ -2141,9 +2587,11 @@ export default function HomePage() {
             placeholder={
               compact
                 ? "继续描述你想调整的方向…"
-                : selectedFiles.length > 0
-                  ? "补充说明（选填），例如页面用途、风格偏好或重点内容"
-                  : "或直接说说你想做的页面，例如「面向客户的产品介绍页」"
+                : activeScene
+                  ? `说说你想要的${activeScene.name}`
+                  : selectedFiles.length > 0
+                    ? "补充说明（选填），例如页面用途、风格偏好或重点内容"
+                    : "或直接说说你想做的页面，例如「面向客户的产品介绍页」"
             }
             rows={1}
             disabled={isGenerating}
@@ -2191,7 +2639,7 @@ export default function HomePage() {
                     }
                   : undefined
               }
-              aria-label={isGenerating ? "正在生成" : compact ? "发送修改" : "创建页面"}
+              aria-label={isGenerating ? "正在生成" : compact ? "发送修改" : activeScene ? `生成${activeScene.name}` : "创建页面"}
               aria-busy={isGenerating}
             >
               {isGenerating ? (
@@ -2204,25 +2652,62 @@ export default function HomePage() {
             </button>
           </div>
         </form>
-        {/* 灵感建议：置于输入卡片下方并居中，与整体居中布局一致，作为"兜底引导"；
-            一旦开始输入文本即自动隐藏，把焦点还给内容。 */}
-        {!compact && !prompt.trim() && (
-          <div className="prompt-inspirations" role="list" aria-label="灵感建议" data-anim-stagger>
+        {!compact && scenes.length > 0 && (
+          <div className="prompt-inspirations" role="list" aria-label="场景">
             <span className="prompt-inspirations-lead" aria-hidden="true">试试</span>
-            {PROMPT_PRESETS.map((preset) => (
+            {scenes.map((scene) => (
               <button
-                key={preset.id}
+                key={scene.key}
                 type="button"
                 role="listitem"
-                className="prompt-inspiration-chip"
-                onClick={() => handlePresetClick(preset)}
+                className={`prompt-inspiration-chip ${activeSceneKey === scene.key ? "is-active" : ""}`}
+                onClick={() => handleSceneClick(scene)}
                 disabled={isGenerating}
+                aria-pressed={activeSceneKey === scene.key}
               >
-                <span className="preset-emoji" aria-hidden="true">{preset.emoji}</span>
-                {preset.label}
+                <span className="preset-emoji" aria-hidden="true">{scene.emoji}</span>
+                {scene.name}
               </button>
             ))}
           </div>
+        )}
+        {!compact && showcaseCases.length > 0 && (
+          <section className="case-gallery" aria-label="别人做的页面">
+            <p className="case-gallery-lead">别人做的页面</p>
+            <div className="case-gallery-grid">
+              {showcaseCases.map((item) => {
+                const scene = scenes.find((entry) => entry.key === item.sceneKey);
+                return (
+                  <article
+                    key={item.sceneKey}
+                    className={`case-gallery-card ${activeSceneKey === item.sceneKey ? "is-active" : ""}`}
+                  >
+                    <a
+                      className="case-gallery-hit"
+                      href={toAbsoluteUrl(item.pageUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`打开${item.title}`}
+                    >
+                      <CaseThumb url={item.pageUrl} title={item.title} />
+                      <span className="case-gallery-meta">
+                        <strong>{item.sceneName}</strong>
+                        <em>{item.title}</em>
+                      </span>
+                    </a>
+                    <button
+                      className="case-gallery-open"
+                      type="button"
+                      onClick={() => scene && handleSceneClick(scene, { keepActive: true })}
+                      disabled={isGenerating || !scene}
+                    >
+                      做同款
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         )}
         {fileError && (
           <div className="prompt-meta-row">
@@ -2425,6 +2910,12 @@ export default function HomePage() {
                       dimmedByBase={continueBase ? continueBase.pageId !== run.pageId : false}
                       onOpenPreview={() => setFullscreenRun(run)}
                       onContinue={() => startContinueFrom(run)}
+                      sceneFeatures={activeScene?.features ?? []}
+                      onRequireLogin={(message) => {
+                        showNotice(message);
+                        setIsAuthModalOpen(true);
+                      }}
+                      onNotice={showNotice}
                       shareGate={() => {
                         if (!authUser) {
                           showNotice("登录后即可复制并分享你的作品链接");
@@ -2505,7 +2996,7 @@ function toAbsoluteUrl(pageUrl: string): string {
 
   try {
     const url = new URL(pageUrl, window.location.origin);
-    if (url.pathname.startsWith("/p/")) {
+    if (url.pathname.startsWith("/p/") || url.pathname.startsWith("/u/")) {
       return `${window.location.origin}${url.pathname}${url.search}${url.hash}`;
     }
     return url.toString();

@@ -1,0 +1,208 @@
+{
+  "scenes": [
+    {
+      "key": "resume",
+      "name": "网页简历",
+      "emoji": "👤",
+      "priority": "P0",
+      "skill_key": "resume",
+      "extra_skill_keys": [],
+      "tagline": "把旧简历变成 HR 愿意点开的交互网页",
+      "description": "上传 Word 或 PDF 简历，生成可分享、可打印的网页简历。支持大厂极简、设计师作品集、应届生三种风格，联系方式默认打码。",
+      "seo_title": "网页简历生成 · 星页 StarPage",
+      "seo_description": "上传旧简历，一键生成可分享的交互式网页简历。支持打印导出、固定链接和访问次数。",
+      "prompt_template": "帮我把上传的简历做成一份网页简历：大厂极简风格，第一屏突出姓名、目标职位和三项最亮眼的成绩，电话和邮箱默认打码。",
+      "guide_fields": [
+        {
+          "key": "name",
+          "label": "姓名",
+          "placeholder": "例如：林晓"
+        },
+        {
+          "key": "target_role",
+          "label": "目标职位",
+          "placeholder": "例如：前端工程师"
+        },
+        {
+          "key": "highlight",
+          "label": "最想被看到的一点",
+          "placeholder": "例如：独立负责过活动页改版"
+        }
+      ],
+      "styles": [
+        {
+          "key": "bigtech",
+          "label": "大厂极简",
+          "hint": "风格：大厂极简。单栏或左栏加右主栏，主色用沉稳蓝或墨绿，信息清楚、留白干净。"
+        },
+        {
+          "key": "portfolio",
+          "label": "设计师作品集",
+          "hint": "风格：设计师作品集。项目用大卡片，视觉有辨识度，同时保证经历可读。"
+        },
+        {
+          "key": "graduate",
+          "label": "应届生",
+          "hint": "风格：应届生。教育和项目的权重大于工作经历，语气积极，结构清楚。"
+        }
+      ],
+      "mask_contact": true,
+      "accepts_documents": true,
+      "accepts_images": false,
+      "image_slots": [],
+      "features": [
+        "print_pdf",
+        "stable_link",
+        "view_count"
+      ]
+    },
+    {
+      "key": "creator-home",
+      "name": "博主主页",
+      "emoji": "✦",
+      "priority": "P0",
+      "skill_key": "creator-home",
+      "extra_skill_keys": [],
+      "tagline": "一个能放进小红书简介的个人主页",
+      "description": "把昵称、平台链接和微信二维码收成一页 Bento 主页。链接发布后保持不变，适合放进简介和签名。",
+      "seo_title": "博主个人主页 · 星页 StarPage",
+      "seo_description": "用昵称、平台链接和微信二维码，生成移动端优先的个人主页，发布后链接保持不变。",
+      "prompt_template": "帮我做一个博主个人主页。昵称「」，一句话介绍「」。放上我的小红书、公众号等平台入口和代表作品，头像和微信二维码用我上传的图片，二维码放在最显眼的位置。",
+      "guide_fields": [
+        {
+          "key": "name",
+          "label": "昵称",
+          "placeholder": "例如：星野"
+        },
+        {
+          "key": "positioning",
+          "label": "一句话定位",
+          "placeholder": "例如：帮独立开发者做增长"
+        },
+        {
+          "key": "links",
+          "label": "平台链接",
+          "placeholder": "小红书 / 公众号 / B站，每行一个"
+        },
+        {
+          "key": "works",
+          "label": "代表作品",
+          "placeholder": "作品或课程名称，每行一个"
+        }
+      ],
+      "styles": [],
+      "mask_contact": false,
+      "accepts_documents": false,
+      "accepts_images": true,
+      "image_slots": [
+        {
+          "key": "avatar",
+          "label": "头像"
+        },
+        {
+          "key": "qrcode",
+          "label": "微信二维码"
+        }
+      ],
+      "features": [
+        "stable_link",
+        "view_count",
+        "images"
+      ]
+    },
+    {
+      "key": "landing",
+      "name": "产品落地页",
+      "emoji": "🚀",
+      "priority": "P1",
+      "skill_key": "landing",
+      "extra_skill_keys": [
+        "distinctive-design"
+      ],
+      "tagline": "同一份资料，看不同模型做出的落地页",
+      "description": "上传产品介绍或 PRD，生成带首屏主张和行动按钮的落地页。可同时用多个模型对比设计。",
+      "seo_title": "产品落地页生成 · 星页 StarPage",
+      "seo_description": "上传产品资料，生成可分享的产品落地页，并排对比多个模型的设计。",
+      "prompt_template": "根据我上传的产品资料做一个产品落地页：首屏一句话讲清卖点并配一个主按钮，接着介绍核心功能和使用步骤。不要编造用户数和价格。",
+      "guide_fields": [
+        {
+          "key": "product_name",
+          "label": "产品名",
+          "placeholder": "例如：星页"
+        },
+        {
+          "key": "one_liner",
+          "label": "一句话卖点",
+          "placeholder": "例如：一份文档，变成一个网页"
+        },
+        {
+          "key": "audience",
+          "label": "目标用户",
+          "placeholder": "例如：独立开发者"
+        }
+      ],
+      "styles": [],
+      "mask_contact": false,
+      "accepts_documents": true,
+      "accepts_images": true,
+      "image_slots": [
+        {
+          "key": "hero",
+          "label": "产品图"
+        }
+      ],
+      "features": [
+        "stable_link",
+        "seo"
+      ]
+    },
+    {
+      "key": "invitation",
+      "name": "活动邀请函",
+      "emoji": "🎉",
+      "priority": "P1",
+      "skill_key": "invitation",
+      "extra_skill_keys": [],
+      "tagline": "竖屏邀请函，转进微信就能看",
+      "description": "婚礼、沙龙、派对用的竖屏邀请函。包含时间地点、议程和着装，报名用外链或二维码，不在页面里提交表单。",
+      "seo_title": "活动邀请函 · 星页 StarPage",
+      "seo_description": "生成竖屏活动邀请函，带倒计时、议程和微信分享卡片，适合朋友圈转发。",
+      "prompt_template": "帮我做一张竖屏活动邀请函。活动名「」，时间「」，地点「」，报名方式「」。包含议程和着装提示，背景用我上传的图片。",
+      "guide_fields": [
+        {
+          "key": "title",
+          "label": "活动主题",
+          "placeholder": "例如：周六设计沙龙"
+        },
+        {
+          "key": "when_where",
+          "label": "时间地点",
+          "placeholder": "例如：5 月 16 日 14:00 · 广州"
+        },
+        {
+          "key": "rsvp",
+          "label": "报名方式",
+          "placeholder": "外部报名链接，或写“见二维码”"
+        }
+      ],
+      "styles": [],
+      "mask_contact": false,
+      "accepts_documents": false,
+      "accepts_images": true,
+      "image_slots": [
+        {
+          "key": "hero",
+          "label": "背景图"
+        },
+        {
+          "key": "qrcode",
+          "label": "报名二维码"
+        }
+      ],
+      "features": [
+        "stable_link",
+        "poster"
+      ]
+    }
+  ]
+}
