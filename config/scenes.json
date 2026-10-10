@@ -92,7 +92,7 @@
       ],
       "styles": [],
       "mask_contact": false,
-      "accepts_documents": false,
+      "accepts_documents": true,
       "accepts_images": true,
       "image_slots": [
         {
@@ -187,7 +187,7 @@
       ],
       "styles": [],
       "mask_contact": false,
-      "accepts_documents": false,
+      "accepts_documents": true,
       "accepts_images": true,
       "image_slots": [
         {

@@ -547,7 +547,7 @@ const FALLBACK_SCENES: SceneDefinition[] = [
       { key: "works", label: "代表作品", placeholder: "作品或课程名称，每行一个" },
     ],
     styles: [],
-    accepts_documents: false,
+    accepts_documents: true,
     accepts_images: true,
     image_slots: [
       { key: "avatar", label: "头像" },
@@ -586,7 +586,7 @@ const FALLBACK_SCENES: SceneDefinition[] = [
       { key: "rsvp", label: "报名方式", placeholder: "外部报名链接，或写“见二维码”" },
     ],
     styles: [],
-    accepts_documents: false,
+    accepts_documents: true,
     accepts_images: true,
     image_slots: [
       { key: "hero", label: "背景图" },
