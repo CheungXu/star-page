@@ -118,7 +118,7 @@ journalctl -u star-page-backend.service -f
 - `models`：勾选的并行模型 key（可重复字段或单个 JSON 数组字符串）。
 - `files`：当前最多允许 3 个文件，单文件和单次总大小均不超过 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`pdf`、`txt`、`md`、`html`。后端会抽取为 Markdown/文本并合并到 LLM 上下文；PDF 仅保证可复制文本内容的抽取，扫描版图片 PDF 或加密 PDF 可能解析失败。
 
-如果抽取文本超过 5000 字符，后端会先调用 LLM 将资料压缩为面向页面生成的任务简报，再把压缩后的资料放入最终生成 prompt。
+如果抽取文本超过 5000 字符，`POST /api/generations` 只保存原文并立即返回任务。压缩发生在 SSE 生成流里：同一批次只调用一次，优先用 `qwen-plus`（通义 Flash）且关闭思考，多段同时压缩，整次总超时 120 秒。压缩结果写回该批次的全部分支后再进入页面生成；原来 prompt 里的图片地址会保留。短文本仍在创建时直接拼进 prompt。匿名用户若压缩失败，这次免费次数会退回。
 
 Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client_max_body_size 60m`，用于覆盖 50MB 单次上传和 multipart 开销。
 
