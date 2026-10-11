@@ -11,7 +11,7 @@ from fastapi import HTTPException, status
 from markitdown import MarkItDown
 from starlette.datastructures import UploadFile
 
-from app.services.llm.client import create_llm_client
+from app.services.llm.client import create_compression_llm_client
 from app.services.llm.types import LlmMessage
 
 SUPPORTED_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"}
@@ -21,6 +21,10 @@ MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
 MAX_TOTAL_FILE_SIZE_BYTES = 50 * 1024 * 1024
 MAX_DOCUMENT_CONTEXT_CHARS = 5000
 COMPRESSION_CHUNK_CHARS = 24000
+# 多段同时压，避免大文件按段串行把 120 秒总超时耗尽。
+COMPRESSION_CHUNK_CONCURRENCY = 4
+# 整次压缩的总时长上限。超时后明确失败，避免把生成连接拖过网关空闲时间。
+COMPRESSION_TOTAL_TIMEOUT_SECONDS = 120
 
 DOCUMENT_COMPRESSION_SYSTEM_PROMPT = """你是一个面向网页生成任务的资料压缩专家。
 你的目标不是泛泛总结，而是把用户上传资料压缩成足够短、结构清晰、可直接指导 HTML 页面生成的设计/内容简报。"""
@@ -54,6 +58,15 @@ DOCUMENT_COMPRESSION_USER_PROMPT = """请将以下资料压缩为“页面生成
 """
 
 
+class DocumentCompressionError(Exception):
+    """资料压缩失败。user_message 给用户看，detail 留给排查。"""
+
+    def __init__(self, message: str, *, detail: str = "") -> None:
+        super().__init__(f"{message} | {detail}" if detail else message)
+        self.user_message = message
+        self.detail = detail
+
+
 @dataclass(frozen=True)
 class ExtractedDocument:
     filename: str
@@ -71,6 +84,28 @@ class PreparedGenerationInput:
     compression_prompt: str | None
     model_prompt: str
     compressed: bool
+    needs_compression: bool = False
+
+
+def assemble_prepared_input(prompt: str, documents: list[ExtractedDocument]) -> PreparedGenerationInput:
+    """抽取完成后组装入模材料。超长文本先只存原文，压缩放到生成流里做。"""
+    extracted_file_text = _build_document_context(documents)
+    needs_compression = len(extracted_file_text) > MAX_DOCUMENT_CONTEXT_CHARS
+    # 超长文本先不调模型，只把原文交给生成流；短文本仍直接拼进 prompt。
+    model_prompt = (
+        prompt
+        if needs_compression
+        else build_prompt_with_document_context(prompt, extracted_file_text, compressed=False)
+    )
+    return PreparedGenerationInput(
+        user_prompt=prompt,
+        input_file_names=[document.filename for document in documents],
+        extracted_file_text=extracted_file_text,
+        compression_prompt=None,
+        model_prompt=model_prompt,
+        compressed=False,
+        needs_compression=needs_compression,
+    )
 
 
 async def prepare_generation_input(prompt: str, files: list[UploadFile]) -> PreparedGenerationInput:
@@ -83,25 +118,10 @@ async def prepare_generation_input(prompt: str, files: list[UploadFile]) -> Prep
             compression_prompt=None,
             model_prompt=prompt,
             compressed=False,
+            needs_compression=False,
         )
 
-    extracted_file_text = _build_document_context(documents)
-    document_context = extracted_file_text
-    compression_prompt: str | None = None
-    compressed = False
-
-    if len(extracted_file_text) > MAX_DOCUMENT_CONTEXT_CHARS:
-        document_context, compression_prompt = await compress_document_context(prompt, extracted_file_text)
-        compressed = True
-
-    return PreparedGenerationInput(
-        user_prompt=prompt,
-        input_file_names=[document.filename for document in documents],
-        extracted_file_text=extracted_file_text,
-        compression_prompt=compression_prompt,
-        model_prompt=build_prompt_with_document_context(prompt, document_context, compressed=compressed),
-        compressed=compressed,
-    )
+    return assemble_prepared_input(prompt, documents)
 
 
 async def extract_uploaded_documents(files: list[UploadFile]) -> list[ExtractedDocument]:
@@ -182,13 +202,46 @@ def build_prompt_with_documents(prompt: str, documents: list[ExtractedDocument])
 
 
 async def compress_document_context(user_prompt: str, extracted_file_text: str) -> tuple[str, str]:
+    """压缩超长资料。整次调用有总超时，超时或失败抛 DocumentCompressionError。"""
+    try:
+        return await asyncio.wait_for(
+            _compress_document_context(user_prompt, extracted_file_text),
+            timeout=COMPRESSION_TOTAL_TIMEOUT_SECONDS,
+        )
+    except asyncio.CancelledError:
+        raise
+    except TimeoutError as exc:
+        detail = f"超过 {COMPRESSION_TOTAL_TIMEOUT_SECONDS}s"
+        print(f"[compression] 压缩超时，{detail}")
+        raise DocumentCompressionError("文件内容压缩超时，请缩短文件后重试", detail=detail) from exc
+    except DocumentCompressionError:
+        raise
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        print(f"[compression] 压缩失败: {detail}")
+        raise DocumentCompressionError("文件内容过长且压缩失败，请缩短文件内容后重试", detail=detail) from exc
+
+
+async def _compress_document_context(user_prompt: str, extracted_file_text: str) -> tuple[str, str]:
     chunks = _chunk_text(extracted_file_text, COMPRESSION_CHUNK_CHARS)
     prompt_log = _build_compression_prompt_log(user_prompt, len(chunks), len(extracted_file_text))
-    summaries: list[str] = []
+    print(
+        f"[compression] 开始压缩，字符数={len(extracted_file_text)}，"
+        f"分段={len(chunks)}，并发={COMPRESSION_CHUNK_CONCURRENCY}，"
+        f"超时={COMPRESSION_TOTAL_TIMEOUT_SECONDS}s"
+    )
+    semaphore = asyncio.Semaphore(COMPRESSION_CHUNK_CONCURRENCY)
 
-    for index, chunk in enumerate(chunks, start=1):
-        scope = f"第 {index}/{len(chunks)} 段，原始抽取文本共 {len(extracted_file_text)} 字符"
-        summaries.append(await _call_llm_for_document_compression(user_prompt, scope, chunk))
+    async def compress_chunk(index: int, chunk: str) -> str:
+        async with semaphore:
+            scope = f"第 {index}/{len(chunks)} 段，原始抽取文本共 {len(extracted_file_text)} 字符"
+            return await _call_llm_for_document_compression(user_prompt, scope, chunk)
+
+    summaries = list(
+        await asyncio.gather(
+            *(compress_chunk(index, chunk) for index, chunk in enumerate(chunks, start=1))
+        )
+    )
 
     combined_summary = "\n\n".join(
         f"## 压缩片段 {index}\n{summary.strip()}" for index, summary in enumerate(summaries, start=1)
@@ -201,30 +254,25 @@ async def compress_document_context(user_prompt: str, extracted_file_text: str) 
             combined_summary,
         )
 
+    print(f"[compression] 压缩完成，简报字符数={len(combined_summary.strip())}")
     return combined_summary.strip(), prompt_log
 
 
 async def _call_llm_for_document_compression(user_prompt: str, scope: str, document_text: str) -> str:
-    llm_client = create_llm_client()
+    llm_client = create_compression_llm_client()
     compression_user_prompt = DOCUMENT_COMPRESSION_USER_PROMPT.format(
         user_prompt=user_prompt,
         scope=scope,
         document_text=document_text,
     )
-    try:
-        result = await llm_client.complete_text(
-            [
-                LlmMessage(role="system", content=DOCUMENT_COMPRESSION_SYSTEM_PROMPT),
-                LlmMessage(role="user", content=compression_user_prompt),
-            ],
-            require_content=True,
-        )
-        return result.text
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="文件内容过长且压缩失败，请缩短文件内容后重试",
-        ) from exc
+    result = await llm_client.complete_text(
+        [
+            LlmMessage(role="system", content=DOCUMENT_COMPRESSION_SYSTEM_PROMPT),
+            LlmMessage(role="user", content=compression_user_prompt),
+        ],
+        require_content=True,
+    )
+    return result.text
 
 
 def _build_compression_prompt_log(user_prompt: str, chunk_count: int, extracted_chars: int) -> str:

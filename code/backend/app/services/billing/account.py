@@ -328,6 +328,18 @@ class BillingService:
         account.free_generations_used += 1
         await self.session.flush()
 
+    async def refund_anon_batch_started(self, user: User) -> None:
+        """压缩失败时退回这一次匿名免费额度。登录用户不在这里扣费，无需退回。"""
+        if not user.is_anonymous:
+            return
+        visitor = await self._get_visitor_by_user(user.id)
+        if visitor is not None and visitor.free_generations_used > 0:
+            visitor.free_generations_used -= 1
+        account = await self.get_or_create_account(user.id)
+        if account.free_generations_used > 0:
+            account.free_generations_used -= 1
+        await self.session.flush()
+
     async def _get_visitor_by_user(self, user_id: uuid.UUID) -> AnonVisitor | None:
         result = await self.session.execute(select(AnonVisitor).where(AnonVisitor.user_id == user_id))
         return result.scalar_one_or_none()

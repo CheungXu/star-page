@@ -24,6 +24,12 @@ from app.models.entities import (
 )
 from app.services.anon_service import AnonService
 from app.services.billing import BillingService
+from app.services.document_extractor import (
+    MAX_DOCUMENT_CONTEXT_CHARS,
+    DocumentCompressionError,
+    build_prompt_with_document_context,
+    compress_document_context,
+)
 from app.services.html_sanitizer import extract_html_document, find_tailwind_runtime_violation, sanitize_html
 from app.services.llm.client import create_llm_client
 from app.services.llm.cost import cost_to_payload, estimate_llm_cost, merge_llm_usage, usage_to_payload
@@ -36,6 +42,45 @@ from app.services.sse import SseEvent
 from app.services.storage.factory import create_storage_provider
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+
+
+class _BatchCompressionGate:
+    """同一批次的压缩互斥。失败结果留给同批其他模型立刻复用，避免各压一遍。"""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.error: DocumentCompressionError | None = None
+        self.users = 0
+
+
+_compression_gates: dict[uuid.UUID, _BatchCompressionGate] = {}
+_compression_gates_guard = asyncio.Lock()
+
+
+def _needs_document_compression(task: GenerationTask) -> bool:
+    text = task.extracted_file_text or ""
+    return len(text) > MAX_DOCUMENT_CONTEXT_CHARS and not task.compression_prompt
+
+
+async def _compression_gate(batch_id: uuid.UUID) -> _BatchCompressionGate:
+    async with _compression_gates_guard:
+        gate = _compression_gates.get(batch_id)
+        if gate is None:
+            gate = _BatchCompressionGate()
+            _compression_gates[batch_id] = gate
+        gate.users += 1
+        return gate
+
+
+async def _release_compression_gate(batch_id: uuid.UUID) -> None:
+    """当前批次没有人还在等压缩时，丢掉这把锁。"""
+    async with _compression_gates_guard:
+        gate = _compression_gates.get(batch_id)
+        if gate is None:
+            return
+        gate.users -= 1
+        if gate.users <= 0:
+            _compression_gates.pop(batch_id, None)
 
 
 @dataclass
@@ -422,6 +467,7 @@ class GenerationService:
         task.started_at = datetime.now(UTC)
         await self.session.commit()
 
+        needs_compression = _needs_document_compression(task)
         if task.input_file_names:
             yield await self._record_event(
                 task.id,
@@ -443,49 +489,17 @@ class GenerationService:
                     "text": "文件内容已解析",
                 },
             )
-
-            compress_text = "长文本已压缩为页面生成简报" if task.compression_prompt else "内容未超过阈值，无需压缩"
+        if needs_compression:
             yield await self._record_event(
                 task.id,
                 "progress",
                 {
                     "type": "progress",
                     "step": "compress_document",
-                    "status": "completed",
-                    "text": compress_text,
+                    "status": "running",
+                    "text": "正在把长文本压缩为页面生成简报",
                 },
             )
-
-        yield await self._record_event(task.id, "status", {"type": "status", "text": "正在理解你的页面需求..."})
-
-        skill_selection = await self._resolve_task_skill_key(page=page, task=task)
-        task.skill_key = skill_selection.key
-        page.skill_key = skill_selection.key
-        router_usage = skill_selection.usage
-        await self.session.commit()
-
-        if skill_selection.key:
-            skill = get_skill_registry().get(skill_selection.key)
-            skill_payload: dict[str, Any] = {
-                "type": "skill_selected",
-                "skill_key": skill_selection.key,
-                "skill_name": skill.name if skill else skill_selection.key,
-                "model_key": task.model_key,
-            }
-            if router_usage is not None:
-                skill_payload["router_usage"] = usage_to_payload(router_usage)
-            yield await self._record_event(task.id, "skill_selected", skill_payload)
-
-        yield await self._record_event(
-            task.id,
-            "progress",
-            {
-                "type": "progress",
-                "step": "model_thinking",
-                "status": "running",
-                "text": "模型正在理解需求和资料",
-            },
-        )
 
         answer_parts: list[str] = []
         answer_started = False
@@ -499,6 +513,57 @@ class GenerationService:
         tailwind_retry_used = False
 
         try:
+            if needs_compression:
+                await self._ensure_batch_document_compressed(task)
+                if not task.compression_prompt:
+                    raise DocumentCompressionError("文件内容压缩失败，请缩短文件后重试")
+            if task.input_file_names or needs_compression:
+                if task.compression_prompt or needs_compression:
+                    compress_text = "长文本已压缩为页面生成简报"
+                else:
+                    compress_text = "内容未超过阈值，无需压缩"
+                yield await self._record_event(
+                    task.id,
+                    "progress",
+                    {
+                        "type": "progress",
+                        "step": "compress_document",
+                        "status": "completed",
+                        "text": compress_text,
+                    },
+                )
+
+            yield await self._record_event(task.id, "status", {"type": "status", "text": "正在理解你的页面需求..."})
+
+            skill_selection = await self._resolve_task_skill_key(page=page, task=task)
+            task.skill_key = skill_selection.key
+            page.skill_key = skill_selection.key
+            router_usage = skill_selection.usage
+            await self.session.commit()
+
+            if skill_selection.key:
+                skill = get_skill_registry().get(skill_selection.key)
+                skill_payload: dict[str, Any] = {
+                    "type": "skill_selected",
+                    "skill_key": skill_selection.key,
+                    "skill_name": skill.name if skill else skill_selection.key,
+                    "model_key": task.model_key,
+                }
+                if router_usage is not None:
+                    skill_payload["router_usage"] = usage_to_payload(router_usage)
+                yield await self._record_event(task.id, "skill_selected", skill_payload)
+
+            yield await self._record_event(
+                task.id,
+                "progress",
+                {
+                    "type": "progress",
+                    "step": "model_thinking",
+                    "status": "running",
+                    "text": "模型正在理解需求和资料",
+                },
+            )
+
             llm_client = create_llm_client(task.model_key)
             messages = await self._build_llm_messages(task, page)
 
@@ -747,6 +812,7 @@ class GenerationService:
         except Exception as exc:
             if answer_parts and not task.model_output_text:
                 task.model_output_text = "".join(answer_parts)
+            user_message = exc.user_message if isinstance(exc, DocumentCompressionError) else "页面生成失败，请稍后重试。"
             task.status = "failed"
             task.error_message = str(exc)[:2000]
             task.finished_at = datetime.now(UTC)
@@ -756,8 +822,73 @@ class GenerationService:
             yield await self._record_event(
                 task.id,
                 "failed",
-                {"type": "failed", "message": "页面生成失败，请稍后重试。", "model_key": task.model_key},
+                {"type": "failed", "message": user_message, "model_key": task.model_key},
             )
+
+    async def _ensure_batch_document_compressed(self, task: GenerationTask) -> None:
+        """超长资料在生成流里压缩。同一 batch 只压一次，结果写回该批全部分支。"""
+        if not _needs_document_compression(task):
+            return
+        batch_id = task.batch_id
+        if batch_id is None:
+            try:
+                await self._compress_and_store(task, batch_id=None)
+            except DocumentCompressionError:
+                await self._refund_anon_compression(task)
+                raise
+            return
+
+        gate = await _compression_gate(batch_id)
+        try:
+            async with gate.lock:
+                if gate.error is not None:
+                    raise gate.error
+                await self.session.refresh(task)
+                if not _needs_document_compression(task):
+                    return
+                try:
+                    await self._compress_and_store(task, batch_id=batch_id)
+                except DocumentCompressionError as exc:
+                    # 只有真正执行压缩的这一路退回免费次数，同批其他模型只复用这个失败。
+                    gate.error = exc
+                    await self._refund_anon_compression(task)
+                    raise
+        finally:
+            await _release_compression_gate(batch_id)
+
+    async def _compress_and_store(self, task: GenerationTask, batch_id: uuid.UUID | None) -> None:
+        # 压缩模型只看用户需求。拼回 prompt 时用 task.prompt，这样图片地址不会被盖掉。
+        source_prompt = task.user_prompt or task.prompt
+        base_prompt = task.prompt or source_prompt
+        extracted = task.extracted_file_text or ""
+        summary, compression_log = await compress_document_context(source_prompt, extracted)
+        model_prompt = build_prompt_with_document_context(base_prompt, summary, compressed=True)
+
+        targets = [task]
+        if batch_id is not None:
+            batch = await self.session.get(GenerationBatch, batch_id)
+            if batch is not None:
+                batch.prompt = model_prompt
+                batch.compression_prompt = compression_log
+            result = await self.session.execute(select(GenerationTask).where(GenerationTask.batch_id == batch_id))
+            targets = list(result.scalars())
+        for item in targets:
+            item.prompt = model_prompt
+            item.model_prompt = model_prompt
+            item.compression_prompt = compression_log
+        await self.session.commit()
+        await self.session.refresh(task)
+
+    async def _refund_anon_compression(self, task: GenerationTask) -> None:
+        """压缩失败时退回匿名免费次数。保存点失败只回滚退回本身，不影响随后把任务标为失败。"""
+        try:
+            async with self.session.begin_nested():
+                actor = await self.session.get(User, task.requested_by_user_id)
+                if actor is None or not actor.is_anonymous:
+                    return
+                await BillingService(self.session).refund_anon_batch_started(actor)
+        except Exception as exc:  # noqa: BLE001 - 退回失败不掩盖压缩失败本身
+            print(f"[billing] 压缩失败退回匿名免费次数失败 task={task.id}: {exc}")
 
     async def _settle_generation_billing(
         self, task: GenerationTask, version: PageVersion, cost: LlmCostBreakdown | None
