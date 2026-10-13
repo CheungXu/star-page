@@ -1108,6 +1108,7 @@ function AuthModal({
   const [isSending, setIsSending] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [hasAgreed, setHasAgreed] = useState(false);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -1118,6 +1119,10 @@ function AuthModal({
   async function sendCode(event?: FormEvent) {
     event?.preventDefault();
     if (isSending || countdown > 0) return;
+    if (!hasAgreed) {
+      setErrorMessage("请先阅读并勾选同意《用户服务协议》和《隐私政策》");
+      return;
+    }
     setErrorMessage("");
     setIsSending(true);
     try {
@@ -1139,6 +1144,10 @@ function AuthModal({
 
   async function login(event: FormEvent) {
     event.preventDefault();
+    if (!hasAgreed) {
+      setErrorMessage("请先阅读并勾选同意《用户服务协议》和《隐私政策》");
+      return;
+    }
     setErrorMessage("");
     setIsLoggingIn(true);
     try {
@@ -1194,6 +1203,16 @@ function AuthModal({
               />
             </label>
           )}
+
+          <label className="auth-consent">
+            <input type="checkbox" checked={hasAgreed} onChange={(event) => setHasAgreed(event.target.checked)} />
+            <span>
+              我已阅读并同意
+              <a href="/terms" target="_blank" rel="noopener noreferrer">《用户服务协议》</a>和
+              <a href="/privacy" target="_blank" rel="noopener noreferrer">《隐私政策》</a>。
+              <strong>星页会在去标识化后使用你的生成内容改进模型</strong>，可随时在账户设置中关闭。
+            </span>
+          </label>
 
           {errorMessage && <div className="auth-error">{errorMessage}</div>}
 
