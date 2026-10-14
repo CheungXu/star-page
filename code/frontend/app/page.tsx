@@ -64,14 +64,6 @@ type ApiUsagePayload = {
   reasoning_tokens?: number;
 };
 
-type ApiCostPayload = {
-  currency?: string;
-  tier_label?: string;
-  input?: number;
-  output?: number;
-  total?: number;
-};
-
 type SsePayload = {
   type: string;
   text?: string;
@@ -90,7 +82,6 @@ type SsePayload = {
   reasoning_tokens?: number;
   token_source?: "actual" | "estimated";
   usage?: ApiUsagePayload;
-  cost?: ApiCostPayload;
   billing?: { training_consent?: string; credits_charged?: number; discount_credits?: number };
 };
 
@@ -100,10 +91,6 @@ type UsageCostSummary = {
   totalTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
-  costTotalCny: number;
-  costInputCny?: number;
-  costOutputCny?: number;
-  tierLabel?: string;
   creditsCharged?: number;
   discountCredits?: number;
 };
@@ -196,7 +183,7 @@ type ConversationNodeResponse = {
   generation_status?: string | null;
   page_url: string;
   usage?: ApiUsagePayload | null;
-  cost?: ApiCostPayload | null;
+  billing?: { credits_charged?: number; discount_credits?: number } | null;
 };
 
 type ConversationBatchResponse = {
@@ -1218,7 +1205,6 @@ function AuthModal({
               我已阅读并同意
               <a href="/terms" target="_blank" rel="noopener noreferrer">《用户服务协议》</a>和
               <a href="/privacy" target="_blank" rel="noopener noreferrer">《隐私政策》</a>。
-              <strong>星页会在去标识化后使用你的生成内容改进模型，授权期间生成享受九折</strong>，可随时在设置中关闭。
             </span>
           </label>
 
@@ -2902,21 +2888,11 @@ export default function HomePage() {
                                 ? ` · 思考 ${formatTokenCount(activeRun.usageSummary.reasoningTokens)}`
                                 : ""}
                             </span>
-                            <span className="usage-summary-cost">
-                              {activeRun.usageSummary.costTotalCny > 0 || activeRun.usageSummary.tierLabel ? (
-                                <>
-                                  花费 {formatCostCny(activeRun.usageSummary.costTotalCny)}
-                                  {activeRun.usageSummary.tierLabel ? `（${activeRun.usageSummary.tierLabel}）` : ""}
-                                </>
-                              ) : (
-                                "费用未配置"
-                              )}
-                            </span>
                             {activeRun.usageSummary.creditsCharged ? (
                               <span className="usage-summary-credits">
-                                扣 {activeRun.usageSummary.creditsCharged} 积分
+                                花费 {activeRun.usageSummary.creditsCharged} 积分
                                 {activeRun.usageSummary.discountCredits ? (
-                                  <em>授权优惠 -{activeRun.usageSummary.discountCredits}</em>
+                                  <em>优惠 -{activeRun.usageSummary.discountCredits}</em>
                                 ) : null}
                               </span>
                             ) : null}
@@ -3161,7 +3137,7 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
 
   const runs: RunState[] = (baseBatch?.nodes ?? []).map((node) => {
     const status = mapNodeStatus(node.page_status, node.generation_status);
-    const usageSummary = buildUsageSummaryFromDetail(node.usage, node.cost);
+    const usageSummary = buildUsageSummaryFromDetail(node.usage, node.billing);
     return {
       taskId: node.task_id ?? "",
       pageId: node.page_id,
@@ -3274,10 +3250,6 @@ function buildUsageSummary(payload: SsePayload): UsageCostSummary | undefined {
     totalTokens: payload.usage?.total_tokens ?? payload.total_tokens,
     cachedInputTokens: payload.usage?.cached_input_tokens ?? payload.cached_input_tokens,
     reasoningTokens: payload.usage?.reasoning_tokens ?? payload.reasoning_tokens,
-    costTotalCny: payload.cost?.total ?? 0,
-    costInputCny: payload.cost?.input,
-    costOutputCny: payload.cost?.output,
-    tierLabel: payload.cost?.tier_label,
     creditsCharged: payload.billing?.credits_charged,
     discountCredits: payload.billing?.discount_credits,
   };
@@ -3285,7 +3257,7 @@ function buildUsageSummary(payload: SsePayload): UsageCostSummary | undefined {
 
 function buildUsageSummaryFromDetail(
   usage?: ApiUsagePayload | null,
-  cost?: ApiCostPayload | null,
+  billing?: { credits_charged?: number; discount_credits?: number } | null,
 ): UsageCostSummary | undefined {
   if (usage?.input_tokens === undefined || usage.output_tokens === undefined) {
     return undefined;
@@ -3297,21 +3269,13 @@ function buildUsageSummaryFromDetail(
     totalTokens: usage.total_tokens,
     cachedInputTokens: usage.cached_input_tokens,
     reasoningTokens: usage.reasoning_tokens,
-    costTotalCny: cost?.total ?? 0,
-    costInputCny: cost?.input,
-    costOutputCny: cost?.output,
-    tierLabel: cost?.tier_label,
+    creditsCharged: billing?.credits_charged,
+    discountCredits: billing?.discount_credits,
   };
 }
 
 function formatTokenCount(value: number): string {
   return value.toLocaleString("zh-CN");
-}
-
-function formatCostCny(value: number): string {
-  if (value >= 1) return `¥${value.toFixed(4)}`;
-  if (value >= 0.01) return `¥${value.toFixed(4)}`;
-  return `¥${value.toFixed(6)}`;
 }
 
 function getProgressIcon(status: ProgressStepStatus): ReactNode {

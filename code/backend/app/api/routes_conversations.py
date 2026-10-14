@@ -12,14 +12,14 @@ from app.core.config import get_billing_config, get_model_registry, get_settings
 from app.core.auth import get_optional_actor
 from app.core.database import AsyncSessionLocal
 from app.core.urls import build_page_url
-from app.models.entities import Conversation, GenerationBatch, GenerationTask, Page, PageVersion
+from app.models.entities import Conversation, CreditTransaction, GenerationBatch, GenerationTask, Page, PageVersion
 from app.schemas.conversations import (
     ConversationBatch as ConversationBatchSchema,
 )
 from app.schemas.conversations import (
+    ConversationBilling,
     ConversationDetail,
     ConversationListItem,
-    ConversationCost,
     ConversationNode,
     ConversationUsage,
     ConversationUpdate,
@@ -176,6 +176,19 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
             for task in tasks_result.scalars().all():
                 tasks_by_page[task.page_id] = task
 
+        billing_by_version: dict[str, CreditTransaction] = {}
+        if current_version_ids:
+            txn_result = await session.execute(
+                select(CreditTransaction).where(
+                    CreditTransaction.ref_type == "page_version",
+                    CreditTransaction.ref_id.in_([str(version_id) for version_id in current_version_ids]),
+                    CreditTransaction.type == "consume",
+                )
+            )
+            for txn in txn_result.scalars().all():
+                if txn.ref_id:
+                    billing_by_version[txn.ref_id] = txn
+
         batch_items: list[ConversationBatchSchema] = []
         for batch in batches:
             selected = list(batch.selected_models or [])
@@ -199,7 +212,7 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
                         generation_status=task.status if task else None,
                         page_url=build_page_url(settings, page.conversation_id, page.id),
                         usage=_build_usage(version),
-                        cost=_build_cost(version),
+                        billing=_build_billing(billing_by_version.get(str(version.id)) if version else None),
                     )
                 )
 
@@ -249,16 +262,15 @@ def _build_usage(version: PageVersion | None) -> ConversationUsage | None:
     )
 
 
-def _build_cost(version: PageVersion | None) -> ConversationCost | None:
-    if version is None:
+def _build_billing(txn: CreditTransaction | None) -> ConversationBilling | None:
+    """只返回扣掉的积分和优惠。实际金额留在流水和版本上，由管理后台查看。"""
+    if txn is None:
         return None
-    if version.input_cost_cny is None and version.output_cost_cny is None and version.total_cost_cny is None:
+    charged = max(-int(txn.credits_delta), 0)
+    discount = max(int(txn.training_discount_credits or 0), 0)
+    if charged == 0 and discount == 0:
         return None
-    return ConversationCost(
-        input=float(version.input_cost_cny) if version.input_cost_cny is not None else None,
-        output=float(version.output_cost_cny) if version.output_cost_cny is not None else None,
-        total=float(version.total_cost_cny) if version.total_cost_cny is not None else None,
-    )
+    return ConversationBilling(credits_charged=charged, discount_credits=discount)
 
 
 async def _build_conversation_list_item(

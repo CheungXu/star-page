@@ -7,15 +7,7 @@ import { apiFetch, readErrorMessage } from "../lib/api";
 type PrivacyPreferences = {
   allow_training: boolean;
   is_anonymous: boolean;
-  training_discount_rate: number;
 };
-
-const CN_DIGITS = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
-
-function discountLabel(rate: number): string {
-  const tenths = Math.round(rate * 100) / 10;
-  return Number.isInteger(tenths) ? `${CN_DIGITS[tenths]}折` : `${tenths}折`;
-}
 
 /** 设置 → 数据与隐私：训练授权开关。登录用户和匿名访客共用，开关只影响之后的生成。 */
 export function DataPrivacyModal({ onClose, onChanged }: { onClose: () => void; onChanged?: (allow: boolean) => void }) {
@@ -51,8 +43,6 @@ export function DataPrivacyModal({ onClose, onChanged }: { onClose: () => void; 
     }
   }
 
-  const discount = prefs ? discountLabel(prefs.training_discount_rate) : "";
-
   return (
     <div className="auth-modal-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -71,11 +61,7 @@ export function DataPrivacyModal({ onClose, onChanged }: { onClose: () => void; 
         <label className="privacy-row">
           <span className="privacy-row-text">
             <strong>允许用我的内容改进模型</strong>
-            <small>
-              开启时，每次生成的页面经去标识化后用于改进模型，并享受生成{discount || "授权"}优惠
-              {prefs?.is_anonymous ? "（登录后生效）" : ""}。
-              关闭后按标准价计费，你之后的数据不再用于训练。
-            </small>
+            <small>开启时享有生成积分优惠；关闭后按标准价计费，后续内容不再用于训练。</small>
           </span>
           <input
             className="privacy-switch"
@@ -88,8 +74,7 @@ export function DataPrivacyModal({ onClose, onChanged }: { onClose: () => void; 
         </label>
 
         <p className="privacy-note">
-          开关只影响之后的生成。已在授权状态下生成的页面，会在生成时提取一份去掉全部文字、图片和链接的匿名结构样本，关闭后不撤回；
-          包含个人信息的原文在关闭后停止用于训练。详见
+          仅影响后续生成。详见
           <a href={LEGAL_DOCS.privacy.href} target="_blank" rel="noopener noreferrer">《隐私政策》</a>。
         </p>
         {error && <div className="auth-error">{error}</div>}

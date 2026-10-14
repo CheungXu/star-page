@@ -34,7 +34,7 @@ from app.services.document_extractor import (
 )
 from app.services.html_sanitizer import extract_html_document, find_tailwind_runtime_violation, sanitize_html
 from app.services.llm.client import create_llm_client
-from app.services.llm.cost import cost_to_payload, estimate_llm_cost, merge_llm_usage, usage_to_payload
+from app.services.llm.cost import estimate_llm_cost, merge_llm_usage, usage_to_payload
 from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, HTML_PAGE_TAILWIND_CORRECTION_PROMPT, build_skill_system_message
 from app.services.llm.types import LlmCostBreakdown, LlmMessage, LlmUsage
 from app.services.scenes.catalog import get_scene
@@ -743,8 +743,6 @@ class GenerationService:
                 progress_payload["reasoning_tokens"] = usage.reasoning_tokens
             if router_usage is not None:
                 progress_payload["router_usage"] = usage_to_payload(router_usage)
-            if cost is not None:
-                progress_payload["cost"] = cost_to_payload(cost)
             yield await self._record_event(task.id, "progress", progress_payload)
 
             task.model_output_text = model_output_text or None
@@ -807,8 +805,6 @@ class GenerationService:
             }
             if usage is not None:
                 completed_payload["usage"] = usage_to_payload(usage)
-            if cost is not None:
-                completed_payload["cost"] = cost_to_payload(cost)
             completed_payload["billing"] = {
                 "training_consent": task.training_consent,
                 "credits_charged": settle.credits_charged if settle else 0,
@@ -1043,7 +1039,10 @@ class GenerationService:
 
             for event in events:
                 last_sequence = event.sequence
-                yield SseEvent(event.event_type, event.payload)
+                # 实际金额只留在版本和流水里，回放给用户的事件里去掉。
+                payload = dict(event.payload)
+                payload.pop("cost", None)
+                yield SseEvent(event.event_type, payload)
 
             await self.session.refresh(task)
             if task.status in TERMINAL_STATUSES and not events:

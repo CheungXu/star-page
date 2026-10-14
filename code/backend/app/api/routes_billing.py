@@ -48,8 +48,6 @@ async def list_transactions(request: Request) -> list[TransactionItem]:
                 credits_delta=row.credits_delta,
                 balance_after=row.balance_after,
                 model_key=row.model_key,
-                revenue_cny=float(row.revenue_cny) if row.revenue_cny is not None else None,
-                raw_cost_cny=float(row.raw_cost_cny) if row.raw_cost_cny is not None else None,
                 memo=row.memo,
                 created_at=row.created_at,
             )

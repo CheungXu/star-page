@@ -28,8 +28,6 @@ export type CreditTransaction = {
   credits_delta: number;
   balance_after: number;
   model_key: string | null;
-  revenue_cny: number | null;
-  raw_cost_cny: number | null;
   memo: string | null;
   created_at: string;
 };

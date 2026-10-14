@@ -9,7 +9,7 @@ export function PolicyNoticeBar({ onAcknowledge, onOpenSettings }: { onAcknowled
       <p>
         我们更新了<a href={LEGAL_DOCS.terms.href} target="_blank" rel="noopener noreferrer">《用户服务协议》</a>和
         <a href={LEGAL_DOCS.privacy.href} target="_blank" rel="noopener noreferrer">《隐私政策》</a>
-        ：生成内容将在去标识化后用于改进模型，授权用户生成享受九折。你可以随时在
+        ：生成内容将在去标识化后用于改进模型，授权用户享有生成积分优惠。你可以随时在
         <button type="button" className="policy-notice-link" onClick={onOpenSettings}>设置</button>
         中关闭。
       </p>

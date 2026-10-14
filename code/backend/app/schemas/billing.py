@@ -23,8 +23,6 @@ class TransactionItem(BaseModel):
     credits_delta: int
     balance_after: int
     model_key: str | None = None
-    revenue_cny: float | None = None
-    raw_cost_cny: float | None = None
     memo: str | None = None
     created_at: datetime
 
