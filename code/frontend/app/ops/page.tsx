@@ -147,7 +147,7 @@ type OpsCaseDetail = OpsCase & {
   events: OpsCaseEvent[];
 };
 
-type Tab = "realtime" | "growth" | "retention" | "engagement" | "quality" | "virality" | "monetization" | "users" | "cases" | "scenes";
+type Tab = "realtime" | "growth" | "retention" | "engagement" | "quality" | "virality" | "monetization" | "users" | "cases" | "scenes" | "reports";
 
 const TAB_LABELS: Record<Tab, string> = {
   realtime: "实时看板",
@@ -160,6 +160,7 @@ const TAB_LABELS: Record<Tab, string> = {
   users: "用户明细",
   cases: "Case 查看",
   scenes: "场景",
+  reports: "举报审核",
 };
 
 // ---------------- 格式化 ----------------
@@ -342,6 +343,7 @@ export default function OpsPage() {
       {tab === "users" && <UsersView />}
       {tab === "cases" && <CasesView />}
       {tab === "scenes" && <ScenesView />}
+      {tab === "reports" && <ReportsView />}
     </main>
   );
 }
@@ -1195,6 +1197,140 @@ function ScenesView() {
         <button type="button" onClick={() => void markCase()}>标记</button>
       </div>
       {message && <p className="ops-tip">{message}</p>}
+    </section>
+  );
+}
+
+type ReportItem = {
+  id: string;
+  page_id: string;
+  page_title: string;
+  page_url: string;
+  page_moderation_status: string;
+  owner_display: string;
+  category: string;
+  category_label: string;
+  description: string | null;
+  contact: string | null;
+  status: string;
+  review_note: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  same_page_pending: number;
+};
+
+const REPORT_STATUS_LABELS: Record<string, string> = {
+  pending: "待审核",
+  taken_down: "已下架",
+  rejected: "已驳回",
+  all: "全部",
+};
+
+function ReportsView() {
+  const [status, setStatus] = useState("pending");
+  const [rows, setRows] = useState<ReportItem[]>([]);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch(`/api/admin/reports?status=${status}`).then(async (response) => {
+      if (!response.ok || cancelled) return;
+      const data = (await response.json()) as ReportItem[];
+      if (!cancelled) setRows(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [status, reloadKey]);
+
+  async function review(item: ReportItem, action: "takedown" | "reject" | "restore") {
+    const confirmText = { takedown: "确认下架该页面？", reject: "确认驳回这条举报？", restore: "确认恢复该页面的访问？" }[action];
+    if (!window.confirm(confirmText)) return;
+    setMessage("");
+    const response = await apiFetch(`/api/admin/reports/${item.id}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, note: notes[item.id] ?? "" }),
+    });
+    setMessage(response.ok ? "已处理" : "处理失败，请刷新后重试");
+    if (response.ok) setReloadKey((key) => key + 1);
+  }
+
+  return (
+    <section>
+      <div className="ops-section-head">
+        <h3>举报审核</h3>
+        <div className="ops-range">
+          {Object.entries(REPORT_STATUS_LABELS).map(([key, label]) => (
+            <button key={key} type="button" className={status === key ? "is-active" : ""} onClick={() => setStatus(key)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="ops-tip">
+        下架后页面与固定链接均显示「该页面因违规已下架」，同页其他待审举报一并结案。先打开页面核实再处理；误判可在「已下架」里恢复。
+      </p>
+      {message && <p className="ops-tip">{message}</p>}
+      {rows.length === 0 ? (
+        <p className="ops-empty">暂无举报</p>
+      ) : (
+        <div className="ops-table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>时间</th><th>页面</th><th>类型</th><th>说明 / 联系方式</th><th>状态</th><th>备注</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((item) => (
+                <tr key={item.id}>
+                  <td>{fmtTime(item.created_at)}</td>
+                  <td>
+                    <a href={item.page_url} target="_blank" rel="noopener noreferrer">{item.page_title}</a>
+                    <div className="ops-tip">
+                      {item.owner_display}
+                      {item.same_page_pending > 1 ? ` · 同页待审 ${item.same_page_pending} 条` : ""}
+                      {item.page_moderation_status === "blocked" ? " · 已下架" : ""}
+                    </div>
+                  </td>
+                  <td>{item.category_label}</td>
+                  <td>
+                    {item.description ?? "—"}
+                    {item.contact ? <div className="ops-tip">联系：{item.contact}</div> : null}
+                  </td>
+                  <td>{REPORT_STATUS_LABELS[item.status] ?? item.status}</td>
+                  <td>
+                    {item.status === "pending" || item.page_moderation_status === "blocked" ? (
+                      <input
+                        className="report-note-input"
+                        value={notes[item.id] ?? item.review_note ?? ""}
+                        onChange={(event) => setNotes((prev) => ({ ...prev, [item.id]: event.target.value }))}
+                        placeholder="处理备注"
+                      />
+                    ) : (
+                      item.review_note ?? "—"
+                    )}
+                  </td>
+                  <td className="report-actions">
+                    {item.status === "pending" && (
+                      <>
+                        <button type="button" onClick={() => void review(item, "takedown")}>下架</button>
+                        <button type="button" onClick={() => void review(item, "reject")}>驳回</button>
+                      </>
+                    )}
+                    {item.page_moderation_status === "blocked" && item.status !== "pending" && (
+                      <button type="button" onClick={() => void review(item, "restore")}>恢复访问</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

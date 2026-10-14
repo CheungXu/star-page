@@ -12,7 +12,9 @@ from app.api.routes_conversations import router as conversations_router
 from app.api.routes_generation import router as generation_router
 from app.api.routes_assets import router as assets_router
 from app.api.routes_pages import router as pages_router
+from app.api.routes_privacy import router as privacy_router
 from app.api.routes_publications import router as publications_router
+from app.api.routes_reports import router as reports_router
 from app.api.routes_scenes import router as scenes_router
 from app.core.config import get_settings
 
@@ -39,6 +41,8 @@ app.include_router(billing_router)
 app.include_router(admin_router)
 app.include_router(analytics_router)
 app.include_router(admin_analytics_router)
+app.include_router(privacy_router)
+app.include_router(reports_router)
 
 
 @app.get("/healthz")

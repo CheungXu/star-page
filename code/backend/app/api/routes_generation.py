@@ -15,6 +15,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.entities import PageAsset
 from app.schemas.generation import GenerationCreateRequest, GenerationCreateResponse, GenerationRunItem
 from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
+from app.services.consent_service import training_consent_for
 from app.services.document_extractor import prepare_generation_input
 from app.services.generation_service import GenerationService
 from app.services.image_assets import discard_stored_images, store_uploaded_images
@@ -79,6 +80,7 @@ async def create_generation(request: Request, response: Response) -> GenerationC
 
         service = GenerationService(session)
         owner_id = user.id
+        asset_consent = training_consent_for(user)
         created_ok = False
         try:
             creation = await service.create_batch(
@@ -108,6 +110,7 @@ async def create_generation(request: Request, response: Response) -> GenerationC
                             filename=image.filename,
                             role=image.role,
                             byte_size=image.byte_size,
+                            training_consent=asset_consent,
                         )
                     )
                 await session.commit()

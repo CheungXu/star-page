@@ -13,6 +13,7 @@ from app.core.database import AsyncSessionLocal
 from app.schemas.analytics import AnalyticsCollectRequest
 from app.services.analytics import record_analytics_event
 from app.services.analytics.tracking import ALLOWED_EVENTS, allow_event, hash_ip
+from app.services.consent_service import training_consent_for
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -33,6 +34,7 @@ async def collect(payload: AnalyticsCollectRequest, request: Request, background
     anon_device_id = None
     async with AsyncSessionLocal() as session:
         actor = await get_optional_actor(session, request)
+        consent = training_consent_for(actor)
         if actor is not None:
             if actor.is_anonymous:
                 anon_device_id = actor.anon_device_id
@@ -54,5 +56,6 @@ async def collect(payload: AnalyticsCollectRequest, request: Request, background
         ip=ip,
         referer=request.headers.get("referer"),
         user_agent=request.headers.get("user-agent"),
+        training_consent=consent,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

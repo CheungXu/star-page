@@ -110,6 +110,17 @@ journalctl -u star-page-backend.service -f
 - 管理端（`routes_admin_analytics.py` + `require_admin`，前缀 `/api/admin/analytics`，对应前端 `/ops` 九个 Tab）：`GET /realtime`、`/overview`、`/trends`、`/retention`、`/funnel`、`/engagement`、`/quality`、`/virality`、`/users`、`/users/{id}`、`/cases`、`/cases/{id}`。
 - 离线聚合：`python -m app.analytics.aggregate`（按自然日幂等 upsert `metric_daily`/`retention_cohort`/`funnel_daily`，可回填重跑），由 `code/systemd/star-page-analytics.{service,timer}` 定时驱动。
 
+### 训练授权、授权优惠与举报
+
+方案与决策见 `doc/20261015/training-consent-report-discount-plan.md`，库表见迁移 `018_training_consent_and_reports.sql`。
+
+- **授权快照**：`users.allow_training`（默认开）是当前开关；`generation_batches` / `generation_tasks` / `page_versions` / `page_assets` / `analytics_events` 的 `training_consent` 记录**数据产生那一刻**的状态：`granted` / `denied` / `legacy`（协议上线前的数据，或尚未看到更新告知的老用户）。判定在 `consent_service.training_consent_for`。**训练取数口径**：`training_consent='granted'` 且所属用户当前 `allow_training=true`。
+- **同意记录**：`user_consents` 只追加，事件 `login_agree`（登录勾选，带 `agreement_version`）/ `notice_ack`（老用户点「知道了」）/ `anon_notice`（匿名首访）/ `preference`（开关变更）/ `merge_opt_out`（匿名关过、登录归并时带到正式账号）。协议版本常量 `POLICY_VERSION` 与前端 `LEGAL_POLICY_VERSION` 必须同步。
+- **授权九折**：倍率读 `config/billing.json.training_discount_rate`（限 0.5–1.0）。按批次快照判断，`granted` 时 `apply_training_discount` 向下取整（至少 1 积分），优惠额记 `credit_transactions.training_discount_credits`；事后关开关不补扣。
+- **匿名结构样本**：`granted` 的生成结算后，`training_samples.store_training_sample` 抽取去掉全部文字/链接/联系方式的 HTML 骨架入 `training_samples`（不含 user/page id，按 `content_hash` 去重，`EXTRACTOR_VERSION` 区分抽取规则），关开关不撤回。
+- 接口：`GET / PUT /api/privacy/preferences`（PUT 会给未登录访客懒建匿名身份）、`POST /api/privacy/notice-ack`。`/api/auth/me` 返回 `allow_training`、`needs_policy_notice`。
+- **举报**：公开页浮标「举报」跳平台 `/report?page=&slug=`（生成页 CSP 禁止直接请求接口）。`GET /api/reports/target`、`POST /api/reports`（同 IP 同页 24h 一次、每 IP 每日 20 次）；管理端 `GET /api/admin/reports?status=pending|taken_down|rejected|all`、`POST /api/admin/reports/{id}/review`（`takedown` / `reject` / `restore`）。下架即 `pages.moderation_status='blocked'`，`/p` 与 `/u` 返回 451「该页面因违规已下架」，不可再发布，案例墙同步过滤。
+
 匿名体系：未登录访客经 `resolve_actor` 懒签发 HMAC 签名 `sp_anon` cookie 并建 `is_anonymous` 用户，免费 2 次生成；高价模型后端强校验拒绝（匿名只允许 `anon_allowed_models`、单次 ≤ `anon_max_models_per_gen`）；按 IP 每日限制签发匿名 id 数与免费次数。手机验证码登录时把匿名会话/页面归并到正式账号并首次赠送 1000 积分（幂等）。
 
 `POST /api/generations` 同时兼容 JSON 和 `multipart/form-data`。上传文件时表单字段为：

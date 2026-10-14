@@ -21,6 +21,7 @@ from app.schemas.auth import (
     SmsSendResponse,
 )
 from app.services.auth_service import AuthService
+from app.services.consent_service import needs_policy_notice
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -49,6 +50,7 @@ async def login_with_sms(payload: SmsLoginRequest, request: Request, response: R
                 user_agent=request.headers.get("user-agent"),
                 ip_address=get_client_ip(request),
                 anon_user=anon_user,
+                agreement_version=payload.agreement_version,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
@@ -88,6 +90,8 @@ async def _to_user_response(session, user) -> AuthUserResponse:
         phone_verified=user.phone_verified,
         has_password=bool(user.password_hash),
         is_admin=await is_admin_user(session, user),
+        allow_training=user.allow_training,
+        needs_policy_notice=needs_policy_notice(user),
     )
 
 

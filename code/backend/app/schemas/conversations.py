@@ -30,12 +30,9 @@ class ConversationUsage(BaseModel):
     reasoning_tokens: int | None = None
 
 
-class ConversationCost(BaseModel):
-    currency: str = "CNY"
-    input: float | None = None
-    output: float | None = None
-    total: float | None = None
-    tier_label: str | None = None
+class ConversationBilling(BaseModel):
+    credits_charged: int
+    discount_credits: int = 0
 
 
 class ConversationNode(BaseModel):
@@ -49,7 +46,7 @@ class ConversationNode(BaseModel):
     generation_status: str | None
     page_url: str
     usage: ConversationUsage | None = None
-    cost: ConversationCost | None = None
+    billing: ConversationBilling | None = None
 
 
 class ConversationBatch(BaseModel):

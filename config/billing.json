@@ -22,5 +22,6 @@
   "anon_daily_free_generation_limit_per_ip": 5,
   "min_recharge_cny": 1,
   "max_recharge_cny": 100000,
+  "training_discount_rate": 0.9,
   "aliyun_llm_keywords": ["百炼", "灵积", "通义", "模型", "dashscope", "bailian", "lingji"]
 }

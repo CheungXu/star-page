@@ -5,7 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DataPrivacyModal } from "./components/DataPrivacyModal";
+import { PolicyNoticeBar } from "./components/PolicyNoticeBar";
 import { SiteFooter } from "./components/SiteFooter";
+import { LEGAL_POLICY_VERSION } from "./legal/docs";
 import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
@@ -29,6 +32,8 @@ type AuthUser = {
   phone_verified: boolean;
   has_password: boolean;
   is_admin?: boolean;
+  allow_training?: boolean;
+  needs_policy_notice?: boolean;
 };
 
 type AuthLoginResponse = {
@@ -59,14 +64,6 @@ type ApiUsagePayload = {
   reasoning_tokens?: number;
 };
 
-type ApiCostPayload = {
-  currency?: string;
-  tier_label?: string;
-  input?: number;
-  output?: number;
-  total?: number;
-};
-
 type SsePayload = {
   type: string;
   text?: string;
@@ -85,7 +82,7 @@ type SsePayload = {
   reasoning_tokens?: number;
   token_source?: "actual" | "estimated";
   usage?: ApiUsagePayload;
-  cost?: ApiCostPayload;
+  billing?: { training_consent?: string; credits_charged?: number; discount_credits?: number };
 };
 
 type UsageCostSummary = {
@@ -94,10 +91,8 @@ type UsageCostSummary = {
   totalTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
-  costTotalCny: number;
-  costInputCny?: number;
-  costOutputCny?: number;
-  tierLabel?: string;
+  creditsCharged?: number;
+  discountCredits?: number;
 };
 
 type ProgressStepId =
@@ -188,7 +183,7 @@ type ConversationNodeResponse = {
   generation_status?: string | null;
   page_url: string;
   usage?: ApiUsagePayload | null;
-  cost?: ApiCostPayload | null;
+  billing?: { credits_charged?: number; discount_credits?: number } | null;
 };
 
 type ConversationBatchResponse = {
@@ -1108,6 +1103,7 @@ function AuthModal({
   const [isSending, setIsSending] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [hasAgreed, setHasAgreed] = useState(false);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -1118,6 +1114,10 @@ function AuthModal({
   async function sendCode(event?: FormEvent) {
     event?.preventDefault();
     if (isSending || countdown > 0) return;
+    if (!hasAgreed) {
+      setErrorMessage("请先阅读并勾选同意《用户服务协议》和《隐私政策》");
+      return;
+    }
     setErrorMessage("");
     setIsSending(true);
     try {
@@ -1139,13 +1139,17 @@ function AuthModal({
 
   async function login(event: FormEvent) {
     event.preventDefault();
+    if (!hasAgreed) {
+      setErrorMessage("请先阅读并勾选同意《用户服务协议》和《隐私政策》");
+      return;
+    }
     setErrorMessage("");
     setIsLoggingIn(true);
     try {
       const response = await apiFetch("/api/auth/sms/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, code }),
+        body: JSON.stringify({ phone, code, agreement_version: LEGAL_POLICY_VERSION }),
       });
       if (!response.ok) throw new Error(await readErrorMessage(response, "登录失败"));
       const payload = (await response.json()) as AuthLoginResponse;
@@ -1194,6 +1198,15 @@ function AuthModal({
               />
             </label>
           )}
+
+          <label className="auth-consent">
+            <input type="checkbox" checked={hasAgreed} onChange={(event) => setHasAgreed(event.target.checked)} />
+            <span>
+              我已阅读并同意
+              <a href="/terms" target="_blank" rel="noopener noreferrer">《用户服务协议》</a>和
+              <a href="/privacy" target="_blank" rel="noopener noreferrer">《隐私政策》</a>。
+            </span>
+          </label>
 
           {errorMessage && <div className="auth-error">{errorMessage}</div>}
 
@@ -1285,6 +1298,7 @@ export default function HomePage() {
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [phase, setPhase] = useState<"idle" | "active">("idle");
   const [conversationId, setConversationId] = useState("");
@@ -1540,6 +1554,17 @@ export default function HomePage() {
     setAccount(data);
   }
 
+  /** 老用户确认协议更新告知；点「知道了」或带着告知继续生成都算。 */
+  async function acknowledgePolicyNotice(): Promise<void> {
+    if (!authUser?.needs_policy_notice) return;
+    setAuthUser((current) => (current ? { ...current, needs_policy_notice: false } : current));
+    try {
+      await apiFetch("/api/privacy/notice-ack", { method: "POST" });
+    } catch {
+      // 告知记录失败不影响使用，下次登录态刷新时会再次提示。
+    }
+  }
+
   async function loadModels(user: AuthUser | null): Promise<void> {
     try {
       const response = await apiFetch("/api/models");
@@ -1649,6 +1674,8 @@ export default function HomePage() {
     if (isGenerating) {
       return;
     }
+    // 告知仍在显示时继续生成，视为已知悉；先记下再建批次，这次生成才按新协议记授权。
+    if (authUser?.needs_policy_notice) await acknowledgePolicyNotice();
 
     // 计费前置预判（后端仍为权威）：匿名免费次数用尽引导登录，登录用户余额不足引导充值。
     if (account) {
@@ -2423,8 +2450,9 @@ export default function HomePage() {
                   return;
                 }
                 if (!authUser) setIsAuthModalOpen(true);
+                else setIsPrivacyModalOpen(true);
               }}
-              title={isSidebarCollapsed ? "展开侧边栏" : authUser ? authUser.phone : "登录 / 注册"}
+              title={isSidebarCollapsed ? "展开侧边栏" : authUser ? `${authUser.phone} · 设置` : "登录 / 注册"}
               aria-label={isSidebarCollapsed ? "展开侧边栏" : authUser ? `当前用户 ${authUser.phone}` : "登录 / 注册"}
               aria-expanded={isSidebarCollapsed ? false : undefined}
             >
@@ -2432,7 +2460,7 @@ export default function HomePage() {
               {!isSidebarCollapsed && (
                 <span className="sidebar-user-text">
                   <strong>{authUser ? maskPhone(authUser.phone) : isAuthLoading ? "检查登录态" : "登录 / 注册"}</strong>
-                  <small>{authUser ? "账号已登录" : "登录后同步历史记录"}</small>
+                  <small>{authUser ? "账号已登录 · 设置" : "登录后同步历史记录"}</small>
                 </span>
               )}
             </button>
@@ -2747,7 +2775,7 @@ export default function HomePage() {
 
               {renderPromptForm()}
             </div>
-            <SiteFooter />
+            <SiteFooter onOpenDataSettings={() => setIsPrivacyModalOpen(true)} />
           </section>
         </main>
       ) : (
@@ -2860,16 +2888,14 @@ export default function HomePage() {
                                 ? ` · 思考 ${formatTokenCount(activeRun.usageSummary.reasoningTokens)}`
                                 : ""}
                             </span>
-                            <span className="usage-summary-cost">
-                              {activeRun.usageSummary.costTotalCny > 0 || activeRun.usageSummary.tierLabel ? (
-                                <>
-                                  花费 {formatCostCny(activeRun.usageSummary.costTotalCny)}
-                                  {activeRun.usageSummary.tierLabel ? `（${activeRun.usageSummary.tierLabel}）` : ""}
-                                </>
-                              ) : (
-                                "费用未配置"
-                              )}
-                            </span>
+                            {activeRun.usageSummary.creditsCharged ? (
+                              <span className="usage-summary-credits">
+                                花费 {activeRun.usageSummary.creditsCharged} 积分
+                                {activeRun.usageSummary.discountCredits ? (
+                                  <em>优惠 -{activeRun.usageSummary.discountCredits}</em>
+                                ) : null}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       )}
@@ -2935,6 +2961,21 @@ export default function HomePage() {
       {notice && <div className="app-toast" role="status">{notice}</div>}
       {fullscreenPreviewRun && <FullscreenPreviewModal run={fullscreenPreviewRun} onClose={() => setFullscreenRun(null)} />}
       {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
+      {isPrivacyModalOpen && (
+        <DataPrivacyModal
+          onClose={() => setIsPrivacyModalOpen(false)}
+          onChanged={(allow) => setAuthUser((current) => (current ? { ...current, allow_training: allow } : current))}
+        />
+      )}
+      {authUser?.needs_policy_notice && (
+        <PolicyNoticeBar
+          onAcknowledge={() => void acknowledgePolicyNotice()}
+          onOpenSettings={() => {
+            void acknowledgePolicyNotice();
+            setIsPrivacyModalOpen(true);
+          }}
+        />
+      )}
       {showPasswordPrompt && authUser && !authUser.has_password && (
         <PasswordPromptModal
           onClose={() => setShowPasswordPrompt(false)}
@@ -3096,7 +3137,7 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
 
   const runs: RunState[] = (baseBatch?.nodes ?? []).map((node) => {
     const status = mapNodeStatus(node.page_status, node.generation_status);
-    const usageSummary = buildUsageSummaryFromDetail(node.usage, node.cost);
+    const usageSummary = buildUsageSummaryFromDetail(node.usage, node.billing);
     return {
       taskId: node.task_id ?? "",
       pageId: node.page_id,
@@ -3209,16 +3250,14 @@ function buildUsageSummary(payload: SsePayload): UsageCostSummary | undefined {
     totalTokens: payload.usage?.total_tokens ?? payload.total_tokens,
     cachedInputTokens: payload.usage?.cached_input_tokens ?? payload.cached_input_tokens,
     reasoningTokens: payload.usage?.reasoning_tokens ?? payload.reasoning_tokens,
-    costTotalCny: payload.cost?.total ?? 0,
-    costInputCny: payload.cost?.input,
-    costOutputCny: payload.cost?.output,
-    tierLabel: payload.cost?.tier_label,
+    creditsCharged: payload.billing?.credits_charged,
+    discountCredits: payload.billing?.discount_credits,
   };
 }
 
 function buildUsageSummaryFromDetail(
   usage?: ApiUsagePayload | null,
-  cost?: ApiCostPayload | null,
+  billing?: { credits_charged?: number; discount_credits?: number } | null,
 ): UsageCostSummary | undefined {
   if (usage?.input_tokens === undefined || usage.output_tokens === undefined) {
     return undefined;
@@ -3230,21 +3269,13 @@ function buildUsageSummaryFromDetail(
     totalTokens: usage.total_tokens,
     cachedInputTokens: usage.cached_input_tokens,
     reasoningTokens: usage.reasoning_tokens,
-    costTotalCny: cost?.total ?? 0,
-    costInputCny: cost?.input,
-    costOutputCny: cost?.output,
-    tierLabel: cost?.tier_label,
+    creditsCharged: billing?.credits_charged,
+    discountCredits: billing?.discount_credits,
   };
 }
 
 function formatTokenCount(value: number): string {
   return value.toLocaleString("zh-CN");
-}
-
-function formatCostCny(value: number): string {
-  if (value >= 1) return `¥${value.toFixed(4)}`;
-  if (value >= 0.01) return `¥${value.toFixed(4)}`;
-  return `¥${value.toFixed(6)}`;
 }
 
 function getProgressIcon(status: ProgressStepStatus): ReactNode {

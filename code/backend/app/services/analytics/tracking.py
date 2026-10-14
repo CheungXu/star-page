@@ -151,8 +151,9 @@ async def record_analytics_event(
     ip: str | None,
     referer: str | None,
     user_agent: str | None,
+    training_consent: str | None = None,
 ) -> None:
-    """写一条前端埋点事件，失败不抛出。"""
+    """写一条前端埋点事件，失败不抛出。training_consent 为上报时用户的授权快照。"""
     try:
         async with AsyncSessionLocal() as session:
             session.add(
@@ -166,6 +167,7 @@ async def record_analytics_event(
                     ip_hash=hash_ip(ip),
                     referer=_clip(referer, 2000),
                     user_agent=_clip(user_agent, 2000),
+                    training_consent=training_consent or "granted",
                 )
             )
             await session.commit()

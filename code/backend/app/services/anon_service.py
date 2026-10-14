@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_billing_config, get_settings
 from app.models.entities import AnonVisitor, User
 from app.services.billing.errors import AnonLimitError
+from app.services.consent_service import ConsentService
 
 
 class AnonService:
@@ -76,6 +77,7 @@ class AnonService:
             password_hash=None,
             email_verified=False,
             phone_verified=False,
+            allow_training=True,
         )
         self.session.add(user)
         await self.session.flush()
@@ -88,6 +90,8 @@ class AnonService:
             user_agent=user_agent,
         )
         self.session.add(visitor)
+        # 匿名用户没有勾选框，依据是首页「使用即同意并授权」提示；留一条记录备查。
+        ConsentService(self.session).record(user, event="anon_notice", ip=sign_ip, user_agent=user_agent)
         await self.session.flush()
         return user, self.sign_device_id(device_id)
 

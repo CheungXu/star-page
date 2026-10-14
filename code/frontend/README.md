@@ -26,6 +26,8 @@
 - **匿名可用**：未登录也能生成。匿名只能选 `anon_allowed` 模型，高价旗舰**可见但置灰**，点击弹轻提示「注册后可用」；单次最多生效 2 个模型，勾第 3 个轻提示需注册（前端仅作引导，后端强校验）。
 - **登录拦截**：匿名免费次数用尽（后端 402 `need_login`）或复制分享链接时弹登录框；登录用户余额不足（402 `insufficient_credits`）跳转 `/pricing`。生成成功与登录后会刷新账户余额。
 - **`app/pricing`**：mock 套餐卡（基础/赠送/折扣标注），建单 + mock 支付闭环，展示积分流水；正式上线接入微信/支付宝。
+- **协议页**：`/terms`、`/privacy`、`/recharge-terms` 共用 `app/legal/LegalDocument.tsx`，正文在 `content/legal/{key}.md`，构建时读取并静态渲染（只支持标题、段落、列表、表格、加粗、行内代码）。修改协议只需改 md 文件，与 `doc/20261013/user-agreement-and-privacy-policy-v2.md` 保持一致。同意入口共三处：首页页脚「使用即同意」提示（覆盖未登录用户）；登录弹窗必须勾选才能获取验证码或登录；充值页说明点击充值即同意《积分充值服务协议》。登录请求带 `agreement_version`（`app/legal/docs.ts` 的 `LEGAL_POLICY_VERSION`，与后端 `POLICY_VERSION` 同步）。
+- **训练授权与举报**：登录后点侧边栏账号（或页脚「数据设置」）打开 `components/DataPrivacyModal.tsx`（设置 → 数据与隐私，训练开关，未登录也可用）；老用户 `needs_policy_notice` 时底部显示 `components/PolicyNoticeBar.tsx`，点「知道了」或直接发起生成都会调用 `notice-ack`。生成完成的用量摘要显示「扣 N 积分 · 授权优惠 -M」。`/report` 是公开页「举报」浮标的落点；`/ops` 的「举报审核」Tab 处理下架、驳回和恢复。
 - **`app/admin`**：财务仪表盘（收入/成本/毛利/赠送负债/科目余额、积分流水、记账凭证、用户对账）；后端 `require_admin` 鉴权，前端对 401/403 兜底显示「需要管理员权限」。
 - **场景与案例库（所见即所得）**：
   - 首页输入框下方展示「试试」快捷场景药丸（网页简历、博主主页、产品落地页、活动邀请函），以及「别人做的页面」真实案例展示区。

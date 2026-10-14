@@ -14,7 +14,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.entities import Conversation, Page, PagePublication, PageVersion
 from app.services.analytics import record_page_view
 from app.services.analytics.tracking import is_preview_bot, record_analytics_event
-from app.services.page_delivery import build_remix_url, render_page_html
+from app.services.page_delivery import build_remix_url, build_report_url, render_blocked_page, render_page_html
 from app.services.publications import external_view_count, publication_url, publish_page
 from app.services.scenes.catalog import get_scene
 from app.services.storage.factory import create_storage_provider
@@ -103,6 +103,8 @@ async def serve_publication(
             or conversation.deleted_at is not None
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="页面不存在")
+        if page.moderation_status == "blocked":
+            return render_blocked_page()
         version = await session.get(PageVersion, page.current_version_id)
         if version is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="页面版本不存在")
@@ -143,6 +145,7 @@ async def serve_publication(
         print_after_load=print_mode == 1,
         remix_url=build_remix_url(scene.key if scene else None, slug),
         poster_url=f"{url}/poster.png",
+        report_url=build_report_url(str(page_id), slug),
     )
 
 

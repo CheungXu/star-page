@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 # 1 元 = 100 积分
 CREDITS_PER_CNY = Decimal("100")
@@ -22,6 +22,12 @@ def credits_for_cost(raw_cost_cny: Decimal | float | int | None, markup: float |
     rate = Decimal(str(markup))
     credits = (cost * rate * CREDITS_PER_CNY).to_integral_value(rounding=ROUND_CEILING)
     return max(int(credits), 1)
+
+
+def apply_training_discount(credits: int, rate: float | Decimal) -> int:
+    """授权折扣后的应扣积分：向下取整，保证不高于标称折扣；底线 1 积分；rate 为 1 时不打折。"""
+    discounted = (Decimal(int(credits)) * Decimal(str(rate))).to_integral_value(rounding=ROUND_FLOOR)
+    return min(int(credits), max(int(discounted), 1))
 
 
 def credits_to_cny(credits: int) -> Decimal:

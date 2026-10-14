@@ -19,7 +19,7 @@ from app.models.entities import (
 )
 from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
 from app.services.billing.ledger import LedgerLine, LedgerService
-from app.services.billing.pricing import credits_for_cost, credits_to_cny
+from app.services.billing.pricing import apply_training_discount, credits_for_cost, credits_to_cny
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class SettleResult:
     gift_used: int
     balance_after: int
     already_settled: bool = False
+    discount_credits: int = 0
 
 
 @dataclass(frozen=True)
@@ -446,11 +447,13 @@ class BillingService:
         model_key: str | None,
         raw_cost_cny: Decimal | float | None,
         markup: float,
+        training_granted: bool = False,
     ) -> SettleResult:
         """按页面版本结算一次生成消耗，按 version_id 幂等。
 
         匿名：不扣积分（免费额度已在启动时计数），仅记 COGS 进试用获客成本。
         登录：先扣 gift 后扣 paid；确认收入 = 实扣积分面值；记 COGS。
+        training_granted：本次生成时处于授权状态，按授权折扣计价（与这条数据绑定，事后改开关不影响）。
         """
         idem = f"consume:{version_id}"
         raw_cost = Decimal(str(raw_cost_cny)) if raw_cost_cny is not None else Decimal("0")
@@ -462,7 +465,7 @@ class BillingService:
 
         if user.is_anonymous:
             return await self._settle_anonymous(user, version_id, idem, model_key, raw_cost, markup)
-        return await self._settle_registered(user, version_id, idem, model_key, raw_cost, markup)
+        return await self._settle_registered(user, version_id, idem, model_key, raw_cost, markup, training_granted)
 
     async def _settle_anonymous(
         self,
@@ -504,9 +507,16 @@ class BillingService:
         model_key: str | None,
         raw_cost: Decimal,
         markup: float,
+        training_granted: bool = False,
     ) -> SettleResult:
         account = await self.get_or_create_account(user.id)
-        credits = credits_for_cost(raw_cost, markup)
+        standard_credits = credits_for_cost(raw_cost, markup)
+        credits = (
+            apply_training_discount(standard_credits, self.config.training_discount_rate)
+            if training_granted
+            else standard_credits
+        )
+        discount_credits = standard_credits - credits
 
         total_balance = account.paid_balance + account.gift_balance
         deduct = min(credits, total_balance)  # 受 CHECK>=0 约束，最多扣到 0，单次小额兜底
@@ -534,8 +544,9 @@ class BillingService:
                 raw_cost_cny=raw_cost,
                 markup=Decimal(str(markup)),
                 revenue_cny=revenue,
+                training_discount_credits=discount_credits,
                 idempotency_key=idem,
-                memo="生成消耗",
+                memo=f"生成消耗 · 授权优惠 -{discount_credits}" if discount_credits > 0 else "生成消耗",
             )
         )
 
@@ -563,7 +574,7 @@ class BillingService:
                 lines=lines,
             )
         await self.session.flush()
-        return SettleResult(deduct, paid_used, gift_used, balance_after)
+        return SettleResult(deduct, paid_used, gift_used, balance_after, discount_credits=discount_credits)
 
     async def _post_cogs(
         self, version_id: uuid.UUID, idem: str, user_id: uuid.UUID, raw_cost: Decimal, *, memo: str
