@@ -230,6 +230,19 @@ button {
   gap: 2px 8px;
 }
 
+.site-footer-inline {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.site-footer-inline:hover {
+  text-decoration: underline;
+}
+
 /* ===== 协议页 ===== */
 .legal-page {
   max-width: 820px;
@@ -2955,6 +2968,16 @@ h1 {
 .usage-summary-cost {
   color: var(--color-text-secondary);
   font-weight: 600;
+}
+
+.usage-summary-credits {
+  color: var(--color-text-secondary);
+}
+
+.usage-summary-credits em {
+  margin-left: 6px;
+  font-style: normal;
+  color: #15803d;
 }
 
 .node-toggle {
@@ -6394,4 +6417,228 @@ h1 {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 8px 10px;
+}
+
+/* ===== 设置 · 数据与隐私 ===== */
+.privacy-modal {
+  width: min(460px, 100%);
+}
+
+.privacy-section-title {
+  margin: 18px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.privacy-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.privacy-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.privacy-row-text strong {
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.privacy-row-text small {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.privacy-switch {
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 22px;
+  margin: 2px 0 0;
+  border-radius: 999px;
+  background: #cbd5e1;
+  appearance: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.privacy-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.privacy-switch:checked {
+  background: var(--color-primary);
+}
+
+.privacy-switch:checked::after {
+  transform: translateX(18px);
+}
+
+.privacy-switch:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.privacy-note {
+  margin: 12px 0 0;
+  font-size: 12px !important;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.privacy-note a {
+  color: var(--color-text-tertiary);
+}
+
+/* ===== 协议更新告知（老用户一次性） ===== */
+.policy-notice-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(640px, calc(100% - 32px));
+  padding: 12px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 32px -16px rgba(15, 23, 42, 0.3);
+  transform: translateX(-50%);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.policy-notice-bar p {
+  margin: 0;
+}
+
+.policy-notice-bar a,
+.policy-notice-link {
+  color: var(--color-primary);
+}
+
+.policy-notice-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.policy-notice-ok {
+  flex: none;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ===== 举报页 ===== */
+.report-categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.report-categories legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.report-categories label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.report-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+.report-field textarea,
+.report-field input {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  font: inherit;
+  resize: vertical;
+}
+
+.report-submit {
+  padding: 10px 24px;
+  border: 0;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.report-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.report-error {
+  color: #dc2626;
+}
+
+.report-tip {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.report-done {
+  padding: 16px;
+  border-radius: 12px;
+  background: #f0fdf4;
+}
+
+.report-note-input {
+  width: 140px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.report-actions {
+  white-space: nowrap;
+}
+
+.report-actions button {
+  margin-right: 6px;
 }

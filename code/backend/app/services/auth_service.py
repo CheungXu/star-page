@@ -22,6 +22,7 @@ from app.models.entities import (
     UserSession,
 )
 from app.services.billing import BillingService
+from app.services.consent_service import ConsentService
 from app.services.sms.factory import create_sms_provider
 
 _PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
@@ -73,6 +74,7 @@ class AuthService:
         user_agent: str | None,
         ip_address: str | None,
         anon_user: User | None = None,
+        agreement_version: str | None = None,
     ) -> LoginResult:
         normalized_phone = self.normalize_phone(phone)
         clean_code = code.strip()
@@ -108,8 +110,12 @@ class AuthService:
         user.last_login_at = now
 
         # 归并匿名身份：把匿名期的会话/页面/任务/权限改挂到手机账号，并标记匿名用户已合并。
+        consent = ConsentService(self.session)
         if anon_user is not None and anon_user.is_anonymous and anon_user.id != user.id:
+            consent.carry_anon_opt_out(anon_user, user, ip=ip_address, user_agent=user_agent)
             await self._merge_anonymous_into(anon_user, user)
+        if agreement_version:
+            consent.agree_on_login(user, policy_version=agreement_version, ip=ip_address, user_agent=user_agent)
 
         # 首次注册赠送积分（幂等，仅首次生效）。
         await BillingService(self.session).grant_signup_bonus(user)
@@ -231,6 +237,7 @@ class AuthService:
             display_name=_mask_phone(phone),
             phone_verified=True,
             email_verified=False,
+            allow_training=True,
         )
         self.session.add(user)
         await self.session.flush()

@@ -222,6 +222,7 @@ async def _public_cases(scene_key: str) -> list[dict]:
                     Page.deleted_at.is_(None),
                     Page.visibility == "public",
                     Page.status == "ready",
+                    Page.moderation_status == "ok",
                 )
                 .order_by(SceneShowcase.sort_order.asc(), SceneShowcase.created_at.desc())
                 .limit(6)

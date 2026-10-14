@@ -48,6 +48,8 @@ async def publish_page(
         raise ValueError("页面还没有会话，无法发布固定链接")
     if page.status != "ready":
         raise ValueError("页面尚未生成完成")
+    if page.moderation_status == "blocked":
+        raise ValueError("该页面因违规已下架，无法发布")
 
     existing = await session.scalar(select(PagePublication).where(PagePublication.conversation_id == page.conversation_id))
     scene = get_scene(page.scene_key)

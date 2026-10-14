@@ -176,6 +176,7 @@ export default function PricingPage() {
 
       <section className="pricing-note">
         <p>支持微信扫码支付，1 元 = 100 积分，充值即时到账。</p>
+        <p>开启「允许用我的内容改进模型」（设置 → 数据与隐私，默认开启）时，每次生成按九折扣积分。</p>
         <p>
           点击「立即充值」即表示你同意<Link href="/recharge-terms" target="_blank">《积分充值服务协议》</Link>
           ；积分为即时到账的数字化商品，不适用七日无理由退货。

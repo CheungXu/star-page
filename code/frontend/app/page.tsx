@@ -5,7 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DataPrivacyModal } from "./components/DataPrivacyModal";
+import { PolicyNoticeBar } from "./components/PolicyNoticeBar";
 import { SiteFooter } from "./components/SiteFooter";
+import { LEGAL_POLICY_VERSION } from "./legal/docs";
 import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
@@ -29,6 +32,8 @@ type AuthUser = {
   phone_verified: boolean;
   has_password: boolean;
   is_admin?: boolean;
+  allow_training?: boolean;
+  needs_policy_notice?: boolean;
 };
 
 type AuthLoginResponse = {
@@ -86,6 +91,7 @@ type SsePayload = {
   token_source?: "actual" | "estimated";
   usage?: ApiUsagePayload;
   cost?: ApiCostPayload;
+  billing?: { training_consent?: string; credits_charged?: number; discount_credits?: number };
 };
 
 type UsageCostSummary = {
@@ -98,6 +104,8 @@ type UsageCostSummary = {
   costInputCny?: number;
   costOutputCny?: number;
   tierLabel?: string;
+  creditsCharged?: number;
+  discountCredits?: number;
 };
 
 type ProgressStepId =
@@ -1154,7 +1162,7 @@ function AuthModal({
       const response = await apiFetch("/api/auth/sms/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, code }),
+        body: JSON.stringify({ phone, code, agreement_version: LEGAL_POLICY_VERSION }),
       });
       if (!response.ok) throw new Error(await readErrorMessage(response, "登录失败"));
       const payload = (await response.json()) as AuthLoginResponse;
@@ -1210,7 +1218,7 @@ function AuthModal({
               我已阅读并同意
               <a href="/terms" target="_blank" rel="noopener noreferrer">《用户服务协议》</a>和
               <a href="/privacy" target="_blank" rel="noopener noreferrer">《隐私政策》</a>。
-              <strong>星页会在去标识化后使用你的生成内容改进模型</strong>，可随时在账户设置中关闭。
+              <strong>星页会在去标识化后使用你的生成内容改进模型，授权期间生成享受九折</strong>，可随时在设置中关闭。
             </span>
           </label>
 
@@ -1304,6 +1312,7 @@ export default function HomePage() {
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [phase, setPhase] = useState<"idle" | "active">("idle");
   const [conversationId, setConversationId] = useState("");
@@ -1559,6 +1568,17 @@ export default function HomePage() {
     setAccount(data);
   }
 
+  /** 老用户确认协议更新告知；点「知道了」或带着告知继续生成都算。 */
+  async function acknowledgePolicyNotice(): Promise<void> {
+    if (!authUser?.needs_policy_notice) return;
+    setAuthUser((current) => (current ? { ...current, needs_policy_notice: false } : current));
+    try {
+      await apiFetch("/api/privacy/notice-ack", { method: "POST" });
+    } catch {
+      // 告知记录失败不影响使用，下次登录态刷新时会再次提示。
+    }
+  }
+
   async function loadModels(user: AuthUser | null): Promise<void> {
     try {
       const response = await apiFetch("/api/models");
@@ -1668,6 +1688,8 @@ export default function HomePage() {
     if (isGenerating) {
       return;
     }
+    // 告知仍在显示时继续生成，视为已知悉；先记下再建批次，这次生成才按新协议记授权。
+    if (authUser?.needs_policy_notice) await acknowledgePolicyNotice();
 
     // 计费前置预判（后端仍为权威）：匿名免费次数用尽引导登录，登录用户余额不足引导充值。
     if (account) {
@@ -2442,8 +2464,9 @@ export default function HomePage() {
                   return;
                 }
                 if (!authUser) setIsAuthModalOpen(true);
+                else setIsPrivacyModalOpen(true);
               }}
-              title={isSidebarCollapsed ? "展开侧边栏" : authUser ? authUser.phone : "登录 / 注册"}
+              title={isSidebarCollapsed ? "展开侧边栏" : authUser ? `${authUser.phone} · 设置` : "登录 / 注册"}
               aria-label={isSidebarCollapsed ? "展开侧边栏" : authUser ? `当前用户 ${authUser.phone}` : "登录 / 注册"}
               aria-expanded={isSidebarCollapsed ? false : undefined}
             >
@@ -2451,7 +2474,7 @@ export default function HomePage() {
               {!isSidebarCollapsed && (
                 <span className="sidebar-user-text">
                   <strong>{authUser ? maskPhone(authUser.phone) : isAuthLoading ? "检查登录态" : "登录 / 注册"}</strong>
-                  <small>{authUser ? "账号已登录" : "登录后同步历史记录"}</small>
+                  <small>{authUser ? "账号已登录 · 设置" : "登录后同步历史记录"}</small>
                 </span>
               )}
             </button>
@@ -2766,7 +2789,7 @@ export default function HomePage() {
 
               {renderPromptForm()}
             </div>
-            <SiteFooter />
+            <SiteFooter onOpenDataSettings={() => setIsPrivacyModalOpen(true)} />
           </section>
         </main>
       ) : (
@@ -2889,6 +2912,14 @@ export default function HomePage() {
                                 "费用未配置"
                               )}
                             </span>
+                            {activeRun.usageSummary.creditsCharged ? (
+                              <span className="usage-summary-credits">
+                                扣 {activeRun.usageSummary.creditsCharged} 积分
+                                {activeRun.usageSummary.discountCredits ? (
+                                  <em>授权优惠 -{activeRun.usageSummary.discountCredits}</em>
+                                ) : null}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       )}
@@ -2954,6 +2985,21 @@ export default function HomePage() {
       {notice && <div className="app-toast" role="status">{notice}</div>}
       {fullscreenPreviewRun && <FullscreenPreviewModal run={fullscreenPreviewRun} onClose={() => setFullscreenRun(null)} />}
       {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
+      {isPrivacyModalOpen && (
+        <DataPrivacyModal
+          onClose={() => setIsPrivacyModalOpen(false)}
+          onChanged={(allow) => setAuthUser((current) => (current ? { ...current, allow_training: allow } : current))}
+        />
+      )}
+      {authUser?.needs_policy_notice && (
+        <PolicyNoticeBar
+          onAcknowledge={() => void acknowledgePolicyNotice()}
+          onOpenSettings={() => {
+            void acknowledgePolicyNotice();
+            setIsPrivacyModalOpen(true);
+          }}
+        />
+      )}
       {showPasswordPrompt && authUser && !authUser.has_password && (
         <PasswordPromptModal
           onClose={() => setShowPasswordPrompt(false)}
@@ -3232,6 +3278,8 @@ function buildUsageSummary(payload: SsePayload): UsageCostSummary | undefined {
     costInputCny: payload.cost?.input,
     costOutputCny: payload.cost?.output,
     tierLabel: payload.cost?.tier_label,
+    creditsCharged: payload.billing?.credits_charged,
+    discountCredits: payload.billing?.discount_credits,
   };
 }
 

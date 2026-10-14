@@ -236,6 +236,7 @@ class BillingConfig:
     min_recharge_cny: float
     max_recharge_cny: float
     aliyun_llm_keywords: list[str]
+    training_discount_rate: float = 1.0
 
     def markup_for(self, model_key: str | None) -> float:
         if model_key and model_key in self.model_markups:
@@ -289,6 +290,7 @@ def get_billing_config() -> BillingConfig:
                 or ["百炼", "灵积", "通义", "模型", "dashscope", "bailian", "lingji"]
             )
         ],
+        training_discount_rate=min(1.0, max(0.5, float(data.get("training_discount_rate", 1.0)))),
     )
 
 

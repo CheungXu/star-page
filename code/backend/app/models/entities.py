@@ -50,6 +50,24 @@ class User(Base, TimestampMixin):
     merged_into_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
+    allow_training: Mapped[bool] = mapped_column(default=True, nullable=False)
+    training_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    policy_notice_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserConsent(Base):
+    """同意记录：只追加不修改，是用户同意协议、开关授权的证据。"""
+
+    __tablename__ = "user_consents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    allow_training: Mapped[bool] = mapped_column(nullable=False)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class AdminPhone(Base):
@@ -120,6 +138,8 @@ class Page(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="generating", nullable=False)
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    moderation_status: Mapped[str] = mapped_column(String(16), default="ok", nullable=False)
+    moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True
@@ -158,6 +178,7 @@ class PageVersion(Base):
     input_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
     output_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
     total_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     page: Mapped[Page] = relationship("Page")
@@ -197,6 +218,7 @@ class GenerationBatch(Base):
     skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -228,6 +250,7 @@ class GenerationTask(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -288,6 +311,7 @@ class CreditTransaction(Base):
     raw_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
     markup: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     revenue_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    training_discount_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -405,6 +429,7 @@ class AnalyticsEvent(Base):
     ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     referer: Mapped[str | None] = mapped_column(Text, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -456,6 +481,42 @@ class PageAsset(Base):
     filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(32), default="image", nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TrainingSample(Base):
+    """匿名结构样本：授权生成完成时当场提取，不存用户和页面 ID，撤回授权不影响。"""
+
+    __tablename__ = "training_samples"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    html_skeleton: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    extractor_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class PageReport(Base):
+    """公开页面违规举报，后台人工审核。"""
+
+    __tablename__ = "page_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    page_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pages.id", ondelete="CASCADE"), nullable=False)
+    slug: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reporter_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reporter_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reporter_user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    reviewer_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

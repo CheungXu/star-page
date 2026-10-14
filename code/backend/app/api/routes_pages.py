@@ -14,7 +14,7 @@ from app.models.entities import Conversation, GenerationTask, Page, PagePermissi
 from app.schemas.pages import PageHistoryItem, PageResponse
 from app.services.analytics import record_page_view
 from app.services.analytics.tracking import is_preview_bot
-from app.services.page_delivery import build_remix_url, render_page_html
+from app.services.page_delivery import build_remix_url, build_report_url, render_blocked_page, render_page_html
 from app.services.permission_service import can_view_page
 from app.services.scenes.catalog import get_scene
 from app.services.storage.factory import create_storage_provider
@@ -142,6 +142,9 @@ async def serve_page(
         if conversation is None or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="页面不存在")
 
+        if page.moderation_status == "blocked":
+            return render_blocked_page()
+
         user = await get_optional_actor(session, request)
         if not await can_view_page(session, page, user):
             raise HTTPException(status_code=403, detail="无权访问该页面")
@@ -192,4 +195,5 @@ async def serve_page(
         page_url=page_url,
         print_after_load=print_mode == 1,
         remix_url=build_remix_url(scene.key if scene else None, str(page_id)),
+        report_url=build_report_url(str(page_id)),
     )

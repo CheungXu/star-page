@@ -24,6 +24,8 @@ from app.models.entities import (
 )
 from app.services.anon_service import AnonService
 from app.services.billing import BillingService
+from app.services.billing.account import SettleResult
+from app.services.consent_service import CONSENT_GRANTED, training_consent_for
 from app.services.document_extractor import (
     MAX_DOCUMENT_CONTEXT_CHARS,
     DocumentCompressionError,
@@ -40,6 +42,7 @@ from app.services.skills.registry import get_skill_registry
 from app.services.skills.selector import SkillSelectionResult, select_skill_for_prompt
 from app.services.sse import SseEvent
 from app.services.storage.factory import create_storage_provider
+from app.services.training_samples import store_training_sample
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 
@@ -167,6 +170,8 @@ class GenerationService:
             await AnonService(self.session).check_ip_free_generation_ceiling(client_ip)
 
         title = _build_page_title(title_prompt or prompt)
+        # 授权快照在建批次这一刻定下，之后改开关不影响这一轮的数据归属和折扣。
+        consent = training_consent_for(user)
 
         # parent_for_model：每个模型的新节点接到哪个父节点。
         #  - 新会话(无 conversation_id)：根节点，父为空。
@@ -220,6 +225,7 @@ class GenerationService:
             compression_prompt=compression_prompt,
             scene_key=scene.key if scene else None,
             status="pending",
+            training_consent=consent,
         )
         self.session.add(batch)
         await self.session.flush()
@@ -264,6 +270,7 @@ class GenerationService:
                 extra_skill_keys=extra_skills,
                 scene_key=scene.key if scene else None,
                 status="pending",
+                training_consent=consent,
             )
             permission = PagePermission(page_id=page.id, user_id=user.id, role="owner")
             self.session.add_all([task, permission])
@@ -773,7 +780,10 @@ class GenerationService:
             task.finished_at = datetime.now(UTC)
 
             # 计费结算：按 page_version 幂等扣积分/记账（匿名仅记成本，登录扣积分确认收入）。
-            await self._settle_generation_billing(task, version, cost)
+            settle = await self._settle_generation_billing(task, version, cost)
+            # 授权生成当场提取匿名结构样本：等到事后再提，用户可能已撤回授权。
+            if task.training_consent == CONSENT_GRANTED:
+                await self._store_training_sample(task, safe_html)
 
             await self.session.commit()
             await self._recompute_batch_status(task.batch_id)
@@ -799,6 +809,11 @@ class GenerationService:
                 completed_payload["usage"] = usage_to_payload(usage)
             if cost is not None:
                 completed_payload["cost"] = cost_to_payload(cost)
+            completed_payload["billing"] = {
+                "training_consent": task.training_consent,
+                "credits_charged": settle.credits_charged if settle else 0,
+                "discount_credits": settle.discount_credits if settle else 0,
+            }
             yield await self._record_event(task.id, "completed", completed_payload)
 
         except asyncio.CancelledError:
@@ -892,23 +907,33 @@ class GenerationService:
 
     async def _settle_generation_billing(
         self, task: GenerationTask, version: PageVersion, cost: LlmCostBreakdown | None
-    ) -> None:
+    ) -> SettleResult | None:
         """对一次成功生成结算计费，按 version_id 幂等。失败不阻断生成主流程。"""
         actor = await self.session.get(User, task.requested_by_user_id)
         if actor is None:
-            return
+            return None
         markup = get_billing_config().markup_for(task.model_key)
         raw_cost = cost.total_cost_cny if cost is not None else None
         try:
-            await BillingService(self.session).settle_generation(
+            return await BillingService(self.session).settle_generation(
                 user=actor,
                 version_id=version.id,
                 model_key=task.model_key,
                 raw_cost_cny=raw_cost,
                 markup=markup,
+                training_granted=task.training_consent == CONSENT_GRANTED,
             )
         except Exception as exc:  # noqa: BLE001 - 结算失败仅告警，不影响已生成页面
             print(f"[billing] 结算失败 version={version.id}: {exc}")
+            return None
+
+    async def _store_training_sample(self, task: GenerationTask, html: str) -> None:
+        """保存匿名结构样本。放在保存点里，失败只丢样本，不影响页面和计费。"""
+        try:
+            async with self.session.begin_nested():
+                await store_training_sample(self.session, html=html, scene_key=task.scene_key, model_key=task.model_key)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[training] 匿名结构样本提取失败 task={task.id}: {exc}")
 
     async def _upload_page_html(self, page: Page, html: str) -> tuple[uuid.UUID, str]:
         version_id = uuid.uuid4()
@@ -953,6 +978,7 @@ class GenerationService:
             input_cost_cny=cost.input_cost_cny if cost else None,
             output_cost_cny=cost.output_cost_cny if cost else None,
             total_cost_cny=cost.total_cost_cny if cost else None,
+            training_consent=task.training_consent,
         )
         self.session.add(version)
         await self.session.flush()

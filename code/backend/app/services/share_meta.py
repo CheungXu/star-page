@@ -26,6 +26,8 @@ _BADGE_SCRIPT = """
     '.pill:hover{transform:translateY(-1px);background:rgba(17,24,39,.86)}',
     '.pill.light{background:rgba(255,255,255,.86);color:#111827;border-color:rgba(15,23,42,.08)}',
     '.star{color:#a5b4fc;font-size:13px}',
+    '.report{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:999px;background:rgba(255,255,255,.7);color:#64748b;font-size:11px;text-decoration:none;border:1px solid rgba(15,23,42,.08)}',
+    '.report:hover{color:#b42318}',
     '.mask{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(15,23,42,.62);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}',
     '.mask.open{display:flex}',
     '.sheet{width:min(360px,100%);max-height:100%;overflow:auto;padding:14px;border-radius:20px;background:#fff;text-align:center;font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:#111827}',
@@ -38,6 +40,7 @@ _BADGE_SCRIPT = """
     '<div class="bar">',
     showPoster ? '<button class="pill light" type="button" data-act="poster">发朋友圈</button>' : '',
     '<a class="pill" href="' + cfg.remix + '" target="_blank" rel="noopener"><span class="star">✦</span>用星页做同款</a>',
+    cfg.report ? '<a class="report" href="' + cfg.report + '" target="_blank" rel="noopener" title="举报违规内容">举报</a>' : '',
     '</div>',
     showPoster ? '<div class="mask" data-act="close"><div class="sheet" role="dialog" aria-label="朋友圈海报"><img alt="页面海报" src="' + cfg.poster + '"><p class="tip">长按图片保存，再发到朋友圈</p><p class="sub">海报里的二维码会打开这个页面</p><button class="close" type="button" data-act="close">关闭</button></div></div>' : ''
   ].join('');
@@ -63,10 +66,12 @@ def inject_share_meta(
     print_after_load: bool = False,
     remix_url: str | None = None,
     poster_url: str | None = None,
+    report_url: str | None = None,
 ) -> str:
     """在已有 HTML 的 head 里写入 og 标签。print_after_load 为真时，加载后调起打印。
 
-    remix_url 有值时在页面右下角挂「用星页做同款」浮标；poster_url 有值时手机上多一个「发朋友圈」。
+    remix_url 有值时在页面右下角挂「用星页做同款」浮标；poster_url 有值时手机上多一个「发朋友圈」；
+    report_url 有值时浮标旁多一个「举报」。
     """
     soup = BeautifulSoup(html, "html.parser")
     head = soup.head
@@ -108,14 +113,14 @@ def inject_share_meta(
             body.append(script)
     elif remix_url and body is not None:
         script = soup.new_tag("script")
-        script.string = build_badge_script(remix_url=remix_url, poster_url=poster_url)
+        script.string = build_badge_script(remix_url=remix_url, poster_url=poster_url, report_url=report_url)
         body.append(script)
 
     return str(soup)
 
 
-def build_badge_script(*, remix_url: str, poster_url: str | None) -> str:
-    config = json.dumps({"remix": remix_url, "poster": poster_url or ""}, ensure_ascii=False)
+def build_badge_script(*, remix_url: str, poster_url: str | None, report_url: str | None = None) -> str:
+    config = json.dumps({"remix": remix_url, "poster": poster_url or "", "report": report_url or ""}, ensure_ascii=False)
     # 防止配置里的字符串提前闭合 <script>。
     config = config.replace("</", "<\\/")
     return _BADGE_SCRIPT.replace("__CFG__", config)
