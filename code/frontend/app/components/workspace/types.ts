@@ -48,6 +48,20 @@ export type WorkspaceRun = {
   simulatedElapsedMs?: number;
 };
 
+/** 会话里已经结束的一轮：用户这轮说了什么、基于哪个结果改、各模型的产出。 */
+export type WorkspaceRound = {
+  prompt: string;
+  basedOn: { modelKey: string; modelLabel: string } | null;
+  runs: WorkspaceRun[];
+};
+
+/** 结果区的轮次切换。index 从 0 开始，最后一个是当前轮。 */
+export type RoundNav = {
+  items: { label: string; live: boolean }[];
+  viewing: number;
+  onView: (index: number) => void;
+};
+
 export type PreviewPresentation = "default" | "stage" | "thumb";
 
 export type AppliedSkill = { key: string; name: string } | null;

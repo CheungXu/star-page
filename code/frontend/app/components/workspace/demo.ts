@@ -1,4 +1,4 @@
-import type { ProgressStep, WorkspaceRun } from "./types";
+import type { ProgressStep, WorkspaceRound, WorkspaceRun } from "./types";
 
 const DEMO_MODELS = [
   { key: "qwen3-max", label: "通义千问 3 Max" },
@@ -62,12 +62,46 @@ function easedTokens(target: number, fraction: number): number {
   return Math.round(target * curve);
 }
 
-export function buildDemoRuns(count: number, elapsedMs: number): WorkspaceRun[] {
+const ROUND_PROMPTS = [
+  DEMO_PROMPT,
+  "主色换成品牌紫，议程改成竖向时间轴。",
+  "首屏加一个倒计时，报名按钮再醒目一些。",
+  "页尾补一段常见问题，语气轻松一点。",
+];
+
+/** 第 2 轮基于某个结果改（其余模型都在它上面改），之后各模型接着自己上一轮改。 */
+const ROUND_BASE_INDEX = [-1, 0, -1, 2];
+
+/** `?rounds=3` 演示第 3 轮正在生成，前两轮已结束。 */
+export function readDemoRounds(): number {
+  if (typeof window === "undefined") return 1;
+  const raw = Number(new URLSearchParams(window.location.search).get("rounds"));
+  if (!Number.isFinite(raw) || raw < 1) return 1;
+  return Math.min(ROUND_PROMPTS.length, Math.round(raw));
+}
+
+export function demoRound(index: number, count: number, elapsedMs: number): WorkspaceRound {
+  const baseIndex = ROUND_BASE_INDEX[index] ?? -1;
+  const base = DEMO_MODELS[baseIndex];
+  return {
+    prompt: ROUND_PROMPTS[index] ?? DEMO_PROMPT,
+    basedOn: base ? { modelKey: base.key, modelLabel: base.label } : null,
+    runs: buildDemoRuns(index === 0 ? DEMO_MODELS.length : count, elapsedMs, { round: index + 1 }),
+  };
+}
+
+export function buildDemoHistory(count: number, rounds: number): WorkspaceRound[] {
+  return Array.from({ length: rounds - 1 }, (_, index) => demoRound(index, count, 60_000));
+}
+
+export function buildDemoRuns(count: number, elapsedMs: number, options: { round?: number } = {}): WorkspaceRun[] {
+  const round = options.round ?? 1;
+  const scale = round === 1 ? 1 : 0.55;
   return DEMO_MODELS.slice(0, count).map((model, index) => {
-    const thinkMs = THINK_MS[index] ?? 4000;
-    const writeMs = WRITE_MS[index] ?? 9000;
-    const tokenTarget = TOKEN_TARGET[index] ?? 8000;
-    const shouldFail = count >= 3 && index === count - 1;
+    const thinkMs = Math.round((THINK_MS[index] ?? 4000) * (round === 1 ? 1 : 0.7));
+    const writeMs = Math.round((WRITE_MS[index] ?? 9000) * (round === 1 ? 1 : 0.7));
+    const tokenTarget = Math.round((TOKEN_TARGET[index] ?? 8000) * scale);
+    const shouldFail = count >= 3 && index === count - 1 && round !== 2;
     const failAt = thinkMs + 3200;
     const finishAt = thinkMs + writeMs + DEPLOY_MS;
     const elapsed = Math.max(0, elapsedMs);
@@ -91,14 +125,14 @@ export function buildDemoRuns(count: number, elapsedMs: number): WorkspaceRun[] 
     const simulatedElapsedMs = phase === "done" ? finishAt : phase === "fail" ? failAt : elapsed;
 
     const run: WorkspaceRun = {
-      taskId: `demo-${model.key}`,
-      pageId: `demo-${model.key}`,
+      taskId: `demo-r${round}-${model.key}`,
+      pageId: `demo-r${round}-${model.key}`,
       modelKey: model.key,
       modelLabel: model.label,
       status,
       reasoning,
       statusText: phase === "done" ? "页面已创建完成" : phase === "fail" ? "生成失败" : phase === "deploy" ? "正在发布页面" : phase === "write" ? "正在编写页面" : "正在构思页面结构",
-      pageUrl: phase === "done" ? `/demo-result.html?tone=${index}` : "",
+      pageUrl: phase === "done" ? `/demo-result.html?tone=${index}&round=${round}` : "",
       errorMessage: phase === "fail" ? "模型在写页面时中断了，可以换个模型或稍后再试。" : "",
       progressSteps: [
         step("model_thinking", "模型思考", phase === "think" ? "正在构思" : "构思完成", thinkingStatus),
@@ -115,7 +149,7 @@ export function buildDemoRuns(count: number, elapsedMs: number): WorkspaceRun[] 
         totalTokens: 1680 + index * 260 + tokens,
         cachedInputTokens: index % 2 === 0 ? 420 : 0,
         reasoningTokens: 480 + index * 70,
-        creditsCharged: phase === "done" ? CREDITS[index] ?? 60 : undefined,
+        creditsCharged: phase === "done" ? Math.round((CREDITS[index] ?? 60) * scale) : undefined,
         discountCredits: phase === "done" && index % 2 === 0 ? 8 : undefined,
       };
     }

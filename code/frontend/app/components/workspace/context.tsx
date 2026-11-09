@@ -2,10 +2,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { VariantAProgress, VariantAResults } from "./variant-a";
-import { VariantBProgress, VariantBResults } from "./variant-b";
+import { VariantBProgress, VariantBResults, type PastRoundProps } from "./variant-b";
 import { VariantCProgress, VariantCResults } from "./variant-c";
 import { VARIANT, VARIANT_PORTS } from "./variant";
-import type { AppliedSkill, PreviewPresentation, WorkspaceRun } from "./types";
+import type { AppliedSkill, PreviewPresentation, RoundNav, WorkspaceRun } from "./types";
 
 export type RenderPreview = (
   run: WorkspaceRun,
@@ -26,6 +26,7 @@ type WorkspaceContextValue = {
   isGenerating: boolean;
   renderPreview: RenderPreview;
   continueBasePageId: string;
+  roundNav: RoundNav | null;
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -89,6 +90,9 @@ export function WorkspaceProvider({
   isGenerating,
   continueBasePageId,
   renderPreview,
+  pinnedModelKey,
+  roundNav = null,
+  trackUnseen = true,
   children,
 }: {
   runs: WorkspaceRun[];
@@ -98,6 +102,11 @@ export function WorkspaceProvider({
   isGenerating: boolean;
   continueBasePageId: string;
   renderPreview: RenderPreview;
+  /** 外部指定的聚焦模型，优先于组件内的点选（用于跨轮次联动）。 */
+  pinnedModelKey?: string;
+  roundNav?: RoundNav | null;
+  /** 回看已结束的轮次时不需要"新完成"提示。 */
+  trackUnseen?: boolean;
   children: ReactNode;
 }) {
   const elapsed = useRunTimings(runs);
@@ -118,7 +127,7 @@ export function WorkspaceProvider({
     if (missing.length > 0) setCompletionOrder([...completionOrder, ...missing]);
   }
 
-  const focusedKey = pickedKey ?? completionOrder[0] ?? activeModelKey;
+  const focusedKey = pinnedModelKey || pickedKey || completionOrder[0] || activeModelKey;
   const focused = runs.find((run) => run.modelKey === focusedKey);
   const seenNow = focused?.status === "completed" && !seen.includes(focused.modelKey) ? [...seen, focused.modelKey] : seen;
   if (seenNow !== seen) setSeen(seenNow);
@@ -130,8 +139,9 @@ export function WorkspaceProvider({
   }, [onSelectModel]);
 
   const isUnseen = useCallback(
-    (key: string) => key !== focusedKey && runs.some((run) => run.modelKey === key && run.status === "completed" && !seen.includes(key)),
-    [runs, seen, focusedKey],
+    (key: string) =>
+      trackUnseen && key !== focusedKey && runs.some((run) => run.modelKey === key && run.status === "completed" && !seen.includes(key)),
+    [runs, seen, focusedKey, trackUnseen],
   );
 
   const value = useMemo<WorkspaceContextValue>(
@@ -146,8 +156,9 @@ export function WorkspaceProvider({
       isGenerating,
       renderPreview,
       continueBasePageId,
+      roundNav,
     }),
-    [runs, focusedKey, selectModel, isUnseen, completionOrder, elapsed, appliedSkill, isGenerating, renderPreview, continueBasePageId],
+    [runs, focusedKey, selectModel, isUnseen, completionOrder, elapsed, appliedSkill, isGenerating, renderPreview, continueBasePageId, roundNav],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
@@ -155,6 +166,13 @@ export function WorkspaceProvider({
 
 export function ProgressSlot() {
   if (VARIANT.id === "B") return <VariantBProgress />;
+  if (VARIANT.id === "C") return <VariantCProgress />;
+  return <VariantAProgress />;
+}
+
+/** 已结束的一轮在对话栏里的摘要卡。只有方案 B 做了专门的历史样式，A/C 沿用进度卡。 */
+export function PastRoundSlot(props: PastRoundProps) {
+  if (VARIANT.id === "B") return <VariantBProgress history={props} />;
   if (VARIANT.id === "C") return <VariantCProgress />;
   return <VariantAProgress />;
 }

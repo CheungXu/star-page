@@ -13,9 +13,9 @@ import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
 import "./components/workspace/variants.css";
-import { ProgressSlot, ResultsSlot, VariantBadge, WorkspaceProvider } from "./components/workspace/context";
-import { buildDemoRuns, DEMO_PROMPT, readDemoCount, readDemoFreezeSeconds } from "./components/workspace/demo";
-import type { PreviewPresentation, WorkspaceRun } from "./components/workspace/types";
+import { PastRoundSlot, ProgressSlot, ResultsSlot, VariantBadge, WorkspaceProvider } from "./components/workspace/context";
+import { buildDemoHistory, demoRound, readDemoCount, readDemoFreezeSeconds, readDemoRounds } from "./components/workspace/demo";
+import type { PreviewPresentation, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
 import { VARIANT } from "./components/workspace/variant";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
@@ -1342,6 +1342,10 @@ export default function HomePage() {
   const [appliedSkill, setAppliedSkill] = useState<{ key: string; name: string } | null>(null);
   const [roundIndex, setRoundIndex] = useState(0);
   const [continueBase, setContinueBase] = useState<{ pageId: string; modelLabel: string } | null>(null);
+  // 已结束的轮次与当前轮的来源。目前只有演示模式会填，接入后端时从会话详情的 batches 还原。
+  const [pastRounds, setPastRounds] = useState<WorkspaceRound[]>([]);
+  const [currentBasedOn, setCurrentBasedOn] = useState<WorkspaceRound["basedOn"]>(null);
+  const [viewedRound, setViewedRound] = useState<{ index: number; modelKey: string } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPromptAttention, setIsPromptAttention] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
@@ -1645,15 +1649,21 @@ export default function HomePage() {
     const count = readDemoCount();
     if (!count) return;
     const frozen = readDemoFreezeSeconds();
+    const rounds = readDemoRounds();
     const startedAt = Date.now() - (frozen ?? 0) * 1000;
+    const history = buildDemoHistory(count, rounds);
     const publish = () => {
       const elapsed = frozen != null ? frozen * 1000 : Date.now() - startedAt;
+      const current = demoRound(rounds - 1, count, elapsed);
       setPhase("active");
-      setSubmittedPrompt(DEMO_PROMPT);
+      setSubmittedPrompt(current.prompt);
       setSubmittedFileNames([]);
       setConversationId("");
       setBatchId("");
-      setRuns(buildDemoRuns(count, elapsed) as RunState[]);
+      setRoundIndex(rounds - 1);
+      setPastRounds(history);
+      setCurrentBasedOn(current.basedOn);
+      setRuns(current.runs as RunState[]);
     };
     const kick = window.setTimeout(publish, 0);
     if (frozen != null) return () => window.clearTimeout(kick);
@@ -2783,6 +2793,19 @@ export default function HomePage() {
     );
   }
 
+  const viewedPastRound = viewedRound ? pastRounds[viewedRound.index] ?? null : null;
+  const roundNav: RoundNav | null =
+    pastRounds.length > 0
+      ? {
+          items: [
+            ...pastRounds.map((_, index) => ({ label: `第 ${index + 1} 轮`, live: false })),
+            { label: `第 ${pastRounds.length + 1} 轮`, live: isGenerating },
+          ],
+          viewing: viewedRound?.index ?? pastRounds.length,
+          onView: (index) => setViewedRound(index >= pastRounds.length ? null : { index, modelKey: "" }),
+        }
+      : null;
+
   const renderPreview = (run: WorkspaceRun, options?: { presentation?: PreviewPresentation; onFrame?: (node: HTMLIFrameElement | null) => void }) => (
     <PreviewCell
       run={run as RunState}
@@ -2850,23 +2873,59 @@ export default function HomePage() {
           <WorkspaceProvider
             runs={runs as unknown as WorkspaceRun[]}
             activeModelKey={activeModelKey}
-            onSelectModel={setActiveModelKey}
+            onSelectModel={(key) => {
+              setViewedRound(null);
+              setActiveModelKey(key);
+            }}
             appliedSkill={appliedSkill}
             isGenerating={isGenerating}
             continueBasePageId={continueBase?.pageId ?? ""}
             renderPreview={renderPreview}
+            roundNav={roundNav}
           >
           <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMulti ? "compare-mode" : ""} ${VARIANT.layoutClass}`}>
             {renderHistorySidebar()}
             <aside className="conversation-pane">
               <div className="conversation-scroll">
+                {pastRounds.map((round, index) => {
+                  const viewing = viewedRound?.index === index;
+                  return (
+                    <div key={`round-${index}`} className="chat-round is-past">
+                      <div className="chat-message user-message">
+                        <div className="user-message-meta">
+                          <span>第 {index + 1} 轮</span>
+                          <span>{roundSourceText(round.basedOn?.modelLabel ?? "", index)}</span>
+                        </div>
+                        <p>{round.prompt}</p>
+                      </div>
+                      <WorkspaceProvider
+                        runs={round.runs}
+                        activeModelKey=""
+                        onSelectModel={(key) => setViewedRound({ index, modelKey: key })}
+                        appliedSkill={null}
+                        isGenerating={false}
+                        continueBasePageId=""
+                        renderPreview={renderPreview}
+                        pinnedModelKey={viewing ? viewedRound?.modelKey : undefined}
+                        trackUnseen={false}
+                      >
+                        <PastRoundSlot
+                          viewing={viewing}
+                          pickedKey={(index === pastRounds.length - 1 ? currentBasedOn : pastRounds[index + 1]?.basedOn)?.modelKey ?? ""}
+                          nextLabel={`第 ${index + 2} 轮`}
+                          onView={() => setViewedRound(viewing ? null : { index, modelKey: "" })}
+                        />
+                      </WorkspaceProvider>
+                    </div>
+                  );
+                })}
                 <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`} data-anim-stagger>
                   <div className="user-message-meta">
-                    <span>你的需求</span>
+                    <span>{pastRounds.length > 0 ? `第 ${roundIndex + 1} 轮 · 当前` : "你的需求"}</span>
                     <span>
-                      {submittedPrompt.length} 字
-                      {submittedFileNames.length ? ` · ${submittedFileNames.length} 个文件` : ""}
-                      {roundIndex > 0 ? ` · 第 ${roundIndex + 1} 轮` : ""}
+                      {pastRounds.length > 0
+                        ? roundSourceText(currentBasedOn?.modelLabel ?? "", roundIndex)
+                        : `${submittedPrompt.length} 字${submittedFileNames.length ? ` · ${submittedFileNames.length} 个文件` : ""}${roundIndex > 0 ? ` · 第 ${roundIndex + 1} 轮` : ""}`}
                     </span>
                   </div>
                   <p>{submittedPrompt}</p>
@@ -2885,7 +2944,25 @@ export default function HomePage() {
             </aside>
 
             <section className="preview-pane">
-              <ResultsSlot />
+              {viewedPastRound ? (
+                <WorkspaceProvider
+                  key={`viewed-round-${viewedRound?.index}`}
+                  runs={viewedPastRound.runs}
+                  activeModelKey=""
+                  onSelectModel={(key) => setViewedRound((current) => (current ? { ...current, modelKey: key } : current))}
+                  appliedSkill={null}
+                  isGenerating={false}
+                  continueBasePageId={continueBase?.pageId ?? ""}
+                  renderPreview={renderPreview}
+                  pinnedModelKey={viewedRound?.modelKey}
+                  roundNav={roundNav}
+                  trackUnseen={false}
+                >
+                  <ResultsSlot />
+                </WorkspaceProvider>
+              ) : (
+                <ResultsSlot />
+              )}
             </section>
           </section>
           </WorkspaceProvider>
@@ -2950,6 +3027,11 @@ function makeRunFromResponse(run: GenerationRunResponse, hasFile: boolean): RunS
     errorMessage: "",
     progressSteps: createInitialProgressSteps(hasFile),
   };
+}
+
+function roundSourceText(baseModelLabel: string, roundIndex: number): string {
+  if (roundIndex === 0) return "新建";
+  return baseModelLabel ? `基于「${baseModelLabel}」修改` : "各模型接着上一轮改";
 }
 
 function labelForModel(key: string, models: ModelInfo[]): string {

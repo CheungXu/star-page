@@ -48,7 +48,17 @@ function LiveCard({ run }: { run: WorkspaceRun }) {
   );
 }
 
-export function VariantBProgress() {
+export type PastRoundProps = {
+  /** 右侧结果区当前是否在显示这一轮。 */
+  viewing: boolean;
+  /** 下一轮选它作为基础继续修改的模型。 */
+  pickedKey: string;
+  /** 下一轮的称呼，例如「第 2 轮」。 */
+  nextLabel: string;
+  onView: () => void;
+};
+
+export function VariantBProgress({ history }: { history?: PastRoundProps } = {}) {
   const { runs, elapsed, isGenerating, activeModelKey, selectModel } = useWorkspace();
   const [open, setOpen] = useState(false);
   const done = runs.filter((run) => run.status === "completed").length;
@@ -57,24 +67,55 @@ export function VariantBProgress() {
   const clockText = clock === null ? "" : isGenerating ? formatClock(clock) : formatDuration(clock);
   const credits = sumCredits(runs);
   const insights = batchInsights(runs, elapsed);
+  const picked = history ? runs.find((run) => run.modelKey === history.pickedKey) : undefined;
   const title = isGenerating ? `${runs.length} 个模型生成中` : `${done}/${runs.length} 已完成`;
-  const sub = isGenerating
-    ? `已写 ${formatTokens(tokens)} tokens`
-    : `${formatTokens(tokens)} tokens${credits.hasBilling ? ` · ${credits.charged} 积分` : ""}`;
+  const sub = isGenerating ? (
+    `已写 ${formatTokens(tokens)} tokens`
+  ) : (
+    <>
+      {formatTokens(tokens)} tokens
+      {credits.hasBilling && (
+        <>
+          {" · "}
+          <CoinIcon />
+          {credits.charged}
+        </>
+      )}
+    </>
+  );
+  const showActive = !history || history.viewing;
 
   return (
-    <div className={`vb-status ${open ? "is-open" : ""}`}>
-      <button type="button" className="vb-pill" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span className={`vb-pill-dot ${isGenerating ? "is-run" : "is-done"}`} />
-        <span className="vb-pill-text">
-          <strong>
-            {title}
-            {clockText && <em>{clockText}</em>}
-          </strong>
-          {!open && <span>{sub}</span>}
-        </span>
-        <span className="vb-pill-more">{open ? "收起" : "明细"}</span>
-      </button>
+    <div className={`vb-status ${open ? "is-open" : ""} ${history ? "is-history" : ""} ${history?.viewing ? "is-viewing" : ""}`}>
+      <div className="vb-status-head">
+        <button type="button" className="vb-pill" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <span className={`vb-pill-dot ${isGenerating ? "is-run" : "is-done"}`} />
+          <span className="vb-pill-text">
+            <strong>
+              {title}
+              {clockText && <em>{clockText}</em>}
+            </strong>
+            {!open && <span>{sub}</span>}
+            {picked && (
+              <b className="vb-pill-picked">
+                选用「{picked.modelLabel}」{history?.nextLabel ? ` → ${history.nextLabel}` : ""}
+              </b>
+            )}
+          </span>
+          <span className="vb-pill-more">{open ? "收起" : "明细"}</span>
+        </button>
+        {history && (
+          <button
+            type="button"
+            className="vb-round-view"
+            aria-pressed={history.viewing}
+            onClick={history.onView}
+            title={history.viewing ? "右侧正在显示这一轮" : "在右侧查看这一轮的结果"}
+          >
+            {history.viewing ? "显示中" : "查看"}
+          </button>
+        )}
+      </div>
       {open && (
         <div className="vb-mini">
           <div className="vb-mini-head" aria-hidden="true">
@@ -88,7 +129,8 @@ export function VariantBProgress() {
               <MiniRow
                 key={run.taskId || run.modelKey}
                 run={run}
-                active={run.modelKey === activeModelKey}
+                active={showActive && run.modelKey === activeModelKey}
+                picked={history?.pickedKey === run.modelKey}
                 insights={insights}
                 onSelect={() => selectModel(run.modelKey)}
               />
@@ -187,11 +229,13 @@ const CoinIcon = () => (
 function MiniRow({
   run,
   active,
+  picked = false,
   insights,
   onSelect,
 }: {
   run: WorkspaceRun;
   active: boolean;
+  picked?: boolean;
   insights: BatchInsights;
   onSelect: () => void;
 }) {
@@ -227,8 +271,9 @@ function MiniRow({
               );
             })}
           </span>
-          {isFastest || isCheapest ? (
+          {isFastest || isCheapest || picked ? (
             <span className="vb-tags">
+              {picked && <em className="vb-tag is-picked">选用</em>}
               {isFastest && <em className="vb-tag is-fast">最快</em>}
               {isCheapest && <em className="vb-tag is-cheap">最省</em>}
             </span>
@@ -264,8 +309,47 @@ function MiniRow({
   );
 }
 
+function RoundTabs() {
+  const { roundNav } = useWorkspace();
+  if (!roundNav || roundNav.items.length < 2) return null;
+  return (
+    <div className="vb-rounds" role="tablist" aria-label="切换轮次">
+      {roundNav.items.map((item, index) => (
+        <button
+          key={item.label}
+          type="button"
+          role="tab"
+          aria-selected={index === roundNav.viewing}
+          className={index === roundNav.viewing ? "is-active" : ""}
+          onClick={() => roundNav.onView(index)}
+        >
+          {item.live && <i aria-label="生成中" />}
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PastRoundBanner() {
+  const { roundNav } = useWorkspace();
+  if (!roundNav) return null;
+  const latest = roundNav.items.length - 1;
+  if (roundNav.viewing >= latest) return null;
+  return (
+    <div className="vb-round-banner">
+      <span>
+        这是<b>第 {roundNav.viewing + 1} 轮</b>的结果，点任一版本的「以此结果继续」，可以从这里接着改
+      </span>
+      <button type="button" onClick={() => roundNav.onView(latest)}>
+        回到第 {latest + 1} 轮{roundNav.items[latest]?.live ? "（生成中）" : ""}
+      </button>
+    </div>
+  );
+}
+
 export function VariantBResults() {
-  const { runs, activeModelKey, selectModel, isUnseen, renderPreview, elapsed } = useWorkspace();
+  const { runs, activeModelKey, selectModel, isUnseen, renderPreview, elapsed, roundNav } = useWorkspace();
   const [carousel, setCarousel] = useState(false);
   const many = runs.length >= 3;
   useArrowModelNav(many);
@@ -294,13 +378,20 @@ export function VariantBResults() {
     <PaneResizer />
     <article className="panel preview-panel workspace-preview vb-results">
       <div className="panel-heading preview-heading">
-        <h2>结果预览 · {runs.length} 个版本 · {done} 已完成</h2>
-        {many && (
-          <button type="button" className="vb-carousel-btn" onClick={() => setCarousel(true)}>
-            全屏轮播
-          </button>
-        )}
+        <h2>
+          {roundNav && roundNav.items.length > 1 ? "" : "结果预览 · "}
+          {runs.length} 个版本 · {done} 已完成
+        </h2>
+        <div className="vb-heading-tools">
+          <RoundTabs />
+          {many && (
+            <button type="button" className="vb-carousel-btn" onClick={() => setCarousel(true)}>
+              全屏轮播
+            </button>
+          )}
+        </div>
       </div>
+      <PastRoundBanner />
       {!many && (
         <div className="preview-grid" style={{ gridTemplateColumns: `repeat(${Math.max(runs.length, 1)}, minmax(0, 1fr))` }}>
           {runs.map((run) => (

@@ -28,6 +28,12 @@
     body[data-tone="4"] .hero, body[data-tone="4"] article, body[data-tone="4"] .agenda { background: #111827; }
     body[data-tone="5"] .hero { grid-template-columns: 0.8fr 1.2fr; }
     body[data-tone="6"] { --accent: #15803d; }
+    body[data-round="2"], body[data-round="3"] { --accent: #7c3aed; }
+    body[data-round="2"] ol, body[data-round="3"] ol { border-left: 3px solid var(--accent); padding-left: 18px; }
+    .countdown { display: none; margin-top: 18px; gap: 8px; }
+    .countdown b { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 14px; background: var(--ink); color: var(--bg); font-size: 22px; }
+    body[data-round="3"] .countdown { display: flex; }
+    body[data-round="3"] .cta { padding: 16px 28px; font-size: 18px; box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 40%, transparent); }
   </style>
 </head>
 <body>
@@ -36,6 +42,7 @@
       <p class="kicker">星页演示 · 新品发布会</p>
       <h1 id="title">把发布会做成一页就能看完</h1>
       <p id="lead">亮点、议程和报名放在同一页。这是多模型对比用的示意结果，方便看布局差异。</p>
+      <div class="countdown"><b>03</b><b>12</b><b>45</b><b>08</b></div>
       <a class="cta" href="#join">立即报名</a>
     </div>
     <div class="panel"></div>
@@ -57,8 +64,13 @@
     </ol>
   </section>
   <script>
-    const tone = new URLSearchParams(location.search).get("tone") || "0";
+    const params = new URLSearchParams(location.search);
+    const tone = params.get("tone") || "0";
     document.body.dataset.tone = tone;
+    document.body.dataset.round = params.get("round") || "1";
+    if (params.get("round") && params.get("round") !== "1") {
+      document.querySelector(".kicker").textContent = `星页演示 · 第 ${params.get("round")} 轮修改`;
+    }
     const titles = ["把发布会做成一页就能看完", "今晚，只讲这一件产品", "三十分钟，看完整个议程", "暖色海报，适合邀请函", "深色舞台，适合大屏", "杂志排版，先看图", "清爽卡片，适合报名"];
     const title = document.getElementById("title");
     if (title) title.textContent = titles[Number(tone)] || titles[0];
