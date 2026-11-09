@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星页演示页</title>
+  <style>
+    :root { --accent: #3563e9; --ink: #0f172a; --muted: #64748b; --bg: #f8fafc; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+    header, main, section { padding: 48px 8vw; }
+    h1 { margin: 0 0 12px; font-size: 56px; letter-spacing: -0.04em; line-height: 1.05; }
+    p { margin: 0; color: var(--muted); font-size: 18px; line-height: 1.7; }
+    .hero { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 32px; align-items: center; min-height: 78vh; background: #fff; }
+    .panel { height: 280px; border-radius: 28px; background: linear-gradient(160deg, var(--accent), #0f172a); }
+    .cta { display: inline-flex; margin-top: 22px; padding: 12px 18px; border-radius: 999px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 700; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    article { padding: 20px; border-radius: 18px; background: #fff; }
+    article strong { display: block; margin-bottom: 8px; font-size: 18px; }
+    .agenda { background: #fff; }
+    ol { margin: 18px 0 0; padding: 0; list-style: none; }
+    li { padding: 14px 0; border-top: 1px solid rgba(15, 23, 42, 0.08); }
+    body[data-tone="1"] .hero { grid-template-columns: 1fr; text-align: center; }
+    body[data-tone="1"] .panel { height: 180px; }
+    body[data-tone="2"] { --accent: #0f766e; }
+    body[data-tone="3"] { --accent: #c2410c; --bg: #fff7ed; }
+    body[data-tone="4"] { --accent: #db2777; --bg: #0f172a; --ink: #fff; --muted: #cbd5e1; }
+    body[data-tone="4"] .hero, body[data-tone="4"] article, body[data-tone="4"] .agenda { background: #111827; }
+    body[data-tone="5"] .hero { grid-template-columns: 0.8fr 1.2fr; }
+    body[data-tone="6"] { --accent: #15803d; }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div>
+      <p class="kicker">星页演示 · 新品发布会</p>
+      <h1 id="title">把发布会做成一页就能看完</h1>
+      <p id="lead">亮点、议程和报名放在同一页。这是多模型对比用的示意结果，方便看布局差异。</p>
+      <a class="cta" href="#join">立即报名</a>
+    </div>
+    <div class="panel"></div>
+  </header>
+  <main>
+    <div class="grid">
+      <article><strong>三个亮点</strong><p>首屏只讲一件事，其余信息按阅读顺序往下排。</p></article>
+      <article><strong>现场议程</strong><p>每段控制在一句，避免把海报写成说明书。</p></article>
+      <article><strong>报名入口</strong><p>主按钮始终只有一个，页尾再重复一次。</p></article>
+    </div>
+  </main>
+  <section class="agenda" id="join">
+    <h2>议程</h2>
+    <ol>
+      <li>14:00 开场与产品故事</li>
+      <li>14:20 现场演示</li>
+      <li>14:40 问答</li>
+      <li>15:00 报名与交流</li>
+    </ol>
+  </section>
+  <script>
+    const tone = new URLSearchParams(location.search).get("tone") || "0";
+    document.body.dataset.tone = tone;
+    const titles = ["把发布会做成一页就能看完", "今晚，只讲这一件产品", "三十分钟，看完整个议程", "暖色海报，适合邀请函", "深色舞台，适合大屏", "杂志排版，先看图", "清爽卡片，适合报名"];
+    const title = document.getElementById("title");
+    if (title) title.textContent = titles[Number(tone)] || titles[0];
+  </script>
+</body>
+</html>

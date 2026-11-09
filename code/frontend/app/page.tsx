@@ -12,6 +12,11 @@ import { LEGAL_POLICY_VERSION } from "./legal/docs";
 import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
+import "./components/workspace/variants.css";
+import { ProgressSlot, ResultsSlot, VariantBadge, WorkspaceProvider } from "./components/workspace/context";
+import { buildDemoRuns, DEMO_PROMPT, readDemoCount, readDemoFreezeSeconds } from "./components/workspace/demo";
+import type { PreviewPresentation, WorkspaceRun } from "./components/workspace/types";
+import { VARIANT } from "./components/workspace/variant";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
 
@@ -754,6 +759,10 @@ function PreviewCell({
   sceneFeatures,
   onRequireLogin,
   onNotice,
+  presentation = "default",
+  continueLabel,
+  continueActiveLabel,
+  onFrame,
 }: {
   run: RunState;
   onOpenPreview: () => void;
@@ -765,6 +774,10 @@ function PreviewCell({
   sceneFeatures: string[];
   onRequireLogin: (message: string) => void;
   onNotice: (message: string) => void;
+  presentation?: PreviewPresentation;
+  continueLabel?: string;
+  continueActiveLabel?: string;
+  onFrame?: (node: HTMLIFrameElement | null) => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -783,6 +796,11 @@ function PreviewCell({
   const absoluteUrl = useMemo(() => toAbsoluteUrl(run.pageUrl), [run.pageUrl]);
 
   useEffect(() => {
+    onFrame?.(iframeRef.current);
+    return () => onFrame?.(null);
+  }, [absoluteUrl, run.status, onFrame]);
+
+  useEffect(() => {
     if (!posterOpen) return;
     const close = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") setPosterOpen(false);
@@ -792,7 +810,7 @@ function PreviewCell({
   }, [posterOpen]);
 
   useEffect(() => {
-    if (run.status !== "completed" || !run.pageId) return;
+    if (run.status !== "completed" || !run.pageId || run.pageId.startsWith("demo-")) return;
     let cancelled = false;
     void apiFetch(`/api/pages/${run.pageId}/stats`).then(async (response) => {
       if (!response.ok || cancelled) return;
@@ -808,9 +826,10 @@ function PreviewCell({
     const stage = stageRef.current;
     if (!stage) return;
 
-    const availableWidth = Math.max(stage.clientWidth - 16, 280);
+    const inset = presentation === "thumb" ? 0 : 16;
+    const availableWidth = Math.max(stage.clientWidth - inset, presentation === "thumb" ? 60 : 280);
     const scale = Math.min(1, availableWidth / PREVIEW_VIEWPORT_WIDTH);
-    const availableHeight = Math.max(stage.clientHeight - 16, PREVIEW_DEFAULT_HEIGHT * scale);
+    const availableHeight = Math.max(stage.clientHeight - inset, PREVIEW_DEFAULT_HEIGHT * scale);
     const contentHeight = Math.max(PREVIEW_DEFAULT_HEIGHT, Math.round(availableHeight / scale));
     setMetrics({ viewportWidth: PREVIEW_VIEWPORT_WIDTH, contentHeight, scale });
   }
@@ -821,9 +840,12 @@ function PreviewCell({
     const handleResize = () => recomputeMetrics();
     window.addEventListener("resize", handleResize);
     const timer = window.setTimeout(handleResize, 0);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(handleResize);
+    if (observer && stageRef.current) observer.observe(stageRef.current);
     return () => {
       window.removeEventListener("resize", handleResize);
       window.clearTimeout(timer);
+      observer?.disconnect();
     };
   }, [run.status, absoluteUrl]);
 
@@ -917,7 +939,7 @@ function PreviewCell({
   const statusLabel = run.status === "failed" ? "生成失败" : run.status === "creating" ? "创建中" : "思考中";
 
   return (
-    <article className={`preview-cell ${selectedAsBase ? "is-continue-base" : ""} ${dimmedByBase ? "is-dimmed-by-base" : ""}`}>
+    <article className={`preview-cell presentation-${presentation} ${selectedAsBase ? "is-continue-base" : ""} ${dimmedByBase ? "is-dimmed-by-base" : ""}`}>
       <header className="preview-cell-head">
         <span
           className={`dot ${run.status === "completed" ? "ready" : run.status === "failed" ? "failed" : "loading"}`}
@@ -937,7 +959,7 @@ function PreviewCell({
                   title={`${run.modelLabel} 生成页面预览`}
                   src={absoluteUrl}
                   onLoad={handlePreviewLoad}
-                  sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+                  sandbox={absoluteUrl.includes("/demo-result") ? "allow-scripts allow-same-origin allow-popups" : "allow-scripts allow-popups allow-popups-to-escape-sandbox"}
                   style={iframeStyle}
                 />
               </div>
@@ -974,7 +996,7 @@ function PreviewCell({
             {canContinue && (
               <button className="continue-button" type="button" onClick={onContinue} aria-pressed={selectedAsBase}>
                 <span className="button-icon" aria-hidden="true"><BranchIcon /></span>
-                {selectedAsBase ? "已选为基础" : "以此结果继续"}
+                {selectedAsBase ? (continueActiveLabel ?? "已选为基础") : (continueLabel ?? "以此结果继续")}
               </button>
             )}
           </div>
@@ -1310,7 +1332,6 @@ export default function HomePage() {
   const [runs, setRuns] = useState<RunState[]>([]);
   const [activeModelKey, setActiveModelKey] = useState("");
   const [fullscreenRun, setFullscreenRun] = useState<RunState | null>(null);
-  const [thinkingExpanded, setThinkingExpanded] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [historyScope, setHistoryScope] = useState<HistoryScope>("all");
@@ -1428,6 +1449,7 @@ export default function HomePage() {
   };
 
   useEffect(() => {
+    if (readDemoCount()) return;
     if (!hasHydratedRef.current || phase === "idle" || !conversationId) return;
 
     const now = new Date().toISOString();
@@ -1619,6 +1641,29 @@ export default function HomePage() {
     };
   }, [isModelMenuOpen]);
 
+  useEffect(() => {
+    const count = readDemoCount();
+    if (!count) return;
+    const frozen = readDemoFreezeSeconds();
+    const startedAt = Date.now() - (frozen ?? 0) * 1000;
+    const publish = () => {
+      const elapsed = frozen != null ? frozen * 1000 : Date.now() - startedAt;
+      setPhase("active");
+      setSubmittedPrompt(DEMO_PROMPT);
+      setSubmittedFileNames([]);
+      setConversationId("");
+      setBatchId("");
+      setRuns(buildDemoRuns(count, elapsed) as RunState[]);
+    };
+    const kick = window.setTimeout(publish, 0);
+    if (frozen != null) return () => window.clearTimeout(kick);
+    const timer = window.setInterval(publish, 400);
+    return () => {
+      window.clearTimeout(kick);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   function toggleModel(key: string) {
     const model = availableModels.find((item) => item.key === key);
     // 匿名：高价模型可见但不可选，点击轻提示引导注册。
@@ -1710,7 +1755,6 @@ export default function HomePage() {
       setRuns(pendingRuns);
       setActiveModelKey(pendingRuns[0]?.modelKey ?? "");
       setFullscreenRun(null);
-      setThinkingExpanded(true);
       setFileError("");
       setPrompt("");
     });
@@ -1918,7 +1962,6 @@ export default function HomePage() {
       setSceneImages({});
       setActiveModelKey("");
       setFullscreenRun(null);
-      setThinkingExpanded(true);
       setRoundIndex(0);
       setContinueBase(null);
       setAppliedSkill(null);
@@ -2039,7 +2082,6 @@ export default function HomePage() {
     setSelectedFiles([]);
     setFileError("");
     setPrompt("");
-    setThinkingExpanded(true);
     setRoundIndex(session.roundIndex ?? 0);
     setContinueBase(
       session.basePageId ? { pageId: session.basePageId, modelLabel: session.baseModelLabel ?? "上一结果" } : null,
@@ -2179,15 +2221,10 @@ export default function HomePage() {
   const isGenerating = runs.some((run) => run.status === "thinking" || run.status === "creating");
   const canSubmit = Boolean(prompt.trim()) || selectedFiles.length > 0 || (phase === "idle" && Boolean(activeScene));
   const isLongPrompt = submittedPrompt.length > 260;
-  const overallStatus = computeOverallStatus(runs);
   const isMulti = runs.length > 1;
-  const activeRun = runs.find((run) => run.modelKey === activeModelKey) ?? runs[0] ?? null;
   const fullscreenPreviewRun = fullscreenRun
     ? (runs.find((run) => (fullscreenRun.taskId && run.taskId === fullscreenRun.taskId) || (fullscreenRun.pageId && run.pageId === fullscreenRun.pageId)) ?? fullscreenRun)
     : null;
-  const previewGridStyle = {
-    gridTemplateColumns: `repeat(${Math.min(Math.max(runs.length, 1), 2)}, minmax(0, 1fr))`,
-  };
   const availableSelectableModels = availableModels.filter((model) => model.available);
 
   // 模型选择收成紧凑的弹出选择器：常态只占一个 pill，点击向上弹出浮层多选，
@@ -2746,8 +2783,38 @@ export default function HomePage() {
     );
   }
 
+  const renderPreview = (run: WorkspaceRun, options?: { presentation?: PreviewPresentation; onFrame?: (node: HTMLIFrameElement | null) => void }) => (
+    <PreviewCell
+      run={run as RunState}
+      presentation={options?.presentation}
+      continueLabel={VARIANT.id === "C" ? "选为最佳" : undefined}
+      continueActiveLabel={VARIANT.id === "C" ? "已选为最佳" : undefined}
+      onFrame={options?.onFrame}
+      onOpenPreview={() => setFullscreenRun(run as RunState)}
+      onContinue={() => startContinueFrom(run as RunState)}
+      canContinue={!isGenerating && Boolean(run.pageId)}
+      selectedAsBase={continueBase?.pageId === run.pageId}
+      dimmedByBase={runs.length <= 2 && continueBase ? continueBase.pageId !== run.pageId : false}
+      sceneFeatures={activeScene?.features ?? []}
+      onRequireLogin={(message) => {
+        showNotice(message);
+        setIsAuthModalOpen(true);
+      }}
+      onNotice={showNotice}
+      shareGate={() => {
+        if (!authUser) {
+          showNotice("登录后即可复制并分享你的作品链接");
+          setIsAuthModalOpen(true);
+          return true;
+        }
+        return false;
+      }}
+    />
+  );
+
   return (
     <div className="app-stage" ref={stageRef}>
+      <VariantBadge />
       {phase === "idle" ? (
         <main key="hero" className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
           <div className="hero-aurora" aria-hidden="true">
@@ -2780,7 +2847,16 @@ export default function HomePage() {
         </main>
       ) : (
         <main key="workspace" className="workspace-shell">
-          <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMulti ? "compare-mode" : ""}`}>
+          <WorkspaceProvider
+            runs={runs as unknown as WorkspaceRun[]}
+            activeModelKey={activeModelKey}
+            onSelectModel={setActiveModelKey}
+            appliedSkill={appliedSkill}
+            isGenerating={isGenerating}
+            continueBasePageId={continueBase?.pageId ?? ""}
+            renderPreview={renderPreview}
+          >
+          <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMulti ? "compare-mode" : ""} ${VARIANT.layoutClass}`}>
             {renderHistorySidebar()}
             <aside className="conversation-pane">
               <div className="conversation-scroll">
@@ -2803,159 +2879,16 @@ export default function HomePage() {
                   )}
                 </div>
 
-                <div className="chat-message assistant-message progress-message" data-anim-stagger>
-                  <div className="assistant-label">
-                    本轮模型 · {runs.length} 个并行
-                    {appliedSkill && (
-                      <span className="applied-skill-badge" title="本轮应用的网页技能">
-                        技能 · {appliedSkill.name}
-                      </span>
-                    )}
-                  </div>
-                  <div className="run-tabs" role="tablist" aria-label="本轮模型">
-                    {runs.map((run) => (
-                      <button
-                        key={run.taskId || run.modelKey}
-                        type="button"
-                        role="tab"
-                        className={`run-tab ${run.modelKey === activeModelKey ? "is-active" : ""} is-${run.status}`}
-                        aria-selected={run.modelKey === activeModelKey}
-                        onClick={() => setActiveModelKey(run.modelKey)}
-                      >
-                        <span className="run-tab-icon" aria-hidden="true">{getRunStatusIcon(run.status)}</span>
-                        <span className="run-tab-label">{run.modelLabel}</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {activeRun && (
-                    <div className="progress-list">
-                      {activeRun.progressSteps.map((step, index) => (
-                        <div
-                          className={`progress-item ${step.status} ${index === activeRun.progressSteps.length - 1 ? "is-last" : ""}`}
-                          key={step.id}
-                        >
-                          <span className="progress-icon" aria-hidden="true">{getProgressIcon(step.status)}</span>
-                          <div className="progress-body">
-                            <div className="progress-title-row">
-                              <strong>{step.title}</strong>
-                              {step.id === "model_thinking" && (
-                                <button className="node-toggle" type="button" onClick={() => setThinkingExpanded((value) => !value)}>
-                                  {thinkingExpanded ? "收起" : "展开"}
-                                </button>
-                              )}
-                            </div>
-                            <p>{step.description}</p>
-                            {step.id === "model_output" && (
-                              <span className="token-meta">
-                                <span className="token-meta-icon" aria-hidden="true"><BoltIcon /></span>
-                                {activeRun.usageSummary && step.status === "completed" ? (
-                                  <>
-                                    输入 {formatTokenCount(activeRun.usageSummary.inputTokens)} / 输出{" "}
-                                    {formatTokenCount(activeRun.usageSummary.outputTokens)} tokens
-                                  </>
-                                ) : (
-                                  <>
-                                    输出 {step.outputTokens ?? 0} tokens
-                                    {step.tokenSource === "estimated" ? "（估算）" : ""}
-                                  </>
-                                )}
-                              </span>
-                            )}
-                            {step.id === "model_thinking" && thinkingExpanded && (
-                              <div className="thinking-node-body">
-                                {activeRun.reasoning ? (
-                                  <pre>{activeRun.reasoning}</pre>
-                                ) : (
-                                  <p>模型开始思考后，会在这里展示 reasoning_content。</p>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      {activeRun.usageSummary && (
-                        <div className="usage-summary">
-                          <span className="token-meta-icon" aria-hidden="true"><BoltIcon /></span>
-                          <div className="usage-summary-body">
-                            <span>
-                              输入 {formatTokenCount(activeRun.usageSummary.inputTokens)} / 输出{" "}
-                              {formatTokenCount(activeRun.usageSummary.outputTokens)} tokens
-                              {activeRun.usageSummary.cachedInputTokens
-                                ? ` · 缓存命中 ${formatTokenCount(activeRun.usageSummary.cachedInputTokens)}`
-                                : ""}
-                              {activeRun.usageSummary.reasoningTokens
-                                ? ` · 思考 ${formatTokenCount(activeRun.usageSummary.reasoningTokens)}`
-                                : ""}
-                            </span>
-                            {activeRun.usageSummary.creditsCharged ? (
-                              <span className="usage-summary-credits">
-                                花费 {activeRun.usageSummary.creditsCharged} 积分
-                                {activeRun.usageSummary.discountCredits ? (
-                                  <em>优惠 -{activeRun.usageSummary.discountCredits}</em>
-                                ) : null}
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {activeRun?.status === "failed" && (
-                  <div className="chat-message assistant-message error-message">
-                    <div className="assistant-label">生成失败</div>
-                    <p>{activeRun.errorMessage}</p>
-                  </div>
-                )}
+                <ProgressSlot />
               </div>
-
               <div className="composer-wrap">{renderPromptForm(true)}</div>
             </aside>
 
             <section className="preview-pane">
-              <article className="panel preview-panel workspace-preview" data-anim-stagger>
-                <div className="panel-heading preview-heading">
-                  <h2>结果预览</h2>
-                  {isMulti && <span className="preview-count">{runs.length} 个版本</span>}
-                  {overallStatus !== "completed" && (
-                    <span className="preview-status-text">
-                      {overallStatus === "failed" ? "生成失败" : "生成中"}
-                    </span>
-                  )}
-                </div>
-
-                <div className="preview-grid" style={previewGridStyle}>
-                  {runs.map((run) => (
-                    <PreviewCell
-                      key={run.taskId || run.modelKey}
-                      run={run}
-                      canContinue={!isGenerating && Boolean(run.pageId)}
-                      selectedAsBase={continueBase?.pageId === run.pageId}
-                      dimmedByBase={continueBase ? continueBase.pageId !== run.pageId : false}
-                      onOpenPreview={() => setFullscreenRun(run)}
-                      onContinue={() => startContinueFrom(run)}
-                      sceneFeatures={activeScene?.features ?? []}
-                      onRequireLogin={(message) => {
-                        showNotice(message);
-                        setIsAuthModalOpen(true);
-                      }}
-                      onNotice={showNotice}
-                      shareGate={() => {
-                        if (!authUser) {
-                          showNotice("登录后即可复制并分享你的作品链接");
-                          setIsAuthModalOpen(true);
-                          return true;
-                        }
-                        return false;
-                      }}
-                    />
-                  ))}
-                </div>
-              </article>
+              <ResultsSlot />
             </section>
           </section>
+          </WorkspaceProvider>
         </main>
       )}
       {notice && <div className="app-toast" role="status">{notice}</div>}
@@ -3021,14 +2954,6 @@ function makeRunFromResponse(run: GenerationRunResponse, hasFile: boolean): RunS
 
 function labelForModel(key: string, models: ModelInfo[]): string {
   return models.find((model) => model.key === key)?.label ?? key;
-}
-
-function computeOverallStatus(runs: RunState[]): GenerationStatus {
-  if (runs.length === 0) return "idle";
-  if (runs.some((run) => run.status === "thinking" || run.status === "creating")) return "creating";
-  if (runs.some((run) => run.status === "completed")) return "completed";
-  if (runs.every((run) => run.status === "failed")) return "failed";
-  return "completed";
 }
 
 function toAbsoluteUrl(pageUrl: string): string {
@@ -3272,23 +3197,6 @@ function buildUsageSummaryFromDetail(
     creditsCharged: billing?.credits_charged,
     discountCredits: billing?.discount_credits,
   };
-}
-
-function formatTokenCount(value: number): string {
-  return value.toLocaleString("zh-CN");
-}
-
-function getProgressIcon(status: ProgressStepStatus): ReactNode {
-  if (status === "completed") return "✓";
-  if (status === "running") return <span className="progress-spinner" aria-hidden="true" />;
-  if (status === "failed") return "!";
-  return null;
-}
-
-function getRunStatusIcon(status: GenerationStatus): ReactNode {
-  if (status === "completed") return "✓";
-  if (status === "failed") return "!";
-  return <span className="progress-spinner" aria-hidden="true" />;
 }
 
 function validateFiles(files: File[]): string {
