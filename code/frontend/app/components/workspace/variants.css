@@ -596,27 +596,6 @@ body.is-resizing-panes iframe {
 
 .vb-pill-hint { color: var(--color-text-muted); font-weight: 600; }
 
-.vb-pill-text .vb-pill-picked {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 3px;
-  height: 18px;
-  margin-left: 8px;
-  padding: 0 7px 0 2px;
-  vertical-align: top;
-  border-radius: 999px;
-  background: rgba(124, 58, 237, 0.09);
-  color: #6d28d9;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.vb-pill-text .vb-pill-picked .round-source-avatar {
-  border-color: rgba(255, 255, 255, 0.9);
-  color: var(--accent);
-}
-
 /* 多轮时整张卡可点：点哪轮右侧就显示哪轮；显示中的那张挂「显示中」，其余悬停时浮出「查看」 */
 .vb-status.is-switchable .vb-status-head { transition: background 0.15s ease; }
 .vb-status.is-switchable .vb-status-head:hover { background: rgba(15, 23, 42, 0.025); }
@@ -966,7 +945,7 @@ body.is-resizing-panes iframe {
 .vb-tag.is-picked { background: rgba(124, 58, 237, 0.1); color: #6d28d9; }
 
 .vb-tag.is-picked::before {
-  content: "↳";
+  content: "→";
   font-size: 10px;
 }
 
@@ -1157,55 +1136,6 @@ body.is-resizing-panes iframe {
 }
 
 .vb-mini-row.is-failed .vb-mini-stage { color: var(--color-danger); }
-
-/* 多轮：结果区标题右侧的轮次切换 + 回看旧轮时的提示条 */
-.vb-heading-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  min-width: 0;
-}
-
-.vb-rounds {
-  display: inline-flex;
-  padding: 2px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.05);
-}
-
-.vb-rounds button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 24px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.vb-rounds button:hover { color: var(--color-text-primary); }
-
-.vb-rounds button.is-active {
-  background: #fff;
-  box-shadow: var(--shadow-sm);
-  color: var(--color-primary-active);
-}
-
-.vb-rounds i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  animation: dot-breathe 1.5s ease-in-out infinite;
-}
 
 /* 回看模式胶囊：深色底让"现在不是最新"一眼可辨，右半是回到最新的按钮 */
 .vb-past-chip {
@@ -1835,7 +1765,6 @@ body.is-resizing-panes iframe {
   .vb-pill-dot.is-run,
   .vb-pip.is-live span,
   .vb-avatar::before,
-  .vb-rounds i,
   .vb-past-chip,
   .vb-past-chip button i,
   .vb-mini { animation: none; }

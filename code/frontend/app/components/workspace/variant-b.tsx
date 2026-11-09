@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { MiniAvatar, Ring, StatusMark } from "./bits";
+import { Ring, StatusMark } from "./bits";
 import { useArrowModelNav, useWorkspace } from "./context";
 import {
   batchElapsed,
@@ -68,7 +68,6 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
   const clockText = clock === null ? "" : isGenerating ? formatClock(clock) : formatDuration(clock);
   const credits = sumCredits(runs);
   const insights = batchInsights(runs, elapsed);
-  const picked = history ? runs.find((run) => run.modelKey === history.pickedKey) : undefined;
   const title = isGenerating ? `${runs.length} 个模型生成中` : `${done}/${runs.length} 已完成`;
   const sub = isGenerating ? (
     `已写 ${formatTokens(tokens)} tokens`
@@ -81,15 +80,6 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
           <CoinIcon />
           {credits.charged}
         </>
-      )}
-      {picked && (
-        <b
-          className="vb-pill-picked"
-          title={`选用「${picked.modelLabel}」${history?.nextLabel ? `，${history.nextLabel}基于它继续修改` : ""}`}
-        >
-          <MiniAvatar modelKey={picked.modelKey} label={picked.modelLabel} />
-          选用
-        </b>
       )}
     </>
   );
@@ -162,7 +152,7 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
                 key={run.taskId || run.modelKey}
                 run={run}
                 active={showActive && run.modelKey === activeModelKey}
-                picked={history?.pickedKey === run.modelKey}
+                pickedFor={history && history.pickedKey === run.modelKey ? history.nextLabel : ""}
                 insights={insights}
                 onSelect={() => selectModel(run.modelKey)}
               />
@@ -263,13 +253,14 @@ const CoinIcon = () => (
 function MiniRow({
   run,
   active,
-  picked = false,
+  pickedFor = "",
   insights,
   onSelect,
 }: {
   run: WorkspaceRun;
   active: boolean;
-  picked?: boolean;
+  /** 下一轮基于这个结果修改时，填下一轮的称呼。 */
+  pickedFor?: string;
   insights: BatchInsights;
   onSelect: () => void;
 }) {
@@ -305,9 +296,13 @@ function MiniRow({
               );
             })}
           </span>
-          {isFastest || isCheapest || picked ? (
+          {isFastest || isCheapest || pickedFor ? (
             <span className="vb-tags">
-              {picked && <em className="vb-tag is-picked">选用</em>}
+              {pickedFor && (
+                <em className="vb-tag is-picked" title={`${pickedFor}基于这个结果修改`}>
+                  {pickedFor.replace(/\s/g, "")}
+                </em>
+              )}
               {isFastest && <em className="vb-tag is-fast">最快</em>}
               {isCheapest && <em className="vb-tag is-cheap">最省</em>}
             </span>
@@ -340,28 +335,6 @@ function MiniRow({
         </span>
       </button>
     </li>
-  );
-}
-
-function RoundTabs() {
-  const { roundNav } = useWorkspace();
-  if (!roundNav || roundNav.items.length < 2) return null;
-  return (
-    <div className="vb-rounds" role="tablist" aria-label="切换轮次">
-      {roundNav.items.map((item, index) => (
-        <button
-          key={item.label}
-          type="button"
-          role="tab"
-          aria-selected={index === roundNav.viewing}
-          className={index === roundNav.viewing ? "is-active" : ""}
-          onClick={() => roundNav.onView(index)}
-        >
-          {item.live && <i aria-label="生成中" />}
-          {item.label}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -426,14 +399,11 @@ export function VariantBResults() {
           {runs.length} 个版本 · {done} 已完成
         </h2>
         <PastRoundChip />
-        <div className="vb-heading-tools">
-          <RoundTabs />
-          {many && (
-            <button type="button" className="vb-carousel-btn" onClick={() => setCarousel(true)}>
-              全屏轮播
-            </button>
-          )}
-        </div>
+        {many && (
+          <button type="button" className="vb-carousel-btn" onClick={() => setCarousel(true)}>
+            全屏轮播
+          </button>
+        )}
       </div>
       {!many && (
         <div className="preview-grid" style={{ gridTemplateColumns: `repeat(${Math.max(runs.length, 1)}, minmax(0, 1fr))` }}>
