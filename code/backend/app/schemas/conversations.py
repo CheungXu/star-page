@@ -6,6 +6,17 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
+class ConversationForkSource(BaseModel):
+    """分叉会话的来源：从哪条会话的第几轮分出来。"""
+
+    conversation_id: UUID
+    title: str
+    # 分叉点在来源会话里是第几轮（从 1 开始），也就是本会话继承了几轮。
+    round_number: int
+    # 来源会话被删后为 false：继承来的历史照常显示，但不能再跳回去。
+    available: bool
+
+
 class ConversationListItem(BaseModel):
     id: UUID
     title: str
@@ -16,6 +27,7 @@ class ConversationListItem(BaseModel):
     latest_batch_status: str | None
     created_at: datetime
     updated_at: datetime
+    forked_from: ConversationForkSource | None = None
 
 
 class ConversationUpdate(BaseModel):
@@ -62,6 +74,8 @@ class ConversationBatch(BaseModel):
     file_names: list[str]
     created_at: datetime
     nodes: list[ConversationNode]
+    # 从来源会话继承来的轮次（分叉点及之前）。
+    inherited: bool = False
 
 
 class ConversationDetail(BaseModel):
@@ -72,3 +86,4 @@ class ConversationDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     batches: list[ConversationBatch]
+    forked_from: ConversationForkSource | None = None

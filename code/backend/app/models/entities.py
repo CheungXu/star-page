@@ -109,7 +109,11 @@ class UserSession(Base):
 
 
 class Conversation(Base, TimestampMixin):
-    """会话 = 一棵生成树。会话内"续写"永远单父，保证是严格的树。"""
+    """会话 = 生成树上的一条线。节点续写永远单父，保证是严格的树。
+
+    从更早一轮的结果继续时另起一条 origin='fork' 的会话：分叉点及之前的轮次从来源会话继承，
+    之后的轮次归新会话。三个 fork 字段指向来源会话里真正拥有该轮的会话、批次和选中的节点。
+    """
 
     __tablename__ = "conversations"
 
@@ -122,6 +126,11 @@ class Conversation(Base, TimestampMixin):
     utm_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_favorite: Mapped[bool] = mapped_column(default=False, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    forked_from_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    forked_from_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    fork_base_page_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     owner: Mapped[User] = relationship("User")
 

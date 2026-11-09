@@ -986,6 +986,45 @@ h1 {
   color: var(--color-primary);
 }
 
+/* 工作区续写：输入条贴在对话栏底部，栏宽可能很窄。
+   浮层以整张输入卡为定位基准向上弹出、与卡同宽，避免被栏底裁掉或从右侧溢出；pill 随栏宽收缩 */
+.compact-prompt .model-picker {
+  position: static;
+}
+
+.compact-prompt .model-picker-trigger {
+  height: 34px;
+  max-width: 100%;
+  font-size: 12.5px;
+}
+
+.compact-prompt .model-picker-text {
+  min-width: 0;
+}
+
+.compact-prompt .model-menu {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: auto;
+  max-width: none;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  transform-origin: bottom left;
+  animation-name: model-menu-up;
+}
+
+@keyframes model-menu-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* ===== 圆形发送钮：极简高级，全页唯一主焦点 ===== */
 .composer-send {
   display: inline-flex;
@@ -2461,6 +2500,35 @@ h1 {
   opacity: 0.9;
 }
 
+/* 分叉会话：标题下一行注明从哪条会话的第几轮分出来；来源标题过长时省略，轮次始终可见 */
+.history-fork-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: #6d28d9;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.history-fork-tag > svg {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.history-fork-tag-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-fork-tag-round {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .history-item-actions {
   display: inline-flex;
   align-items: center;
@@ -3846,6 +3914,12 @@ h1 {
   color: var(--color-primary-active);
   font-size: 13px;
   font-weight: 600;
+}
+
+.continue-indicator.is-fork {
+  border-color: rgba(124, 58, 237, 0.22);
+  background: rgba(124, 58, 237, 0.07);
+  color: #6d28d9;
 }
 
 .continue-indicator-icon {

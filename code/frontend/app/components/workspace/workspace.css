@@ -321,6 +321,50 @@ body.is-resizing-panes iframe {
   font-size: 13px;
 }
 
+/* 分叉会话：继承来的轮次与本会话自己的轮次之间的分界 */
+.fork-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px dashed rgba(124, 58, 237, 0.28);
+  border-radius: 10px;
+  background: rgba(124, 58, 237, 0.05);
+  color: #6d28d9;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.fork-divider-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fork-divider-label > svg { flex-shrink: 0; font-size: 13px; }
+
+.fork-divider-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fork-divider button {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: 1px solid rgba(124, 58, 237, 0.25);
+  border-radius: 999px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.fork-divider button:hover { background: rgba(124, 58, 237, 0.08); }
+
 .vb-status.is-history {
   transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy import desc, func, or_, select, update
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_billing_config, get_model_registry, get_settings
@@ -19,12 +20,14 @@ from app.schemas.conversations import (
 from app.schemas.conversations import (
     ConversationBilling,
     ConversationDetail,
+    ConversationForkSource,
     ConversationListItem,
     ConversationNode,
     ConversationUsage,
     ConversationUpdate,
 )
 from app.schemas.generation import ModelInfo
+from app.services.conversation_tree import fork_source, release_deleted_pages, view_batches
 
 router = APIRouter(tags=["conversations"])
 
@@ -119,12 +122,9 @@ async def delete_conversation(conversation_id: uuid.UUID, request: Request) -> N
         now = datetime.now(UTC)
         conversation.deleted_at = now
         conversation.updated_at = now
-        # 级联软删会话下的全部节点，使其分享链接 /p/{conversation_id}/{page_id} 同步失效。
-        await session.execute(
-            update(Page)
-            .where(Page.conversation_id == conversation.id, Page.deleted_at.is_(None))
-            .values(deleted_at=now)
-        )
+        # 级联软删会话下的节点，使其分享链接 /p/{conversation_id}/{page_id} 同步失效；
+        # 仍被未删除分支继承的那段历史保留。
+        await release_deleted_pages(session, conversation, now)
         await session.commit()
 
 
@@ -141,17 +141,15 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
         if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="会话不存在")
 
-        batches_result = await session.execute(
-            select(GenerationBatch)
-            .where(GenerationBatch.conversation_id == conversation.id)
-            .order_by(GenerationBatch.created_at.asc())
-        )
-        batches = batches_result.scalars().all()
+        batches = await view_batches(session, conversation)
+        batch_ids = [batch.id for batch in batches]
 
-        pages_result = await session.execute(
-            select(Page).where(Page.conversation_id == conversation.id, Page.deleted_at.is_(None))
-        )
-        pages = pages_result.scalars().all()
+        pages: list[Page] = []
+        if batch_ids:
+            pages_result = await session.execute(
+                select(Page).where(Page.batch_id.in_(batch_ids), Page.deleted_at.is_(None))
+            )
+            pages = list(pages_result.scalars().all())
 
         pages_by_batch: dict[uuid.UUID, list[Page]] = defaultdict(list)
         for page in pages:
@@ -229,6 +227,7 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
                     file_names=list(batch.input_file_names or []),
                     created_at=batch.created_at,
                     nodes=nodes,
+                    inherited=batch.conversation_id != conversation.id,
                 )
             )
 
@@ -240,6 +239,7 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
             batches=batch_items,
+            forked_from=await _fork_source(session, conversation, batches),
         )
 
 
@@ -297,6 +297,10 @@ async def _build_conversation_list_item(
     )
     node_count = int(node_count_result.scalar_one())
 
+    forked_from = None
+    if conversation.forked_from_conversation_id is not None:
+        forked_from = await _fork_source(session, conversation, await view_batches(session, conversation))
+
     return ConversationListItem(
         id=conversation.id,
         title=conversation.title,
@@ -307,4 +311,12 @@ async def _build_conversation_list_item(
         latest_batch_status=latest.status if latest else None,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
+        forked_from=forked_from,
     )
+
+
+async def _fork_source(
+    session: AsyncSession, conversation: Conversation, view: list[GenerationBatch]
+) -> ConversationForkSource | None:
+    source = await fork_source(session, conversation, view)
+    return ConversationForkSource(**asdict(source)) if source else None

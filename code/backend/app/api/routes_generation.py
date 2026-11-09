@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
@@ -13,6 +13,7 @@ from app.core.auth import get_client_ip, get_optional_actor, resolve_actor
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.models.entities import PageAsset
+from app.schemas.conversations import ConversationForkSource
 from app.schemas.generation import GenerationCreateRequest, GenerationCreateResponse, GenerationRunItem
 from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
 from app.services.consent_service import training_consent_for
@@ -151,6 +152,7 @@ async def create_generation(request: Request, response: Response) -> GenerationC
                 )
                 for run in creation.runs
             ],
+            forked_from=ConversationForkSource(**asdict(creation.forked_from)) if creation.forked_from else None,
         )
 
 

@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.conversations import ConversationForkSource
+
 
 class GenerationCreateRequest(BaseModel):
     prompt: str = Field(default="", max_length=4000)
@@ -31,6 +33,8 @@ class GenerationCreateResponse(BaseModel):
     batch_id: UUID
     kind: str
     runs: list[GenerationRunItem]
+    # 非空表示这一轮从更早的轮次分叉，conversation_id 已是新会话。
+    forked_from: ConversationForkSource | None = None
 
 
 class ModelInfo(BaseModel):

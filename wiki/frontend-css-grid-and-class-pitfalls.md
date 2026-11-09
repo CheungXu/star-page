@@ -57,6 +57,12 @@ grid 容器的 `align-content` 默认是 `normal`（对 grid 等同 `stretch`）
 
 - 定式：布局容器少用 `:first-child / :last-child` 直接写死颜色，改用显式类名；或给子组件的状态规则带上父级上下文（`.user-message-meta .round-source.is-branch`）压过结构伪类。
 
+## 9. 贴在窄栏底部的输入条：弹出浮层要向上、以整张卡片为定位基准
+
+首页中央的大输入框下方空间充裕，按钮的 `.picker { position: relative }` 往下弹固定宽浮层（`top: calc(100% + 10px); width: 264px`）没问题；同一组件搬进贴在窄栏底部的输入条（外层栏带 `overflow: hidden`）时，往下弹会被栏底直接裁掉，固定宽从按钮左对齐又会从右侧溢出。
+
+- 定式：在底部紧凑输入卡下给 `.picker` 改 `position: static`，让浮层跳过按钮，直接以整张输入卡（`position: relative`）为定位基准：`top: auto; bottom: calc(100% + 8px); left: 0; right: 0; width: auto`，自然向上弹出且与输入卡同宽。
+
 ## 通用经验
 
 - 这类 bug 多由"CSS 默认值 + 边界数据/视口"触发，写完要用**少量数据、空状态、中间视口宽度**专门过一遍。

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -50,6 +50,23 @@ type CreateGenerationResponse = {
   batch_id: string;
   kind: string;
   runs: GenerationRunResponse[];
+  /** 非空表示这一轮从更早的轮次分叉，conversation_id 已是新会话。 */
+  forked_from?: ForkSourceResponse | null;
+};
+
+type ForkSourceResponse = {
+  conversation_id: string;
+  title: string;
+  round_number: number;
+  available: boolean;
+};
+
+/** 分叉会话的来源：从哪条会话的第几轮（从 1 开始）分出来；来源被删后不可再跳回。 */
+type ForkSource = {
+  conversationId: string;
+  title: string;
+  roundNumber: number;
+  available: boolean;
 };
 
 type GenerationRunResponse = {
@@ -154,6 +171,7 @@ type StoredSession = {
   /** 当前轮之前已结束的轮次，以及当前轮基于哪个结果。 */
   pastRounds?: WorkspaceRound[];
   currentBasedOn?: RoundBase | null;
+  forkSource?: ForkSource | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -166,6 +184,7 @@ type HistoryItem = {
   nodeCount: number;
   status: GenerationStatus;
   updatedAt: string;
+  forkedFrom: ForkSource | null;
 };
 
 type HistoryScope = "all" | "favorite";
@@ -180,6 +199,7 @@ type ConversationListResponseItem = {
   latest_batch_status?: string | null;
   created_at: string;
   updated_at: string;
+  forked_from?: ForkSourceResponse | null;
 };
 
 type ConversationNodeResponse = {
@@ -208,6 +228,8 @@ type ConversationBatchResponse = {
   file_names: string[];
   created_at: string;
   nodes: ConversationNodeResponse[];
+  /** 从来源会话继承来的轮次（分叉点及之前）。 */
+  inherited?: boolean;
 };
 
 type ConversationDetailResponse = {
@@ -218,6 +240,7 @@ type ConversationDetailResponse = {
   created_at: string;
   updated_at: string;
   batches: ConversationBatchResponse[];
+  forked_from?: ForkSourceResponse | null;
 };
 
 const PROGRESS_STEP_META: Record<ProgressStepId, Pick<ProgressStep, "title" | "description">> = {
@@ -1347,6 +1370,8 @@ export default function HomePage() {
   // 已结束的轮次与当前轮的来源：会话内提交新一轮时归档上一轮，打开历史时从会话详情的 batches 还原。
   const [pastRounds, setPastRounds] = useState<WorkspaceRound[]>([]);
   const [currentBasedOn, setCurrentBasedOn] = useState<RoundBase | null>(null);
+  // 分叉会话的来源；前面 inherited 的轮次都来自它。
+  const [forkSource, setForkSource] = useState<ForkSource | null>(null);
   const [viewedRound, setViewedRound] = useState<{ index: number; modelKey: string } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPromptAttention, setIsPromptAttention] = useState(false);
@@ -1475,11 +1500,12 @@ export default function HomePage() {
       baseModelLabel: continueBase?.modelLabel,
       pastRounds,
       currentBasedOn,
+      forkSource,
       createdAt: readCurrentSession()?.createdAt ?? now,
       updatedAt: now,
     };
     writeCurrentSession(session);
-  }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, appliedSkill, roundIndex, continueBase, pastRounds, currentBasedOn]);
+  }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, appliedSkill, roundIndex, continueBase, pastRounds, currentBasedOn, forkSource]);
 
   async function initializeAuthState(): Promise<AuthUser | null> {
     const user = await loadMe();
@@ -1722,12 +1748,14 @@ export default function HomePage() {
     }
 
     // 在工作区里提交即"在本会话内续写"：
-    //  - 选中了某个结果节点(continueBase) -> 以该节点为基分支；
+    //  - 选中了某个结果节点(continueBase) -> 以该节点为基分支；基点在更早的轮次时，
+    //    后端会分叉出一条新会话：这里先把历史截到基点那一轮，原会话保持不变；
     //  - 未选中 -> 每个模型各自接上自己上一轮结果，并行继续。
     // 首页(idle)提交则新建会话。
     const fileNames = submitFiles.map((file) => file.name);
     const hasFile = fileNames.length > 0;
     closeAllSources();
+    setIsModelMenuOpen(false);
 
     const pendingRuns: RunState[] = selectedModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), hasFile));
 
@@ -1738,12 +1766,17 @@ export default function HomePage() {
         ? { prompt: submittedPrompt, basedOn: currentBasedOn, runs: runs.map((run) => ({ ...run, reasoning: "" })) }
         : null;
     const nextBasedOn = inConversation && continueBase ? locateRoundBase(continueBase.pageId) : null;
+    const forkRoundIndex = nextBasedOn && nextBasedOn.roundIndex < pastRounds.length ? nextBasedOn.roundIndex : null;
 
     playTransition(() => {
-      if (finishedRound) {
+      if (forkRoundIndex !== null) {
+        setPastRounds((current) => current.slice(0, forkRoundIndex + 1).map((round) => ({ ...round, inherited: true })));
+        setRoundIndex(forkRoundIndex + 1);
+      } else if (finishedRound) {
         setPastRounds((current) => [...current, finishedRound]);
       } else if (!inConversation) {
         setPastRounds([]);
+        setForkSource(null);
       }
       setCurrentBasedOn(nextBasedOn);
       setViewedRound(null);
@@ -1816,7 +1849,12 @@ export default function HomePage() {
       setConversationId(data.conversation_id);
       setBatchId(data.batch_id);
       setAppliedSkill(null);
-      if (inConversation) setRoundIndex((value) => value + 1);
+      if (data.forked_from) {
+        setForkSource(mapForkSource(data.forked_from));
+        showNotice(`已从第 ${data.forked_from.round_number} 轮分出新会话，原会话保持不变`);
+      } else if (inConversation) {
+        setRoundIndex((value) => value + 1);
+      }
       setContinueBase(null);
       setSelectedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -1954,6 +1992,7 @@ export default function HomePage() {
 
   function startNewChat() {
     closeAllSources();
+    setIsModelMenuOpen(false);
     localStorage.removeItem(CURRENT_SESSION_KEY);
     if (fileInputRef.current) fileInputRef.current.value = "";
     playTransition(() => {
@@ -1974,6 +2013,7 @@ export default function HomePage() {
       setContinueBase(null);
       setPastRounds([]);
       setCurrentBasedOn(null);
+      setForkSource(null);
       setViewedRound(null);
       setAppliedSkill(null);
     });
@@ -1989,10 +2029,14 @@ export default function HomePage() {
     return null;
   }
 
-  async function restoreHistoryItem(item: HistoryItem) {
+  function restoreHistoryItem(item: HistoryItem) {
+    return restoreConversation(item.id);
+  }
+
+  async function restoreConversation(id: string) {
     closeAllSources();
     try {
-      const response = await apiFetch(`/api/conversations/${item.id}`);
+      const response = await apiFetch(`/api/conversations/${id}`);
       if (response.status === 401) {
         setIsAuthModalOpen(true);
         return;
@@ -2092,6 +2136,7 @@ export default function HomePage() {
   }
 
   function applyStoredSession(session: StoredSession) {
+    setIsModelMenuOpen(false);
     setPhase("active");
     setConversationId(session.conversationId);
     setBatchId(session.batchId);
@@ -2106,6 +2151,7 @@ export default function HomePage() {
     setRoundIndex(session.roundIndex ?? 0);
     setPastRounds(session.pastRounds ?? []);
     setCurrentBasedOn(session.currentBasedOn ?? null);
+    setForkSource(session.forkSource ?? null);
     setViewedRound(null);
     setContinueBase(
       session.basePageId ? { pageId: session.basePageId, modelLabel: session.baseModelLabel ?? "上一结果" } : null,
@@ -2251,12 +2297,17 @@ export default function HomePage() {
     : null;
   const availableSelectableModels = availableModels.filter((model) => model.available);
 
-  // 模型选择收成紧凑的弹出选择器：常态只占一个 pill，点击向上弹出浮层多选，
-  // 让输入卡片保持轻盈，不被一整条模型列表撑臃肿。
-  function renderModelPicker() {
+  // 模型选择收成紧凑的弹出选择器：常态只占一个 pill，点击弹出浮层多选，
+  // 让输入卡片保持轻盈，不被一整条模型列表撑臃肿。工作区里每轮都可以换模型。
+  function renderModelPicker(compact = false) {
     if (availableModels.length === 0) return null;
     const selected = availableModels.filter((model) => selectedModelKeys.includes(model.key));
     const triggerLabel = selected.length === 1 ? selected[0].label : `${selected.length} 个模型`;
+    const menuHint = !compact
+      ? "可多选 · 并排生成便于对比"
+      : continueBase
+        ? `每轮可换 · 都基于「${continueBase.modelLabel}」的结果修改`
+        : "每轮可换 · 新加入的模型接着上一轮的结果修改";
     return (
       <div className={`model-picker ${isModelMenuOpen ? "is-open" : ""}`} ref={modelMenuRef}>
         <button
@@ -2280,8 +2331,8 @@ export default function HomePage() {
         {isModelMenuOpen && (
           <div className="model-menu" role="menu" aria-label="选择生成模型">
             <div className="model-menu-head">
-              <strong>生成模型</strong>
-              <span>可多选 · 并排生成便于对比</span>
+              <strong>{compact ? "这一轮的生成模型" : "生成模型"}</strong>
+              <span>{menuHint}</span>
             </div>
             <div className="model-menu-list">
               {availableModels.map((model) => {
@@ -2428,6 +2479,16 @@ export default function HomePage() {
                     >
                       <span className="history-item-main">
                         <span className="history-item-title">{item.title}</span>
+                        {item.forkedFrom && (
+                          <span
+                            className="history-fork-tag"
+                            title={`分叉自「${item.forkedFrom.title}」第 ${item.forkedFrom.roundNumber} 轮`}
+                          >
+                            <BranchIcon />
+                            <span className="history-fork-tag-text">分叉自「{item.forkedFrom.title}」</span>
+                            <span className="history-fork-tag-round">· 第 {item.forkedFrom.roundNumber} 轮</span>
+                          </span>
+                        )}
                         <small>
                           {item.modelKeys.length > 1 ? `${item.modelKeys.length} 模型 · ` : ""}
                           {formatHistoryTime(item.updatedAt)}
@@ -2549,13 +2610,17 @@ export default function HomePage() {
     const promptWrapClassName = compact
       ? "prompt-form-wrap compact-wrap"
       : `prompt-form-wrap hero-wrap ${isModelMenuOpen ? "model-menu-open" : ""}`;
+    const continueRound = compact && continueBase ? locateRoundBase(continueBase.pageId) : null;
+    const continueForks = continueRound !== null && continueRound.roundIndex < pastRounds.length;
 
     return (
       <div className={promptWrapClassName}>
         {compact && continueBase && (
-          <div className="continue-indicator">
+          <div className={`continue-indicator ${continueForks ? "is-fork" : ""}`}>
             <span className="continue-indicator-icon" aria-hidden="true"><BranchIcon /></span>
-            将基于「{continueBase.modelLabel}」的结果进行修改
+            {continueForks
+              ? `将从第 ${continueRound.roundIndex + 1} 轮「${continueBase.modelLabel}」的结果分出新会话，原会话保持不变`
+              : `将基于「${continueBase.modelLabel}」的结果进行修改`}
             <button type="button" onClick={() => setContinueBase(null)} aria-label="取消继续">
               <CloseIcon />
             </button>
@@ -2714,7 +2779,7 @@ export default function HomePage() {
                   <span className="composer-upload-text">上传</span>
                 </label>
               )}
-              {!compact && renderModelPicker()}
+              {renderModelPicker(compact)}
             </div>
             <button
               className={`composer-send ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""} ${isEmptySubmit ? "is-empty" : ""}`}
@@ -2903,36 +2968,54 @@ export default function HomePage() {
                   const laterBases = [...pastRounds.slice(index + 1).map((item) => item.basedOn), currentBasedOn];
                   const pickedBy = laterBases.findIndex((base) => base?.roundIndex === index);
                   const picked = pickedBy >= 0 ? laterBases[pickedBy] : null;
+                  const endsInherited = Boolean(round.inherited) && !pastRounds[index + 1]?.inherited;
                   return (
-                    <div key={`round-${index}`} className="chat-round is-past">
-                      <div className="chat-message user-message">
-                        <div className="user-message-meta">
-                          <span>第 {index + 1} 轮</span>
-                          <RoundSource roundIndex={index} basedOn={round.basedOn} runs={round.runs} />
+                    <Fragment key={`round-${index}`}>
+                      <div className={`chat-round is-past ${round.inherited ? "is-inherited" : ""}`}>
+                        <div className="chat-message user-message">
+                          <div className="user-message-meta">
+                            <span>第 {index + 1} 轮</span>
+                            <RoundSource roundIndex={index} basedOn={round.basedOn} runs={round.runs} />
+                          </div>
+                          <p>{round.prompt}</p>
                         </div>
-                        <p>{round.prompt}</p>
+                        <WorkspaceProvider
+                          runs={round.runs}
+                          activeModelKey=""
+                          onSelectModel={(key) => setViewedRound({ index, modelKey: key })}
+                          appliedSkill={null}
+                          isGenerating={false}
+                          continueBasePageId=""
+                          renderPreview={renderPreview}
+                          pinnedModelKey={viewing ? viewedRound?.modelKey : undefined}
+                          trackUnseen={false}
+                        >
+                          <GenerationProgress
+                            history={{
+                              viewing,
+                              pickedKey: picked?.modelKey ?? "",
+                              nextLabel: `第 ${index + pickedBy + 2} 轮`,
+                              onView: () => setViewedRound((current) => (current?.index === index ? current : { index, modelKey: "" })),
+                            }}
+                          />
+                        </WorkspaceProvider>
                       </div>
-                      <WorkspaceProvider
-                        runs={round.runs}
-                        activeModelKey=""
-                        onSelectModel={(key) => setViewedRound({ index, modelKey: key })}
-                        appliedSkill={null}
-                        isGenerating={false}
-                        continueBasePageId=""
-                        renderPreview={renderPreview}
-                        pinnedModelKey={viewing ? viewedRound?.modelKey : undefined}
-                        trackUnseen={false}
-                      >
-                        <GenerationProgress
-                          history={{
-                            viewing,
-                            pickedKey: picked?.modelKey ?? "",
-                            nextLabel: `第 ${index + pickedBy + 2} 轮`,
-                            onView: () => setViewedRound((current) => (current?.index === index ? current : { index, modelKey: "" })),
-                          }}
-                        />
-                      </WorkspaceProvider>
-                    </div>
+                      {endsInherited && forkSource && (
+                        <div className="fork-divider" role="note">
+                          <span className="fork-divider-label">
+                            <BranchIcon />
+                            <span className="fork-divider-text">
+                              以上 {index + 1} 轮来自{forkSource.available ? "" : "已删除的会话"}「{forkSource.title}」
+                            </span>
+                          </span>
+                          {forkSource.available && (
+                            <button type="button" onClick={() => void restoreConversation(forkSource.conversationId)}>
+                              查看原会话
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </Fragment>
                   );
                 })}
                 <div className="chat-round is-current">
@@ -3140,6 +3223,16 @@ function mapConversationHistoryItem(item: ConversationListResponseItem): History
     nodeCount: item.node_count,
     status: mapBatchStatus(item.latest_batch_status),
     updatedAt: item.updated_at,
+    forkedFrom: item.forked_from ? mapForkSource(item.forked_from) : null,
+  };
+}
+
+function mapForkSource(source: ForkSourceResponse): ForkSource {
+  return {
+    conversationId: source.conversation_id,
+    title: source.title || "未命名页面",
+    roundNumber: source.round_number,
+    available: source.available,
   };
 }
 
@@ -3176,6 +3269,7 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
     prompt: batch.user_prompt || batch.prompt,
     basedOn: roundBase(batch),
     runs: buildRunsFromBatch(batch) as WorkspaceRun[],
+    inherited: Boolean(batch.inherited),
   }));
 
   const now = new Date().toISOString();
@@ -3190,6 +3284,7 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
     roundIndex: Math.max(0, batches.length - 1),
     pastRounds,
     currentBasedOn: latest ? roundBase(latest) : null,
+    forkSource: detail.forked_from ? mapForkSource(detail.forked_from) : null,
     createdAt: detail.created_at ?? now,
     updatedAt: detail.updated_at ?? now,
   };

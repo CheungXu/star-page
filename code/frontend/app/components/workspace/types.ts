@@ -56,6 +56,8 @@ export type WorkspaceRound = {
   prompt: string;
   basedOn: RoundBase | null;
   runs: WorkspaceRun[];
+  /** 分叉会话里从来源会话继承来的轮次。 */
+  inherited?: boolean;
 };
 
 /** 结果区的轮次切换。index 从 0 开始，最后一个是当前轮。 */

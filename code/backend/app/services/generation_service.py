@@ -26,6 +26,7 @@ from app.services.anon_service import AnonService
 from app.services.billing import BillingService
 from app.services.billing.account import SettleResult
 from app.services.consent_service import CONSENT_GRANTED, training_consent_for
+from app.services.conversation_tree import ForkSource, pick_fallback_parent, view_batches
 from app.services.document_extractor import (
     MAX_DOCUMENT_CONTEXT_CHARS,
     DocumentCompressionError,
@@ -103,6 +104,8 @@ class BatchCreation:
     batch_id: uuid.UUID
     kind: str
     runs: list[BatchRunRef] = field(default_factory=list)
+    # 这一轮分叉出了新会话时，记下分叉点所属的来源会话和轮次。
+    forked_from: ForkSource | None = None
 
 
 class GenerationService:
@@ -175,23 +178,53 @@ class GenerationService:
 
         # parent_for_model：每个模型的新节点接到哪个父节点。
         #  - 新会话(无 conversation_id)：根节点，父为空。
-        #  - 续写且指定了基点 base_page_id：分支——所有模型都从该节点派生。
-        #  - 续写但未指定基点：并行续写——每个模型各自接上自己在本会话的最新节点。
+        #  - 续写且指定了基点 base_page_id：所有模型都从该节点派生。基点在最后一轮就留在本会话；
+        #    在更早的轮次则分叉成一条新会话，原会话保持不变。
+        #  - 续写但未指定基点：并行续写——都从最近一轮接着改，见 _parallel_parents。
         parent_for_model: dict[str, uuid.UUID | None]
+        forked_from: ForkSource | None = None
         if conversation_id is not None:
             conversation = await self.session.get(Conversation, conversation_id)
             if conversation is None or conversation.owner_user_id != user.id or conversation.deleted_at is not None:
                 raise ValueError("会话不存在")
-            conversation.updated_at = datetime.now(UTC)
             kind = "continue"
+            view = await view_batches(self.session, conversation)
 
             if base_page_id is not None:
                 base_page = await self.session.get(Page, base_page_id)
-                if base_page is None or base_page.conversation_id != conversation.id:
+                view_ids = [batch.id for batch in view]
+                if base_page is None or base_page.deleted_at is not None or base_page.batch_id not in view_ids:
                     raise ValueError("续写基点节点不存在或不属于该会话")
                 parent_for_model = {key: base_page_id for key in model_keys}
+                base_position = view_ids.index(base_page.batch_id)
+                if base_position < len(view) - 1:
+                    source_batch = view[base_position]
+                    source = (
+                        conversation
+                        if source_batch.conversation_id == conversation.id
+                        else await self.session.get(Conversation, source_batch.conversation_id)
+                    )
+                    forked_from = ForkSource(
+                        conversation_id=source_batch.conversation_id,
+                        title=source.title if source else conversation.title,
+                        round_number=base_position + 1,
+                        available=source is not None and source.deleted_at is None,
+                    )
+                    conversation = Conversation(
+                        owner_user_id=user.id,
+                        title=title,
+                        origin="fork",
+                        scene_key=conversation.scene_key,
+                        utm_source=conversation.utm_source,
+                        forked_from_conversation_id=source_batch.conversation_id,
+                        forked_from_batch_id=source_batch.id,
+                        fork_base_page_id=base_page.id,
+                    )
+                    self.session.add(conversation)
+                    await self.session.flush()
             else:
-                parent_for_model = await self._latest_node_per_model(conversation.id, model_keys)
+                parent_for_model = await self._parallel_parents(view, model_keys)
+            conversation.updated_at = datetime.now(UTC)
         else:
             conversation = Conversation(
                 owner_user_id=user.id,
@@ -295,6 +328,7 @@ class GenerationService:
             batch_id=batch.id,
             kind=kind,
             runs=runs,
+            forked_from=forked_from,
         )
 
     def _page_url(self, page: Page) -> str:
@@ -331,20 +365,22 @@ class GenerationService:
             current_id = node.parent_page_id
         return None
 
-    async def _latest_node_per_model(
-        self, conversation_id: uuid.UUID, model_keys: list[str]
+    async def _parallel_parents(
+        self, view: list[GenerationBatch], model_keys: list[str]
     ) -> dict[str, uuid.UUID | None]:
-        """并行续写：取会话内每个模型最新的节点作为父节点；模型若是新加入则父为空。"""
+        """并行续写：都从最近一轮接着改，不会串到别的分支，也不会跳回更早的轮次。
+        参与了最近一轮且已完成的模型接自己那一版；新加入、上一轮没选或上一轮失败的模型，
+        接最近一轮第一个已完成的结果。每轮可以自由增减模型。"""
+        if not view:
+            return {key: None for key in model_keys}
+        latest_batch = view[-1]
         result = await self.session.execute(
-            select(Page)
-            .where(Page.conversation_id == conversation_id, Page.deleted_at.is_(None))
-            .order_by(Page.created_at.desc())
+            select(Page).where(Page.batch_id == latest_batch.id, Page.deleted_at.is_(None))
         )
-        latest_by_model: dict[str, uuid.UUID] = {}
-        for page in result.scalars().all():
-            if page.model_key and page.model_key not in latest_by_model:
-                latest_by_model[page.model_key] = page.id
-        return {key: latest_by_model.get(key) for key in model_keys}
+        pages = list(result.scalars().all())
+        ready_by_model = {page.model_key: page.id for page in pages if page.model_key and page.status == "ready"}
+        fallback = pick_fallback_parent(pages, list(latest_batch.selected_models or []))
+        return {key: ready_by_model.get(key, fallback) for key in model_keys}
 
     async def _build_llm_messages(self, task: GenerationTask, page: Page) -> list[LlmMessage]:
         """构造发给模型的消息。

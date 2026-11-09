@@ -10,7 +10,7 @@ from app.core.auth import get_client_ip, get_optional_actor
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.urls import build_page_url
-from app.models.entities import Conversation, GenerationTask, Page, PagePermission, PageVersion, PageViewEvent
+from app.models.entities import GenerationTask, Page, PagePermission, PageVersion, PageViewEvent
 from app.schemas.pages import PageHistoryItem, PageResponse
 from app.services.analytics import record_page_view
 from app.services.analytics.tracking import is_preview_bot
@@ -134,12 +134,8 @@ async def serve_page(
             raise HTTPException(status_code=404, detail="页面不存在")
 
         # 节点必须确实归属于路径中的会话，避免伪造/错配的层级链接。
+        # 是否已删只看节点自己：删会话时会级联软删节点，但仍被分叉会话继承的历史节点要保留可看。
         if page.conversation_id != conversation_id:
-            raise HTTPException(status_code=404, detail="页面不存在")
-
-        # 所属会话被软删时，节点链接也应失效（删会话已级联软删节点，此处为防御冗余）。
-        conversation = await session.get(Conversation, conversation_id)
-        if conversation is None or conversation.deleted_at is not None:
             raise HTTPException(status_code=404, detail="页面不存在")
 
         if page.moderation_status == "blocked":

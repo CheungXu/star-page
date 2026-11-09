@@ -78,7 +78,7 @@ export function RoundSource({
   }
   const shown = runs.slice(0, 4);
   return (
-    <span className="round-source is-parallel" title="每个模型接着自己上一轮的结果修改">
+    <span className="round-source is-parallel" title="接着上一轮的结果修改：上一轮用过的模型改自己那版，新加入的模型接上一轮的结果">
       <svg viewBox="0 0 12 12" aria-hidden="true">
         <path d="M1.5 3.75h7.5M7.5 2.25 9 3.75 7.5 5.25M1.5 8.25h7.5M7.5 6.75 9 8.25 7.5 9.75" />
       </svg>

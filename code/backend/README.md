@@ -53,21 +53,32 @@ journalctl -u star-page-backend.service -f
 - `GET /api/auth/me`：读取当前登录用户。
 - `POST /api/auth/logout`：注销当前 Session。
 - `POST /api/auth/password`：登录后设置或更新密码。
-- `POST /api/generations`：创建页面生成任务。
+- `POST /api/generations`：创建页面生成任务。带 `conversation_id` + `base_page_id` 续写时，基点在最后一轮就留在本会话；基点在更早的轮次则**自动分叉出一条新会话**（见下方「会话分叉」），响应里的 `conversation_id` 是新会话，`forked_from` 给出来源会话与轮次。
 - `GET /api/generations/{task_id}/events`：通过 SSE 推送思考过程和完成状态。
-- `GET /api/conversations`：查询当前登录用户的会话历史列表，支持 `favorite_only=true` 和 `q=关键词`。
-- `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树和多轮回看。每个批次带 `kind` / `base_page_id`，每个节点带用量 `usage`、扣费 `billing` 和生成用时 `duration_ms`（任务 `finished_at - started_at`，未结束为空）。
+- `GET /api/conversations`：查询当前登录用户的会话历史列表，支持 `favorite_only=true` 和 `q=关键词`。分叉会话带 `forked_from`（来源会话 id、标题、第几轮、来源是否还在）。
+- `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树和多轮回看。`batches` 含从来源会话继承来的轮次（`inherited=true`，排在前面）。每个批次带 `kind` / `base_page_id`，每个节点带用量 `usage`、扣费 `billing` 和生成用时 `duration_ms`（任务 `finished_at - started_at`，未结束为空）。
 - `PATCH /api/conversations/{conversation_id}`：更新会话收藏状态。
-- `DELETE /api/conversations/{conversation_id}`：软删除会话，写入 `deleted_at` 后不再出现在历史列表。
+- `DELETE /api/conversations/{conversation_id}`：软删除会话，写入 `deleted_at` 后不再出现在历史列表；其下节点同步软删，但仍被未删除分叉会话继承的那段历史保留。
 - `GET /api/models`：返回多模型目录（含可用性）供前端勾选。
 - `GET /api/pages`：旧版页面级历史接口，当前左侧历史已切到会话级接口。
 - `GET /api/pages/{page_id}`：获取页面元数据。
-- `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。会话被软删后其下节点链接同步失效（404）。返回前会补上 Open Graph 标题和描述；`?print=1` 会在加载后调起打印。
+- `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。是否失效只看节点自己的 `deleted_at`：删会话会级联软删节点（404），被分叉会话继承的历史节点除外。返回前会补上 Open Graph 标题和描述；`?print=1` 会在加载后调起打印。
 - `GET /api/scenes`、`GET /api/scenes/{key}`：场景目录与案例。生成请求可带 `scene_key`，新建会话时按 `config/scenes.json` 强制技能。
 - `POST /api/publications`、`GET /u/{slug}`：把某个已完成节点发布成固定链接。重新发布只切换版本。同路径下有 `og.png`、`poster.png`、`qr.png`。
 - `GET /assets/{id}`：用户上传的头像、二维码等图片，供生成页引用。
 - `GET /api/pages/{page_id}/stats`：作者查看该会话的外部访问次数。
 - `GET /api/admin/scenes/funnel`、`POST /api/admin/scenes/showcases`：分场景漏斗，以及把公开页标成案例。
+
+### 会话分叉
+
+库表见迁移 `019_conversation_fork.sql`，逻辑集中在 `app/services/conversation_tree.py`。
+
+- **一条会话 = 生成树上的一条线**。从更早一轮的结果继续时，`create_batch` 新建 `origin='fork'` 的会话，用 `forked_from_conversation_id` / `forked_from_batch_id` / `fork_base_page_id` 接回来源；分叉点及之前的轮次继承、不复制，之后的轮次归新会话。指针总是指向**真正拥有那一轮的会话**（在分叉会话里选继承来的轮次再分叉，指针越过中间会话直接指回去）。
+- **会话视图**：`view_batches` 沿分叉指针往上拼出完整轮次。续写的基点必须在这个视图里；判断是否分叉看基点批次是不是视图的最后一轮。
+- **发给模型的上下文**不受影响：仍沿 `parent_page_id` 回溯，节点父指针可以跨会话。
+- **并行续写**（不选基点，`_parallel_parents`）：都从当前会话视图的最近一轮接着改，不会串到别的分支，也不会跳回更早的轮次。参与了最近一轮且已完成的模型接自己那一版；新加入、上一轮没选或上一轮失败的模型，接最近一轮第一个已完成的结果（按该轮模型顺序）。所以每轮可以自由增减、更换模型。
+- **删除**：`release_deleted_pages` 只软删不再被任何未删除分支继承的节点；同时把分叉链上游同样已删的会话重新结算一次，最后一个继承者被删后那段历史才删掉。
+- **测试**：`tests/test_conversation_tree.py` 是纯逻辑单测；`tests/test_conversation_fork_db.py` 需要一个跑过迁移的空库，设 `TEST_DATABASE_URL` 后运行，未设置时跳过。可以用临时容器：`docker run -d --rm --name sp-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=stars_page_test -p 127.0.0.1:55432:5432 postgres:16-alpine`，再用 `DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/stars_page_test python -m app.db.migrate` 建表。**不要指向线上库**。
 
 ### 计费接口（积分制，1 元 = 100 积分）
 
