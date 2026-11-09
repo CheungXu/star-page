@@ -2166,7 +2166,6 @@ export default function HomePage() {
 
   function startContinueFrom(run: RunState) {
     setContinueBase({ pageId: run.pageId, modelLabel: run.modelLabel });
-    setPrompt("");
     window.requestAnimationFrame(() => {
       const textarea = document.querySelector<HTMLTextAreaElement>(".composer-wrap .prompt-card textarea");
       textarea?.focus();
