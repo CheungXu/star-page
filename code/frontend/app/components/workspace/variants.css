@@ -536,22 +536,25 @@ body.is-resizing-panes iframe {
 .vb-status-head .vb-pill-text strong { white-space: nowrap; }
 
 /* 多轮：已结束的轮次在对话栏里退成一张淡卡，右侧在看它时描一圈主色 */
-.chat-round.is-past {
+/* 对话节奏：一轮内「需求 → 回复」贴近（10px），轮与轮之间拉开（26px），一眼能看出分组 */
+.chat-round {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
+
+.layout-b .conversation-scroll { gap: 26px; }
 
 /* 对话栏是纵向 flex 且可滚动：卡片带 overflow:hidden 会被允许压扁，内容超高时必须禁止收缩 */
 .layout-b .conversation-scroll > *,
-.chat-round.is-past > * {
+.chat-round > * {
   flex-shrink: 0;
 }
 
 /* 回复气泡：靠左、宽度随内容，左下角收成尖角，和右下尖角的用户气泡一来一回；质感与用户气泡同一套 */
 .layout-b .conversation-scroll .vb-status {
   align-self: flex-start;
-  width: calc(100% - 28px);
+  width: min(calc(100% - 28px), 328px);
   margin-top: 0;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 16px 16px 16px 4px;
@@ -567,6 +570,15 @@ body.is-resizing-panes iframe {
 .layout-b .conversation-scroll .vb-status.is-open { width: 100%; }
 
 .layout-b .conversation-scroll .vb-status { container-type: inline-size; }
+
+.layout-b .conversation-scroll .vb-pill {
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.layout-b .conversation-scroll .vb-pill-text { gap: 3px; }
+
+.layout-b .conversation-scroll .vb-more-btn { padding-right: 14px; }
 
 /* 栏宽拖到很窄时，「明细」只留箭头，把位置让给摘要数字 */
 @container (max-width: 300px) {

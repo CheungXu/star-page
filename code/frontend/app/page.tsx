@@ -2920,6 +2920,7 @@ export default function HomePage() {
                     </div>
                   );
                 })}
+                <div className="chat-round is-current">
                 <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`} data-anim-stagger>
                   <div className="user-message-meta">
                     <span>{pastRounds.length > 0 ? `第 ${roundIndex + 1} 轮 · 当前` : "你的需求"}</span>
@@ -2944,6 +2945,7 @@ export default function HomePage() {
                 </div>
 
                 <ProgressSlot />
+                </div>
               </div>
               <div className="composer-wrap">{renderPromptForm(true)}</div>
             </aside>
