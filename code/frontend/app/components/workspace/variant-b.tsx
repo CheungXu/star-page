@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Ring, StatusMark } from "./bits";
+import { MiniAvatar, Ring, StatusMark } from "./bits";
 import { useArrowModelNav, useWorkspace } from "./context";
 import {
   batchElapsed,
@@ -82,6 +82,15 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
           {credits.charged}
         </>
       )}
+      {picked && (
+        <b
+          className="vb-pill-picked"
+          title={`选用「${picked.modelLabel}」${history?.nextLabel ? `，${history.nextLabel}基于它继续修改` : ""}`}
+        >
+          <MiniAvatar modelKey={picked.modelKey} label={picked.modelLabel} />
+          选用
+        </b>
+      )}
     </>
   );
   // 多轮时点卡片＝在右侧显示这一轮；单轮时点卡片＝展开明细。
@@ -120,12 +129,7 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
               {title}
               {clockText && <em>{clockText}</em>}
             </strong>
-            {!open && <span>{sub}</span>}
-            {picked && (
-              <b className="vb-pill-picked" title={history?.nextLabel ? `${history.nextLabel}基于它继续修改` : undefined}>
-                选用「{picked.modelLabel}」
-              </b>
-            )}
+            <span className="vb-pill-sub">{open ? <span className="vb-pill-hint">点模型行，右侧切换到该版本</span> : sub}</span>
           </span>
           {view && (
             <span className={`vb-showing ${view.viewing ? "" : "is-hint"}`} aria-hidden={!view.viewing}>
@@ -361,20 +365,29 @@ function RoundTabs() {
   );
 }
 
-function PastRoundBanner() {
+/** 回看旧轮时挂在标题里的胶囊：左半说明在看哪一轮，右半一键回到最新。 */
+function PastRoundChip() {
   const { roundNav } = useWorkspace();
   if (!roundNav) return null;
   const latest = roundNav.items.length - 1;
   if (roundNav.viewing >= latest) return null;
+  const live = roundNav.items[latest]?.live;
   return (
-    <div className="vb-round-banner">
-      <span>
-        这是<b>第 {roundNav.viewing + 1} 轮</b>的结果，点任一版本的「以此结果继续」，可以从这里接着改
+    <span className="vb-past-chip" title="可以在任一版本上点「以此结果继续」，从这一轮接着改">
+      <span className="vb-past-chip-label">
+        <svg viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M2.2 6a3.8 3.8 0 1 0 1.1-2.7M2.2 1.8v1.9h1.9M6 3.8V6l1.5 1" />
+        </svg>
+        正在回看 第 {roundNav.viewing + 1} 轮
       </span>
       <button type="button" onClick={() => roundNav.onView(latest)}>
-        回到第 {latest + 1} 轮{roundNav.items[latest]?.live ? "（生成中）" : ""}
+        {live && <i aria-label="生成中" />}
+        回到第 {latest + 1} 轮
+        <svg viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M3.5 2 6.5 5l-3 3" />
+        </svg>
       </button>
-    </div>
+    </span>
   );
 }
 
@@ -412,6 +425,7 @@ export function VariantBResults() {
           {roundNav && roundNav.items.length > 1 ? "" : "结果预览 · "}
           {runs.length} 个版本 · {done} 已完成
         </h2>
+        <PastRoundChip />
         <div className="vb-heading-tools">
           <RoundTabs />
           {many && (
@@ -421,7 +435,6 @@ export function VariantBResults() {
           )}
         </div>
       </div>
-      <PastRoundBanner />
       {!many && (
         <div className="preview-grid" style={{ gridTemplateColumns: `repeat(${Math.max(runs.length, 1)}, minmax(0, 1fr))` }}>
           {runs.map((run) => (

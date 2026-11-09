@@ -28,7 +28,7 @@ export function StatusMark({ status }: { status: WorkspaceRun["status"] }) {
   return <span className="vp-mark is-run" />;
 }
 
-function MiniAvatar({ modelKey, label }: { modelKey: string; label: string }) {
+export function MiniAvatar({ modelKey, label }: { modelKey: string; label: string }) {
   return (
     <span className="round-source-avatar" style={{ "--accent": modelAccent(modelKey) } as CSSProperties} title={label}>
       {modelGlyph(label)}

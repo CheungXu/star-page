@@ -540,10 +540,30 @@ body.is-resizing-panes iframe {
   gap: 8px;
 }
 
-.chat-round.is-past .user-message {
-  background: rgba(15, 23, 42, 0.03);
-  box-shadow: none;
+/* 用户气泡：左上角一层柔光 + 斜向渐变 + 顶部内高光，做出纸张般的层次；当前轮偏蓝，历史轮偏冷灰 */
+.layout-b .user-message {
+  border: 1px solid rgba(53, 99, 233, 0.16);
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 55%),
+    linear-gradient(155deg, #f4f7ff 0%, #e6edff 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 1px 2px rgba(53, 99, 233, 0.06),
+    0 12px 26px -20px rgba(53, 99, 233, 0.6);
 }
+
+.layout-b .chat-round.is-past .user-message {
+  border-color: rgba(15, 23, 42, 0.07);
+  background:
+    radial-gradient(120% 90% at 0% 0%, #fff 0%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(155deg, #fbfcfe 0%, #eff2f7 100%);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 24px -20px rgba(15, 23, 42, 0.4);
+}
+
+.layout-b .user-message-meta > span:first-child { letter-spacing: 0.02em; }
 
 .chat-round.is-past .user-message-meta > span:first-child { color: var(--color-text-secondary); }
 
@@ -564,24 +584,37 @@ body.is-resizing-panes iframe {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 10%, transparent);
 }
 
-.vb-pill-text > span {
+/* 卡片统一两行：标题 + 一行摘要（「选用」也收进这一行），所以每张卡高度一致 */
+.vb-pill-sub {
+  display: block;
+  height: 18px;
   overflow: hidden;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.vb-pill-picked {
-  overflow: hidden;
-  margin-top: 2px;
+.vb-pill-hint { color: var(--color-text-muted); font-weight: 600; }
+
+.vb-pill-text .vb-pill-picked {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0 7px 0 2px;
+  vertical-align: top;
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.09);
   color: #6d28d9;
   font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 750;
 }
 
-.vb-pill-picked::before {
-  content: "↳ ";
+.vb-pill-text .vb-pill-picked .round-source-avatar {
+  border-color: rgba(255, 255, 255, 0.9);
+  color: var(--accent);
 }
 
 /* 多轮时整张卡可点：点哪轮右侧就显示哪轮；显示中的那张挂「显示中」，其余悬停时浮出「查看」 */
@@ -1174,34 +1207,81 @@ body.is-resizing-panes iframe {
   animation: dot-breathe 1.5s ease-in-out infinite;
 }
 
-.vb-round-banner {
-  display: flex;
+/* 回看模式胶囊：深色底让"现在不是最新"一眼可辨，右半是回到最新的按钮 */
+.vb-past-chip {
+  display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-  padding: 8px 12px;
-  border: 1px solid #fde68a;
-  border-radius: 10px;
-  background: #fffbeb;
-  color: #92400e;
+  gap: 2px;
+  margin-left: 12px;
+  padding: 2px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 6px 16px -8px rgba(15, 23, 42, 0.55);
   font-size: 12px;
-  animation: vb-mini-in 0.2s ease;
+  font-weight: 700;
+  animation: vb-chip-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.vb-round-banner b { font-weight: 800; }
+@keyframes vb-chip-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
 
-.vb-round-banner button {
-  flex-shrink: 0;
-  margin-left: auto;
-  padding: 3px 10px;
+.vb-past-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 0 9px;
+  color: #fcd34d;
+  white-space: nowrap;
+}
+
+.vb-past-chip svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.vb-past-chip-label svg { width: 12px; height: 12px; stroke-width: 1.3; }
+
+.vb-past-chip button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px 0 11px;
   border: 0;
   border-radius: 999px;
-  background: #fff;
-  color: var(--color-primary-active);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
   font: inherit;
-  font-weight: 750;
+  white-space: nowrap;
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  transition: background 0.15s ease;
+}
+
+.vb-past-chip button:hover { background: rgba(255, 255, 255, 0.22); }
+
+.vb-past-chip button svg {
+  width: 9px;
+  height: 9px;
+  stroke-width: 1.6;
+  transition: transform 0.15s ease;
+}
+
+.vb-past-chip button:hover svg { transform: translateX(2px); }
+
+.vb-past-chip button i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
+  animation: dot-breathe 1.5s ease-in-out infinite;
 }
 
 .vb-carousel-btn,
@@ -1756,6 +1836,8 @@ body.is-resizing-panes iframe {
   .vb-pip.is-live span,
   .vb-avatar::before,
   .vb-rounds i,
+  .vb-past-chip,
+  .vb-past-chip button i,
   .vb-mini { animation: none; }
   .va-total span,
   .va-bar span,
