@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Ring, StatusMark } from "./bits";
 import { useArrowModelNav, useWorkspace } from "./context";
 import {
@@ -49,6 +56,7 @@ export function VariantBProgress() {
   const tokens = sumOutputTokens(runs);
   const clockText = clock === null ? "" : isGenerating ? formatClock(clock) : formatDuration(clock);
   const credits = sumCredits(runs);
+  const insights = batchInsights(runs, elapsed);
   const title = isGenerating ? `${runs.length} 个模型生成中` : `${done}/${runs.length} 已完成`;
   const sub = isGenerating
     ? `已写 ${formatTokens(tokens)} tokens`
@@ -81,6 +89,7 @@ export function VariantBProgress() {
                 key={run.taskId || run.modelKey}
                 run={run}
                 active={run.modelKey === activeModelKey}
+                insights={insights}
                 onSelect={() => selectModel(run.modelKey)}
               />
             ))}
@@ -89,7 +98,16 @@ export function VariantBProgress() {
             <span>合计{credits.discount > 0 ? ` · 已优惠 ${credits.discount}` : ""}</span>
             <span>{formatTokens(tokens)}</span>
             <span>{shortDuration(clock)}</span>
-            <span className={credits.hasBilling ? "is-charged" : ""}>{credits.hasBilling ? credits.charged : "…"}</span>
+            <span className={credits.hasBilling ? "is-charged" : ""}>
+              {credits.hasBilling ? (
+                <>
+                  <CoinIcon />
+                  {credits.charged}
+                </>
+              ) : (
+                "…"
+              )}
+            </span>
           </div>
         </div>
       )}
@@ -119,7 +137,64 @@ function shortDuration(ms: number | null): string {
   return `${Math.floor(total / 60)}分${String(total % 60).padStart(2, "0")}`;
 }
 
-function MiniRow({ run, active, onSelect }: { run: WorkspaceRun; active: boolean; onSelect: () => void }) {
+type BatchInsights = { maxTokens: number; fastestKey: string; cheapestKey: string };
+
+function batchInsights(runs: WorkspaceRun[], elapsedOf: (run: WorkspaceRun) => number | null): BatchInsights {
+  const maxTokens = Math.max(1, ...runs.map(outputTokenCount));
+  const finished = runs.filter((run) => run.status === "completed");
+  if (finished.length < 2) return { maxTokens, fastestKey: "", cheapestKey: "" };
+  const pick = (score: (run: WorkspaceRun) => number | null | undefined) => {
+    let best: WorkspaceRun | null = null;
+    let bestScore = Infinity;
+    for (const run of finished) {
+      const value = score(run);
+      if (typeof value === "number" && value < bestScore) {
+        best = run;
+        bestScore = value;
+      }
+    }
+    return best?.modelKey ?? "";
+  };
+  return {
+    maxTokens,
+    fastestKey: pick(elapsedOf),
+    cheapestKey: pick((run) => run.usageSummary?.creditsCharged),
+  };
+}
+
+function avatarGlyph(label: string): string {
+  const first = label.trim().charAt(0);
+  return /[a-z]/i.test(first) ? first.toUpperCase() : first;
+}
+
+function ModelAvatar({ run }: { run: WorkspaceRun }) {
+  return (
+    <span className={`vb-avatar is-${run.status}`} style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
+      {avatarGlyph(run.modelLabel)}
+      {run.status === "completed" && <i className="vb-avatar-badge">✓</i>}
+      {run.status === "failed" && <i className="vb-avatar-badge">!</i>}
+    </span>
+  );
+}
+
+const CoinIcon = () => (
+  <svg className="vb-coin" viewBox="0 0 12 12" aria-hidden="true">
+    <circle cx="6" cy="6" r="5.25" />
+    <path d="M4 6h4M6 4v4" />
+  </svg>
+);
+
+function MiniRow({
+  run,
+  active,
+  insights,
+  onSelect,
+}: {
+  run: WorkspaceRun;
+  active: boolean;
+  insights: BatchInsights;
+  onSelect: () => void;
+}) {
   const { elapsed } = useWorkspace();
   const progress = estimateProgress(run, elapsed(run));
   const tokens = outputTokenCount(run);
@@ -127,11 +202,14 @@ function MiniRow({ run, active, onSelect }: { run: WorkspaceRun; active: boolean
   const charged = run.usageSummary?.creditsCharged;
   const discount = run.usageSummary?.discountCredits;
   const failedAt = run.status === "failed" ? PHASES.findIndex((phase) => progress < phase.to) : -1;
+  const isFastest = insights.fastestKey === run.modelKey;
+  const isCheapest = insights.cheapestKey === run.modelKey;
+  const stage = SHORT_STAGE[stageLabel(run)] ?? stageLabel(run);
 
   return (
     <li className={`vb-mini-row is-${run.status} ${active ? "is-active" : ""}`}>
       <button type="button" onClick={onSelect} title={run.errorMessage || `在右侧查看 ${run.modelLabel}`}>
-        <StatusMark status={run.status} />
+        <ModelAvatar run={run} />
         <span className="vb-mini-name">{run.modelLabel}</span>
         <span className="vb-mini-phase">
           <span className="vb-pips" aria-label={`阶段：${stageLabel(run)}`}>
@@ -149,15 +227,36 @@ function MiniRow({ run, active, onSelect }: { run: WorkspaceRun; active: boolean
               );
             })}
           </span>
-          <span className="vb-mini-stage">{SHORT_STAGE[stageLabel(run)] ?? stageLabel(run)}</span>
+          {isFastest || isCheapest ? (
+            <span className="vb-tags">
+              {isFastest && <em className="vb-tag is-fast">最快</em>}
+              {isCheapest && <em className="vb-tag is-cheap">最省</em>}
+            </span>
+          ) : run.status === "completed" ? null : (
+            <span className="vb-mini-stage">{stage}</span>
+          )}
         </span>
-        <span className={`vb-mini-cell ${tokens > 0 ? "" : "is-empty"}`}>{tokens > 0 ? formatTokens(tokens) : "—"}</span>
+        <span className={`vb-mini-cell is-tokens ${tokens > 0 ? "" : "is-empty"}`}>
+          {tokens > 0 ? formatTokens(tokens) : "—"}
+          <span className="vb-meter" aria-hidden="true">
+            <span style={{ width: `${(tokens / insights.maxTokens) * 100}%` }} />
+          </span>
+        </span>
         <span className="vb-mini-cell is-time">{shortDuration(elapsed(run))}</span>
         <span
           className={`vb-mini-cell is-cost ${typeof charged === "number" ? "is-charged" : "is-empty"}`}
           title={discount ? `已优惠 ${discount} 积分` : undefined}
         >
-          {typeof charged === "number" ? charged : pending ? "…" : "—"}
+          {typeof charged === "number" ? (
+            <>
+              <CoinIcon />
+              {charged}
+            </>
+          ) : pending ? (
+            "…"
+          ) : (
+            "—"
+          )}
           {discount ? <i aria-label="有优惠" /> : null}
         </span>
       </button>

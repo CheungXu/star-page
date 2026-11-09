@@ -586,7 +586,7 @@ body.is-resizing-panes iframe {
 
 /* 展开明细：左侧"谁 + 走到哪"，右侧三列数字固定宽度、右对齐，表头只写一次 */
 .vb-status {
-  --mini-cols: 16px minmax(0, 1fr) 40px 44px 40px;
+  --mini-cols: 24px minmax(0, 1fr) 38px 34px 42px;
 }
 
 .vb-mini {
@@ -614,7 +614,7 @@ body.is-resizing-panes iframe {
 .vb-mini-row button {
   display: grid;
   grid-template-columns: var(--mini-cols);
-  column-gap: 10px;
+  column-gap: 8px;
   align-items: center;
   padding-left: 8px;
   padding-right: 8px;
@@ -651,11 +651,141 @@ body.is-resizing-panes iframe {
 .vb-mini-row button:hover { background: var(--color-surface-soft); }
 .vb-mini-row.is-active button { background: var(--color-primary-soft); }
 
-.vb-mini-row .vp-mark {
-  grid-row: 1;
-  width: 16px;
-  height: 16px;
-  font-size: 9px;
+/* 模型头像：首字 + 专属色；生成中外圈转一道光，完成/失败在右下角挂小徽标 */
+.vb-avatar {
+  position: relative;
+  display: grid;
+  grid-row: 1 / 3;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 14%, #fff);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.vb-avatar.is-thinking::before,
+.vb-avatar.is-creating::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: vp-spin 0.9s linear infinite;
+}
+
+.vb-avatar.is-failed {
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--color-text-muted);
+}
+
+.vb-avatar-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  width: 12px;
+  height: 12px;
+  place-items: center;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  background: var(--color-success);
+  color: #fff;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.vb-avatar.is-failed .vb-avatar-badge { background: var(--color-danger); }
+
+.vb-mini-row.is-active .vb-avatar-badge { border-color: var(--color-primary-soft); }
+
+/* 至少两个模型完成后，给用时最短、积分最少的打标，替代"完成"二字 */
+.vb-tags {
+  display: inline-flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.vb-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.vb-tag.is-fast { background: rgba(53, 99, 233, 0.1); color: var(--color-primary-active); }
+.vb-tag.is-cheap { background: rgba(22, 163, 74, 0.1); color: #15803d; }
+
+.vb-tag.is-fast::before {
+  content: "";
+  width: 6px;
+  height: 8px;
+  background: currentColor;
+  clip-path: polygon(60% 0, 0 58%, 45% 58%, 35% 100%, 100% 40%, 55% 40%);
+}
+
+.vb-tag.is-cheap::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 6px 0;
+  background: currentColor;
+}
+
+/* 输出列：数字下挂一根细条，按本轮最多的那个模型做比例 */
+.vb-mini-cell.is-tokens {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.vb-meter {
+  display: block;
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.vb-meter span {
+  display: block;
+  height: 100%;
+  margin-left: auto;
+  border-radius: inherit;
+  background: var(--color-text-muted);
+  transition: width 0.4s ease;
+}
+
+.vb-mini-row.is-active .vb-meter span { background: var(--color-primary); }
+
+.vb-coin {
+  width: 11px;
+  height: 11px;
+  margin-right: 3px;
+  vertical-align: -1px;
+  fill: #fbbf24;
+  stroke: #b45309;
+  stroke-width: 1;
+}
+
+.vb-coin path {
+  fill: none;
+  stroke: #92400e;
+  stroke-width: 1.1;
+  stroke-linecap: round;
 }
 
 .vb-mini-name {
@@ -678,6 +808,7 @@ body.is-resizing-panes iframe {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .vb-mini-cell {
@@ -741,7 +872,7 @@ body.is-resizing-panes iframe {
 
 .vb-pip {
   position: relative;
-  width: 16px;
+  width: 14px;
   height: 4px;
   overflow: hidden;
   border-radius: 999px;
@@ -1334,6 +1465,7 @@ body.is-resizing-panes iframe {
   .vp-mark.is-run,
   .vb-pill-dot.is-run,
   .vb-pip.is-live span,
+  .vb-avatar::before,
   .vb-mini { animation: none; }
   .va-total span,
   .va-bar span,
