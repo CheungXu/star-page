@@ -19,10 +19,10 @@
 - `generated-page-js-sandbox-and-security.md`：LLM 生成页放开 CSS/JS 时的"隔离优先"安全原则——不清洗用户 JS 而用浏览器原生沙箱隔离；两道独立的墙（`sandbox` 不透明 origin 防偷主站凭证、`connect-src 'none'`/`form-action 'none'` 防钓鱼/信标）、sandbox 管不到 fetch 的关键认知、无需新域名的响应头落地方式、清洗定位转变、默认禁网 + 未来 opt-in 与独立内容域名的演进。
 - `koc-distribution-and-anti-ban-sop.md`：通告平台 KOC 派单冷启动与防封引流方法论——物料有限时先「少量垂直中号一人一套」测款再放量；渠道梯队（螃蟹/红通告等通告小程序、数据商、蒲公英、避开野生兼职与已下架代发 App）；合规与 UTM 前置、30 秒筛号、防查重交付纪律、正文去公关化与置顶评论引导、双端对账结算。
 - `llm-provider-abstraction.md`：LLM Provider 抽象原则，按 OpenAI / Anthropic 协议族接入不同模型供应商，并统一处理重试和空输出；含"多模型目录 + 仅密钥 env + 参数三层覆盖（defaults/params/extra_body）+ 密钥缺失自动不可选"的配置规划、火山方舟 doubao 接入，以及**百炼托管第三方模型的 model ID 约定**和**模型换代检查清单**（先区分「未开通」与「ID 不存在」，思考模型探活要留足输出额度，高峰/低峰只按高峰入账，槽位 key 与展示名可以分开）。
-- `multi-model-generation-tree.md`：多模型并行生成与生成树结构（会话=树、批次=一轮、Node=Page 可独立分享），含"合并另起新会话避免 DAG"、N 路 SSE 并行进度展示与批次状态聚合、扩展性注意点。
+- `multi-model-generation-tree.md`：多模型并行生成与生成树结构（会话=树、批次=一轮、Node=Page 可独立分享），含"合并另起新会话避免 DAG"、N 路 SSE 并行进度展示与批次状态聚合、多轮回看与三种来源标识（新建/基于/各自续改）、节点 `duration_ms` 持久化与恢复时不自动预填待续改基点。
 - `product-ops-metrics-and-north-star.md`：产品运营指标体系与北极星方法论（创作/分享/按次消耗类产品通用）——北极星用「价值闭环复合指标」而非 DAU/注册数、11 个指标域分层、明细+聚合两层数据架构与读取分流、埋点采集(白名单+限频+sendBeacon 静默+IP 仅哈希)，以及「注册用户须与匿名分开、区间 UV/distinct 不可逐日相加、聚合总量行与维度行分存、cohort 未到期 period 留空、活跃口径去重、成功率分母口径统一」等坑。
 - `multi-model-preview-comparison.md`：多模型结果预览对比设计——复用固定视口缩放、1-2 个并排、3 个以上大舞台加缩略条、左侧进度与右侧联动、对比模式加宽预览栏、各单元独立信息与动作、先完成先展示。
-- `multi-port-static-preview-for-design-variants.md`：前端"方案 A/B/C 对比"模式，单进程 Python `http.server` + `ThreadingTCPServer` 同时绑定多个端口、每个端口默认入口指向对应方案 HTML，零依赖、零编译、零构建。
+- `multi-port-static-preview-for-design-variants.md`：前端"方案 A/B/C 对比"模式——静态视觉对比用单进程 Python `http.server` + `ThreadingTCPServer` 多端口绑定；复杂 React 交互对比用同一 Worktree + `NEXT_DIST_DIR` 多端口 `next dev` + `cp -al` 硬链接 `node_modules`（绕过 Turbopack 软链根路径限制）+ 确定性 Demo URL 参数（`?demo=N&rounds=R&at=S`）。
 - `png-logo-transparent-and-trim.md`：白底 PNG logo 透明化 + 自动裁剪流程，覆盖 GIMP color-to-alpha 算法、近白色伪影清理、按 alpha bbox 裁剪，配套 CSS `drop-shadow` 最佳实践。本仓库另有"轻量阈值法"版本适用于干净白底无伪影的源图，记录在 `script/README.md`。
 - `real-screenshot-promo-assets-and-html-video.md`：用真实界面做宣传素材。AI 封面后必须跟真实截图；记录了无头浏览器截图的坑（emoji 字体、屏幕外 iframe、坐标换算），用 hyperframes 把截图做成配音讲解视频的规范要点，中文 TTS 读网址的问题，以及低配服务器上的渲染耗时。
 - `scene-positioning-framework.md`：生成类产品的场景化增长与落地框架——配置驱动解耦场景、拒绝生硬表单向导的“Prompt 阈值预填 + 素材槽位分解”交互范式、所见即所得真实案例渲染与主体点击直达、节点链接 vs 固定发布链接双层架构、Shadow DOM 隔离的自传播浮标与微信长图海报服务端生成，以及场景端到端闭环度量。

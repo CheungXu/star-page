@@ -215,6 +215,27 @@ pkill -f preview-logo/serve.py
 范式**，原型结论才能直接落地，而不只是「视觉目标」。详见
 `frontend-home-workspace-transition.md`。
 
+## 进阶二：Next.js 真实组件多端口并行对比（同一 Worktree + 独立构建目录 + 确定性 Demo 参数）
+
+当对比方案涉及复杂 React 状态、Context 联动、拖拽分隔条、多轮历史回看时（如 `doc/20261109/generation-progress-compare-variants.md` 的生成工作区三套方案 A/B/C），纯静态 HTML 不够用，而复制三份 Next.js 目录又会导致维护和编译灾难。此时可用**同一份代码 + 环境变量切插槽 + 独立 `distDir` + URL 确定性模拟参数**在三个端口同时跑 `next dev`：
+
+1. **独立构建目录防互踩**：在 `next.config.mjs` 中配置 `distDir: process.env.NEXT_DIST_DIR || ".next"`，启动脚本分别以：
+   - `NEXT_PUBLIC_UX_VARIANT=A NEXT_DIST_DIR=.next-a npx next dev -p 3011`
+   - `NEXT_PUBLIC_UX_VARIANT=B NEXT_DIST_DIR=.next-b npx next dev -p 3012`
+   - `NEXT_PUBLIC_UX_VARIANT=C NEXT_DIST_DIR=.next-c npx next dev -p 3013`
+   启动三个进程，共享源码但各自写独立的 `.next-*` 缓存。
+2. **Git Worktree 下 `node_modules` 的 Turbopack 陷阱**：Next.js 16（Turbopack）安全检查会拒绝指向项目根目录外的符号链接（`ln -s` 会报错 `Symlink node_modules is invalid, it points out of the filesystem root`）。用硬链接拷贝 `cp -al /path/to/main/code/frontend/node_modules ./node_modules`，秒级完成、零额外磁盘占用，且能通过 Turbopack 校验。
+3. **确定性 Demo URL 参数（不调后端、不扣费、可定点截图）**：支持 `?demo=7&rounds=3&at=12`：
+   - `demo=N`：模拟 N 个模型并行（含完成、进行中、失败态）；
+   - `rounds=R`：自动生成前 `R-1` 轮历史归档与第 `R` 轮当前轮；
+   - `at=S`：将模拟时钟冻结在第 `S` 秒，方便 Playwright 在不同视口（如 `1600×900` 宽屏与 `1366×640` 矮屏）下对同一时刻定点截图对比。
+4. **Turbopack 开发期中文字符边界 Panic 防范**：当多个 `next dev` 同时监听同一份源码时，若分多次编辑让 JSX 处于半闭合语法错误状态且错误行含中文字符，Turbopack 打印源码片段可能因字节切片落在中文字符中间而触发 Rust panic 退出。编辑大型 JSX 应一次完整替换，并用启停脚本管理进程。
+5. **选定方案后的上线收口清单**：
+   - 删除未选方案组件、方案切换角标、demo 模拟模块与演示静态页；
+   - 移除 `next.config.mjs` 的临时 `NEXT_DIST_DIR` 并停止对比端口进程；
+   - 将模拟字段（如 `simulatedElapsedMs`）替换为真实后端字段（如 `durationMs`），用真实账号会话跑通端到端验收；
+   - 提交前执行 `git checkout code/frontend/tsconfig.json` 还原 `next dev` 自动改写的配置。
+
 ## 相关条目
 
 - `frontend-design-tokens-and-prompt-card.md`：精修后的设计 token 和模式可以反向同步到本预览基础设施。

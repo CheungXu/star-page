@@ -51,6 +51,12 @@ grid 容器的 `align-content` 默认是 `normal`（对 grid 等同 `stretch`）
 - 定式：标签容器 `display:flex; flex-wrap:wrap; height:<一行高>; overflow:hidden`，放不下的标签整个折到第二行并被裁掉。
 - 容器查询（`@container`）要先给祖先 `container-type: inline-size`；阈值要用实际渲染宽度量，不要按设计稿估。
 
+## 8. 父级结构伪类（`:last-child`）会盖掉子组件的状态色
+
+例如气泡头部写了 `.user-message-meta > span:last-child { color: var(--color-text-muted) }`（优先级 `0,2,1`），之后把最后一个 `<span>` 换成带状态色的胶囊组件 `.round-source.is-branch { color: #6d28d9 }`（优先级 `0,2,0`），胶囊文字颜色会被父级的 `:last-child` 规则静默覆盖成灰色。
+
+- 定式：布局容器少用 `:first-child / :last-child` 直接写死颜色，改用显式类名；或给子组件的状态规则带上父级上下文（`.user-message-meta .round-source.is-branch`）压过结构伪类。
+
 ## 通用经验
 
 - 这类 bug 多由"CSS 默认值 + 边界数据/视口"触发，写完要用**少量数据、空状态、中间视口宽度**专门过一遍。
