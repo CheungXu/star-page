@@ -18,6 +18,12 @@ export function modelAccent(key: string): string {
   return MODEL_ACCENTS[hash % MODEL_ACCENTS.length];
 }
 
+/** 模型头像上的字：取名字首字，英文转大写。 */
+export function modelGlyph(label: string): string {
+  const first = label.trim().charAt(0);
+  return /[a-z]/i.test(first) ? first.toUpperCase() : first;
+}
+
 export function formatClock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(total / 60);

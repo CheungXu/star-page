@@ -17,6 +17,7 @@ import {
   formatDuration,
   formatTokens,
   modelAccent,
+  modelGlyph,
   outputTokenCount,
   stageLabel,
   sumCredits,
@@ -59,7 +60,7 @@ export type PastRoundProps = {
 };
 
 export function VariantBProgress({ history }: { history?: PastRoundProps } = {}) {
-  const { runs, elapsed, isGenerating, activeModelKey, selectModel } = useWorkspace();
+  const { runs, elapsed, isGenerating, activeModelKey, selectModel, roundNav } = useWorkspace();
   const [open, setOpen] = useState(false);
   const done = runs.filter((run) => run.status === "completed").length;
   const clock = batchElapsed(runs, elapsed);
@@ -83,12 +84,36 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
       )}
     </>
   );
-  const showActive = !history || history.viewing;
+  // 多轮时点卡片＝在右侧显示这一轮；单轮时点卡片＝展开明细。
+  const latest = roundNav ? roundNav.items.length - 1 : -1;
+  const view = history
+    ? { viewing: history.viewing, onView: history.onView }
+    : roundNav && latest > 0
+      ? { viewing: roundNav.viewing === latest, onView: () => roundNav.onView(latest) }
+      : null;
+  const showActive = !view || view.viewing;
+  const toggle = () => setOpen((value) => !value);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const isViewing = Boolean(view?.viewing);
+
+  useEffect(() => {
+    if (isViewing) cardRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [isViewing]);
 
   return (
-    <div className={`vb-status ${open ? "is-open" : ""} ${history ? "is-history" : ""} ${history?.viewing ? "is-viewing" : ""}`}>
+    <div
+      ref={cardRef}
+      className={`vb-status ${open ? "is-open" : ""} ${history ? "is-history" : ""} ${view ? "is-switchable" : ""} ${view?.viewing ? "is-viewing" : ""}`}
+    >
       <div className="vb-status-head">
-        <button type="button" className="vb-pill" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <button
+          type="button"
+          className="vb-pill"
+          aria-expanded={view ? undefined : open}
+          aria-pressed={view ? view.viewing : undefined}
+          onClick={view ? view.onView : toggle}
+          title={view ? (view.viewing ? "右侧正在显示这一轮" : "在右侧显示这一轮的结果") : undefined}
+        >
           <span className={`vb-pill-dot ${isGenerating ? "is-run" : "is-done"}`} />
           <span className="vb-pill-text">
             <strong>
@@ -97,22 +122,25 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
             </strong>
             {!open && <span>{sub}</span>}
             {picked && (
-              <b className="vb-pill-picked">
-                选用「{picked.modelLabel}」{history?.nextLabel ? ` → ${history.nextLabel}` : ""}
+              <b className="vb-pill-picked" title={history?.nextLabel ? `${history.nextLabel}基于它继续修改` : undefined}>
+                选用「{picked.modelLabel}」
               </b>
             )}
           </span>
-          <span className="vb-pill-more">{open ? "收起" : "明细"}</span>
+          {view && (
+            <span className={`vb-showing ${view.viewing ? "" : "is-hint"}`} aria-hidden={!view.viewing}>
+              <ScreenIcon />
+              {view.viewing ? "显示中" : "查看"}
+            </span>
+          )}
+          {!view && <span className="vb-pill-more">{open ? "收起" : "明细"}</span>}
         </button>
-        {history && (
-          <button
-            type="button"
-            className="vb-round-view"
-            aria-pressed={history.viewing}
-            onClick={history.onView}
-            title={history.viewing ? "右侧正在显示这一轮" : "在右侧查看这一轮的结果"}
-          >
-            {history.viewing ? "显示中" : "查看"}
+        {view && (
+          <button type="button" className="vb-more-btn" aria-expanded={open} onClick={toggle} title={open ? "收起明细" : "展开明细"}>
+            {open ? "收起" : "明细"}
+            <svg viewBox="0 0 10 10" aria-hidden="true">
+              <path d="M2.5 3.75 5 6.25l2.5-2.5" />
+            </svg>
           </button>
         )}
       </div>
@@ -204,20 +232,22 @@ function batchInsights(runs: WorkspaceRun[], elapsedOf: (run: WorkspaceRun) => n
   };
 }
 
-function avatarGlyph(label: string): string {
-  const first = label.trim().charAt(0);
-  return /[a-z]/i.test(first) ? first.toUpperCase() : first;
-}
-
 function ModelAvatar({ run }: { run: WorkspaceRun }) {
   return (
     <span className={`vb-avatar is-${run.status}`} style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
-      {avatarGlyph(run.modelLabel)}
+      {modelGlyph(run.modelLabel)}
       {run.status === "completed" && <i className="vb-avatar-badge">✓</i>}
       {run.status === "failed" && <i className="vb-avatar-badge">!</i>}
     </span>
   );
 }
+
+const ScreenIcon = () => (
+  <svg className="vb-screen" viewBox="0 0 12 12" aria-hidden="true">
+    <rect x="1.25" y="2" width="9.5" height="6.5" rx="1.5" />
+    <path d="M4.5 10.5h3" />
+  </svg>
+);
 
 const CoinIcon = () => (
   <svg className="vb-coin" viewBox="0 0 12 12" aria-hidden="true">

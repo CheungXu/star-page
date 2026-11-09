@@ -13,6 +13,7 @@ import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
 import "./components/workspace/variants.css";
+import { RoundSource } from "./components/workspace/bits";
 import { PastRoundSlot, ProgressSlot, ResultsSlot, VariantBadge, WorkspaceProvider } from "./components/workspace/context";
 import { buildDemoHistory, demoRound, readDemoCount, readDemoFreezeSeconds, readDemoRounds } from "./components/workspace/demo";
 import type { PreviewPresentation, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
@@ -2894,7 +2895,7 @@ export default function HomePage() {
                       <div className="chat-message user-message">
                         <div className="user-message-meta">
                           <span>第 {index + 1} 轮</span>
-                          <span>{roundSourceText(round.basedOn?.modelLabel ?? "", index)}</span>
+                          <RoundSource roundIndex={index} basedOn={round.basedOn} runs={round.runs} />
                         </div>
                         <p>{round.prompt}</p>
                       </div>
@@ -2913,7 +2914,7 @@ export default function HomePage() {
                           viewing={viewing}
                           pickedKey={(index === pastRounds.length - 1 ? currentBasedOn : pastRounds[index + 1]?.basedOn)?.modelKey ?? ""}
                           nextLabel={`第 ${index + 2} 轮`}
-                          onView={() => setViewedRound(viewing ? null : { index, modelKey: "" })}
+                          onView={() => setViewedRound((current) => (current?.index === index ? current : { index, modelKey: "" }))}
                         />
                       </WorkspaceProvider>
                     </div>
@@ -2922,11 +2923,15 @@ export default function HomePage() {
                 <div className={`chat-message user-message ${isLongPrompt ? "long-message" : ""}`} data-anim-stagger>
                   <div className="user-message-meta">
                     <span>{pastRounds.length > 0 ? `第 ${roundIndex + 1} 轮 · 当前` : "你的需求"}</span>
-                    <span>
-                      {pastRounds.length > 0
-                        ? roundSourceText(currentBasedOn?.modelLabel ?? "", roundIndex)
-                        : `${submittedPrompt.length} 字${submittedFileNames.length ? ` · ${submittedFileNames.length} 个文件` : ""}${roundIndex > 0 ? ` · 第 ${roundIndex + 1} 轮` : ""}`}
-                    </span>
+                    {pastRounds.length > 0 ? (
+                      <RoundSource roundIndex={roundIndex} basedOn={currentBasedOn} runs={runs as unknown as WorkspaceRun[]} />
+                    ) : (
+                      <span>
+                        {submittedPrompt.length} 字
+                        {submittedFileNames.length ? ` · ${submittedFileNames.length} 个文件` : ""}
+                        {roundIndex > 0 ? ` · 第 ${roundIndex + 1} 轮` : ""}
+                      </span>
+                    )}
                   </div>
                   <p>{submittedPrompt}</p>
                   {submittedFileNames.length > 0 && (
@@ -3027,11 +3032,6 @@ function makeRunFromResponse(run: GenerationRunResponse, hasFile: boolean): RunS
     errorMessage: "",
     progressSteps: createInitialProgressSteps(hasFile),
   };
-}
-
-function roundSourceText(baseModelLabel: string, roundIndex: number): string {
-  if (roundIndex === 0) return "新建";
-  return baseModelLabel ? `基于「${baseModelLabel}」修改` : "各模型接着上一轮改";
 }
 
 function labelForModel(key: string, models: ModelInfo[]): string {
