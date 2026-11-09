@@ -584,13 +584,13 @@ body.is-resizing-panes iframe {
   font-size: 11px;
 }
 
-/* 展开明细：两行一组，上行"谁 + 花多少"，下行"走到哪 + 写了多少 + 用了多久" */
+/* 展开明细：左侧"谁 + 走到哪"，右侧三列数字固定宽度、右对齐，表头只写一次 */
+.vb-status {
+  --mini-cols: 16px minmax(0, 1fr) 40px 44px 40px;
+}
+
 .vb-mini {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 4px 6px 6px;
-  list-style: none;
+  padding: 2px 6px 6px;
   border-top: 1px solid var(--color-border);
   animation: vb-mini-in 0.2s ease;
 }
@@ -600,12 +600,45 @@ body.is-resizing-panes iframe {
   to { opacity: 1; transform: none; }
 }
 
-.vb-mini-row button {
+.vb-mini ul {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vb-mini-head,
+.vb-mini-foot,
+.vb-mini-row button {
+  display: grid;
+  grid-template-columns: var(--mini-cols);
+  column-gap: 10px;
+  align-items: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.vb-mini-head {
+  padding-top: 8px;
+  padding-bottom: 4px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.vb-mini-head span:first-child { grid-column: 1 / 3; }
+.vb-mini-head span:not(:first-child),
+.vb-mini-foot span:not(:first-child) { text-align: right; }
+
+.vb-mini-row button {
+  grid-template-rows: auto auto;
+  row-gap: 5px;
   width: 100%;
-  padding: 7px 6px;
+  padding-top: 8px;
+  padding-bottom: 8px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -618,56 +651,86 @@ body.is-resizing-panes iframe {
 .vb-mini-row button:hover { background: var(--color-surface-soft); }
 .vb-mini-row.is-active button { background: var(--color-primary-soft); }
 
-.vb-mini-top,
-.vb-mini-bottom {
-  display: flex;
-  align-items: center;
-  min-width: 0;
+.vb-mini-row .vp-mark {
+  grid-row: 1;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
 }
 
-.vb-mini-top { gap: 7px; }
-.vb-mini-bottom { gap: 8px; padding-left: 23px; }
-
-.vb-mini-top .vp-mark { width: 16px; height: 16px; font-size: 9px; }
-
 .vb-mini-name {
-  flex: 1;
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: 12.5px;
   font-weight: 700;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.vb-mini-cost {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 650;
+.vb-mini-phase {
+  display: flex;
+  grid-column: 2;
+  grid-row: 2;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.vb-mini-cost.is-charged {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: rgba(245, 158, 11, 0.12);
+.vb-mini-cell {
+  grid-row: 1 / 3;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.vb-mini-cell.is-time {
+  color: var(--color-text-tertiary);
+  font-weight: 600;
+}
+
+.vb-mini-cell.is-empty { color: var(--color-text-muted); font-weight: 600; }
+
+.vb-mini-cell.is-charged,
+.vb-mini-foot .is-charged {
   color: #b45309;
 }
 
-.vb-mini-cost b {
+.vb-mini-cell.is-cost { position: relative; }
+
+.vb-mini-cell i {
+  position: absolute;
+  top: 50%;
+  right: -8px;
+  width: 5px;
+  height: 5px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+
+.vb-mini-foot {
+  margin-top: 4px;
+  padding-top: 9px;
+  padding-bottom: 4px;
+  border-top: 1px dashed var(--color-border);
+  color: var(--color-text-primary);
   font-size: 12px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
 }
 
-.vb-mini-cost i {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-left: 4px;
-  vertical-align: 2px;
-  border-radius: 50%;
-  background: var(--color-success);
+.vb-mini-foot span:first-child {
+  grid-column: 1 / 3;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .vb-pips {
@@ -720,22 +783,6 @@ body.is-resizing-panes iframe {
 }
 
 .vb-mini-row.is-failed .vb-mini-stage { color: var(--color-danger); }
-
-.vb-mini-num {
-  flex-shrink: 0;
-  min-width: 34px;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.vb-mini-time {
-  min-width: 40px;
-  color: var(--color-text-muted);
-  font-weight: 600;
-}
 
 .vb-carousel-btn,
 .vc-all {

@@ -63,21 +63,35 @@ export function VariantBProgress() {
             {title}
             {clockText && <em>{clockText}</em>}
           </strong>
-          <span>{sub}</span>
+          {!open && <span>{sub}</span>}
         </span>
         <span className="vb-pill-more">{open ? "收起" : "明细"}</span>
       </button>
       {open && (
-        <ul className="vb-mini">
-          {runs.map((run) => (
-            <MiniRow
-              key={run.taskId || run.modelKey}
-              run={run}
-              active={run.modelKey === activeModelKey}
-              onSelect={() => selectModel(run.modelKey)}
-            />
-          ))}
-        </ul>
+        <div className="vb-mini">
+          <div className="vb-mini-head" aria-hidden="true">
+            <span>模型</span>
+            <span>输出</span>
+            <span>用时</span>
+            <span>积分</span>
+          </div>
+          <ul>
+            {runs.map((run) => (
+              <MiniRow
+                key={run.taskId || run.modelKey}
+                run={run}
+                active={run.modelKey === activeModelKey}
+                onSelect={() => selectModel(run.modelKey)}
+              />
+            ))}
+          </ul>
+          <div className="vb-mini-foot">
+            <span>合计{credits.discount > 0 ? ` · 已优惠 ${credits.discount}` : ""}</span>
+            <span>{formatTokens(tokens)}</span>
+            <span>{shortDuration(clock)}</span>
+            <span className={credits.hasBilling ? "is-charged" : ""}>{credits.hasBilling ? credits.charged : "…"}</span>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -98,11 +112,17 @@ const SHORT_STAGE: Record<string, string> = {
   准备中: "准备",
 };
 
+function shortDuration(ms: number | null): string {
+  if (ms === null) return "—";
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 60) return `${total}秒`;
+  return `${Math.floor(total / 60)}分${String(total % 60).padStart(2, "0")}`;
+}
+
 function MiniRow({ run, active, onSelect }: { run: WorkspaceRun; active: boolean; onSelect: () => void }) {
   const { elapsed } = useWorkspace();
   const progress = estimateProgress(run, elapsed(run));
   const tokens = outputTokenCount(run);
-  const time = elapsed(run);
   const pending = run.status === "thinking" || run.status === "creating";
   const charged = run.usageSummary?.creditsCharged;
   const discount = run.usageSummary?.discountCredits;
@@ -111,26 +131,9 @@ function MiniRow({ run, active, onSelect }: { run: WorkspaceRun; active: boolean
   return (
     <li className={`vb-mini-row is-${run.status} ${active ? "is-active" : ""}`}>
       <button type="button" onClick={onSelect} title={run.errorMessage || `在右侧查看 ${run.modelLabel}`}>
-        <span className="vb-mini-top">
-          <StatusMark status={run.status} />
-          <span className="vb-mini-name">{run.modelLabel}</span>
-          <span
-            className={`vb-mini-cost ${typeof charged === "number" ? "is-charged" : ""}`}
-            title={discount ? `已优惠 ${discount} 积分` : undefined}
-          >
-            {typeof charged === "number" ? (
-              <>
-                <b>{charged}</b> 积分
-                {discount ? <i aria-label="有优惠" /> : null}
-              </>
-            ) : pending ? (
-              "结算中"
-            ) : (
-              "—"
-            )}
-          </span>
-        </span>
-        <span className="vb-mini-bottom">
+        <StatusMark status={run.status} />
+        <span className="vb-mini-name">{run.modelLabel}</span>
+        <span className="vb-mini-phase">
           <span className="vb-pips" aria-label={`阶段：${stageLabel(run)}`}>
             {PHASES.map((phase, index) => {
               const fill =
@@ -147,8 +150,15 @@ function MiniRow({ run, active, onSelect }: { run: WorkspaceRun; active: boolean
             })}
           </span>
           <span className="vb-mini-stage">{SHORT_STAGE[stageLabel(run)] ?? stageLabel(run)}</span>
-          <span className="vb-mini-num">{tokens > 0 ? formatTokens(tokens) : "—"}</span>
-          <span className="vb-mini-num vb-mini-time">{time !== null ? formatDuration(time) : ""}</span>
+        </span>
+        <span className={`vb-mini-cell ${tokens > 0 ? "" : "is-empty"}`}>{tokens > 0 ? formatTokens(tokens) : "—"}</span>
+        <span className="vb-mini-cell is-time">{shortDuration(elapsed(run))}</span>
+        <span
+          className={`vb-mini-cell is-cost ${typeof charged === "number" ? "is-charged" : "is-empty"}`}
+          title={discount ? `已优惠 ${discount} 积分` : undefined}
+        >
+          {typeof charged === "number" ? charged : pending ? "…" : "—"}
+          {discount ? <i aria-label="有优惠" /> : null}
         </span>
       </button>
     </li>
