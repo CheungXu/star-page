@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Ring, StatusMark } from "./bits";
 import { useArrowModelNav, useWorkspace } from "./context";
 import {
@@ -181,6 +181,8 @@ export function VariantBResults() {
   }
 
   return (
+    <>
+    <PaneResizer />
     <article className="panel preview-panel workspace-preview vb-results">
       <div className="panel-heading preview-heading">
         <h2>结果预览 · {runs.length} 个版本 · {done} 已完成</h2>
@@ -269,5 +271,107 @@ export function VariantBResults() {
         </div>
       )}
     </article>
+    </>
+  );
+}
+
+const CONV_WIDTH_KEY = "star-page-conv-width";
+const CONV_MIN = 300;
+
+function clampConvWidth(value: number, layout: HTMLElement): number {
+  const max = Math.max(CONV_MIN, Math.min(720, layout.clientWidth * 0.5));
+  return Math.round(Math.min(max, Math.max(CONV_MIN, value)));
+}
+
+/** 对话栏与结果区之间的拖拽分隔条：宽度写进 --conv-width，并记在本机。 */
+function PaneResizer() {
+  const handleRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  function layoutOf(): HTMLElement | null {
+    return handleRef.current?.closest(".workspace-layout") ?? null;
+  }
+
+  function apply(next: number | null, persist: boolean) {
+    const layout = layoutOf();
+    if (!layout) return;
+    if (next === null) {
+      layout.style.removeProperty("--conv-width");
+      setWidth(null);
+      if (persist) localStorage.removeItem(CONV_WIDTH_KEY);
+      return;
+    }
+    const value = clampConvWidth(next, layout);
+    layout.style.setProperty("--conv-width", `${value}px`);
+    setWidth(value);
+    if (persist) localStorage.setItem(CONV_WIDTH_KEY, String(value));
+  }
+
+  useEffect(() => {
+    const saved = Number(localStorage.getItem(CONV_WIDTH_KEY));
+    const layout = handleRef.current?.closest<HTMLElement>(".workspace-layout");
+    if (!(saved > 0) || !layout) return;
+    const value = clampConvWidth(saved, layout);
+    layout.style.setProperty("--conv-width", `${value}px`);
+    const timer = window.setTimeout(() => setWidth(value), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function currentWidth(): number {
+    const pane = layoutOf()?.querySelector<HTMLElement>(".conversation-pane");
+    return width ?? pane?.getBoundingClientRect().width ?? CONV_MIN;
+  }
+
+  function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const pane = layoutOf()?.querySelector<HTMLElement>(".conversation-pane");
+    if (!pane) return;
+    event.preventDefault();
+    const left = pane.getBoundingClientRect().left;
+    const offset = event.clientX - pane.getBoundingClientRect().right;
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    setDragging(true);
+    document.body.classList.add("is-resizing-panes");
+
+    const onMove = (move: globalThis.PointerEvent) => apply(move.clientX - offset - left, false);
+    const onUp = (up: globalThis.PointerEvent) => {
+      apply(up.clientX - offset - left, true);
+      setDragging(false);
+      document.body.classList.remove("is-resizing-panes");
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onUp);
+    };
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onUp);
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const delta = (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 64 : 16);
+    apply(currentWidth() + delta, true);
+  }
+
+  return (
+    <div
+      ref={handleRef}
+      className={`pane-resizer ${dragging ? "is-dragging" : ""}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="拖动调整对话栏宽度，双击恢复默认"
+      aria-valuemin={CONV_MIN}
+      aria-valuenow={width ?? undefined}
+      tabIndex={0}
+      title="拖动调整宽度，双击恢复默认"
+      onPointerDown={onPointerDown}
+      onDoubleClick={() => apply(null, true)}
+      onKeyDown={onKeyDown}
+    >
+      <span />
+    </div>
   );
 }

@@ -104,12 +104,77 @@
 
 .workspace-layout.layout-b,
 .workspace-layout.layout-b.compare-mode {
-  grid-template-columns: 252px 320px minmax(0, 1fr);
+  --conv-width: clamp(340px, 26vw, 420px);
+  grid-template-columns: 252px var(--conv-width) minmax(0, 1fr);
 }
 
 .workspace-layout.layout-b.sidebar-collapsed,
 .workspace-layout.layout-b.compare-mode.sidebar-collapsed {
-  grid-template-columns: 72px 320px minmax(0, 1fr);
+  grid-template-columns: 72px var(--conv-width) minmax(0, 1fr);
+}
+
+.workspace-layout.layout-b .preview-pane {
+  position: relative;
+}
+
+/* 分隔条占满两栏之间的 20px 间隙，常态只露一个淡色把手 */
+.pane-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -20px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.pane-resizer span {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 0.15s ease, width 0.15s ease;
+}
+
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 36px;
+  margin-top: -18px;
+  border-radius: 999px;
+  background: var(--color-border-strong);
+  transition: background 0.15s ease, height 0.15s ease, margin-top 0.15s ease;
+}
+
+.pane-resizer:hover span,
+.pane-resizer:focus-visible span {
+  background: var(--color-primary-soft-strong);
+}
+
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after {
+  height: 48px;
+  margin-top: -24px;
+  background: var(--color-primary);
+}
+
+.pane-resizer.is-dragging span { width: 3px; background: var(--color-primary); }
+.pane-resizer.is-dragging::after { background: var(--color-primary); }
+
+body.is-resizing-panes {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.is-resizing-panes iframe {
+  pointer-events: none;
 }
 
 /* ---------- 方案 A：轻量看板 ---------- */
@@ -1208,6 +1273,8 @@
   .workspace-layout.layout-c .preview-pane {
     grid-column: 2;
   }
+
+  .pane-resizer { display: none; }
 
   .va-overview,
   .vc-ab { grid-template-columns: 1fr; }
