@@ -540,6 +540,12 @@ body.is-resizing-panes iframe {
   gap: 8px;
 }
 
+/* 对话栏是纵向 flex 且可滚动：卡片带 overflow:hidden 会被允许压扁，内容超高时必须禁止收缩 */
+.layout-b .conversation-scroll > *,
+.chat-round.is-past > * {
+  flex-shrink: 0;
+}
+
 /* 用户气泡：左上角一层柔光 + 斜向渐变 + 顶部内高光，做出纸张般的层次；当前轮偏蓝，历史轮偏冷灰 */
 .layout-b .user-message {
   border: 1px solid rgba(53, 99, 233, 0.16);
@@ -563,7 +569,11 @@ body.is-resizing-panes iframe {
     0 12px 24px -20px rgba(15, 23, 42, 0.4);
 }
 
-.layout-b .user-message-meta > span:first-child { letter-spacing: 0.02em; }
+.layout-b .user-message-meta > span:first-child {
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
 
 .chat-round.is-past .user-message-meta > span:first-child { color: var(--color-text-secondary); }
 
