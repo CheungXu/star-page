@@ -543,7 +543,11 @@ body.is-resizing-panes iframe {
   gap: 10px;
 }
 
-.layout-b .conversation-scroll { gap: 26px; }
+.layout-b .conversation-scroll {
+  gap: 26px;
+  padding-right: 20px;
+  padding-left: 20px;
+}
 
 /* 对话栏是纵向 flex 且可滚动：卡片带 overflow:hidden 会被允许压扁，内容超高时必须禁止收缩 */
 .layout-b .conversation-scroll > *,
@@ -554,7 +558,7 @@ body.is-resizing-panes iframe {
 /* 回复气泡：靠左、宽度随内容，左下角收成尖角，和右下尖角的用户气泡一来一回；质感与用户气泡同一套 */
 .layout-b .conversation-scroll .vb-status {
   align-self: flex-start;
-  width: min(calc(100% - 28px), 328px);
+  width: min(calc(100% - 20px), 440px);
   margin-top: 0;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 16px 16px 16px 4px;
@@ -566,8 +570,6 @@ body.is-resizing-panes iframe {
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 12px 24px -20px rgba(15, 23, 42, 0.4);
 }
-
-.layout-b .conversation-scroll .vb-status.is-open { width: 100%; }
 
 .layout-b .conversation-scroll .vb-status { container-type: inline-size; }
 

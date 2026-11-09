@@ -281,6 +281,7 @@ function MiniRow({
         <ModelAvatar run={run} />
         <span className="vb-mini-name">{run.modelLabel}</span>
         <span className="vb-mini-phase">
+          {!(run.status === "completed" && (isFastest || isCheapest || pickedFor)) && (
           <span className="vb-pips" aria-label={`阶段：${stageLabel(run)}`}>
             {PHASES.map((phase, index) => {
               const fill =
@@ -296,6 +297,7 @@ function MiniRow({
               );
             })}
           </span>
+          )}
           {isFastest || isCheapest || pickedFor ? (
             <span className="vb-tags">
               {pickedFor && (
