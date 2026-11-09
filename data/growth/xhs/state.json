@@ -1,0 +1,77 @@
+{
+  "hot_updated_at": "2026-10-10T16:05:52.552Z",
+  "searches": {
+    "网页简历": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_1602c2cb-fe42-47fd-bd48-725cc5f1e2ff",
+      "fetched_at": "2026-10-11T21:35:46.136692+00:00"
+    },
+    "交互式简历": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_fd22776e-b564-4051-a366-e1cca93680f8",
+      "fetched_at": "2026-10-11T21:35:48.666007+00:00"
+    },
+    "AI简历": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_f825ab41-6079-41bb-b8a9-2889dffeeee8",
+      "fetched_at": "2026-10-11T21:35:51.026579+00:00"
+    },
+    "个人主页": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_18588f0e-6e29-46fb-a146-b685fbaf3067",
+      "fetched_at": "2026-10-11T21:35:53.056079+00:00"
+    },
+    "求职简历": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_61b2fd8d-f474-4329-85f1-e084424f5b38",
+      "fetched_at": "2026-10-11T21:35:55.326002+00:00"
+    },
+    "作品集网站": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_1d645654-3dab-4719-952f-169a364afddb",
+      "fetched_at": "2026-10-11T21:49:50.356784+00:00"
+    },
+    "个人网站 简历": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_39dd9072-8f94-49b9-9000-610b7709db12",
+      "fetched_at": "2026-10-11T21:49:52.579965+00:00"
+    },
+    "vibe coding 简历": {
+      "count": 20,
+      "charged_amount": "0.19",
+      "request_id": "req_d3fe269d-4593-448b-a272-b589a9eb7c57",
+      "fetched_at": "2026-10-11T21:49:55.799265+00:00"
+    }
+  },
+  "hot_count": 20,
+  "next_refresh_at": "2026-10-12T18:05:00.000Z",
+  "login_searches": {
+    "作品集网站|最多收藏": {
+      "count": 19,
+      "sort_by": "最多收藏",
+      "fetched_at": "2026-10-11T21:55:17.101149+00:00"
+    },
+    "网页简历|最多收藏": {
+      "count": 20,
+      "sort_by": "最多收藏",
+      "fetched_at": "2026-10-11T21:55:43.871111+00:00"
+    },
+    "交互式简历|最多收藏": {
+      "count": 20,
+      "sort_by": "最多收藏",
+      "fetched_at": "2026-10-11T21:56:09.031058+00:00"
+    },
+    "个人网站|最多收藏": {
+      "count": 20,
+      "sort_by": "最多收藏",
+      "fetched_at": "2026-10-11T21:56:35.106753+00:00"
+    }
+  }
+}

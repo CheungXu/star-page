@@ -27,7 +27,7 @@
 - **登录拦截**：匿名免费次数用尽（后端 402 `need_login`）或复制分享链接时弹登录框；登录用户余额不足（402 `insufficient_credits`）跳转 `/pricing`。生成成功与登录后会刷新账户余额。
 - **`app/pricing`**：mock 套餐卡（基础/赠送/折扣标注），建单 + mock 支付闭环，展示积分流水；正式上线接入微信/支付宝。
 - **协议页**：`/terms`、`/privacy`、`/recharge-terms` 共用 `app/legal/LegalDocument.tsx`，正文在 `content/legal/{key}.md`，构建时读取并静态渲染（只支持标题、段落、列表、表格、加粗、行内代码）。修改协议只需改 md 文件，与 `doc/20261013/user-agreement-and-privacy-policy-v2.md` 保持一致。同意入口共三处：首页页脚「使用即同意」提示（覆盖未登录用户）；登录弹窗必须勾选才能获取验证码或登录；充值页说明点击充值即同意《积分充值服务协议》。登录请求带 `agreement_version`（`app/legal/docs.ts` 的 `LEGAL_POLICY_VERSION`，与后端 `POLICY_VERSION` 同步）。
-- **训练授权与举报**：登录后点侧边栏账号（或页脚「数据设置」）打开 `components/DataPrivacyModal.tsx`（设置 → 数据与隐私，训练开关，未登录也可用）；老用户 `needs_policy_notice` 时底部显示 `components/PolicyNoticeBar.tsx`，点「知道了」或直接发起生成都会调用 `notice-ack`。生成完成的用量摘要显示「扣 N 积分 · 授权优惠 -M」。`/report` 是公开页「举报」浮标的落点；`/ops` 的「举报审核」Tab 处理下架、驳回和恢复。
+- **训练授权与举报**：登录后点侧边栏账号（或页脚「数据设置」）打开 `components/DataPrivacyModal.tsx`（设置 → 数据与隐私，训练开关，未登录也可用）；老用户 `needs_policy_notice` 时底部显示 `components/PolicyNoticeBar.tsx`，点「知道了」或直接发起生成都会调用 `notice-ack`。生成完成的用量摘要只显示「花费 N 积分 · 优惠 -M」，不再显示人民币成本；前台与协议文案统一写「积分优惠」，不写死折数。`/report` 是公开页「举报」浮标的落点；`/ops` 的「举报审核」Tab 处理下架、驳回和恢复。
 - **`app/admin`**：财务仪表盘（收入/成本/毛利/赠送负债/科目余额、积分流水、记账凭证、用户对账）；后端 `require_admin` 鉴权，前端对 401/403 兜底显示「需要管理员权限」。
 - **场景与案例库（所见即所得）**：
   - 首页输入框下方展示「试试」快捷场景药丸（网页简历、博主主页、产品落地页、活动邀请函），以及「别人做的页面」真实案例展示区。
@@ -35,7 +35,7 @@
   - **「做同款」交互**：卡片右上角悬浮「做同款」按钮。点击后绝不弹出生硬丑陋的定制表单，而是复用原生输入框，智能预填该场景的成熟自然语言 Prompt；需要补充的信息用「」清晰留空。用户可直接在输入框微调。
   - **场景化素材入口**：针对需外部图片的场景（博主主页、邀请函），输入框上方自动分解出轻量的素材胶囊（如「＋ 上传头像」「＋ 上传微信二维码」；「＋ 上传背景图」「＋ 上传报名二维码」），支持单独查看与移除，限制单图 2MB 并支持拖拽。
   - **投放与分享**：每个场景具备独立投放落地页 `app/s/[scene]`；生成页右下角自动挂载 Shadow DOM 隔离的「用星页做同款」浮标；移动端自适应带「发朋友圈」长图海报弹窗（Pillow 服务端合成 1080×1620 渐变二维码卡片），支持长按保存；工作区内可发布固定链接 `/u/{slug}` 并提供海报弹窗与 PDF 打印。
-- **`app/ops`**：运营后台，十个 Tab（实时看板 / 增长 / 留存 / 参与 / 质量 / 传播 / 商业化 / 用户明细 / Case 查看 / 场景）。实时看板每 15 秒轮询；图表为**零依赖 SVG**（折线 / 条形 / 留存热力）；用户与 Case 支持搜索筛选与弹窗下钻（画像、含 SSE 事件流的 Case 详情）。复用 `require_admin` 鉴权，与 `/admin` 互加入口。漏斗埋点经 `app/lib/analytics.ts`（`navigator.sendBeacon`，失败静默）在首页关键节点上报，事件需命中后端白名单。方案见 `doc/20260628/ops-backend-design-and-implementation.md`。
+- **`app/ops`**：运营后台，十一个 Tab（实时看板 / 增长 / 留存 / 参与 / 质量 / 传播 / 商业化 / 用户明细 / Case 查看 / 场景 / 举报审核）。实时看板每 15 秒轮询；图表为**零依赖 SVG**（折线 / 条形 / 留存热力）；用户与 Case 支持搜索筛选与弹窗下钻（画像、含 SSE 事件流的 Case 详情）。复用 `require_admin` 鉴权，与 `/admin` 互加入口。漏斗埋点经 `app/lib/analytics.ts`（`navigator.sendBeacon`，失败静默）在首页关键节点上报，事件需命中后端白名单。方案见 `doc/20260628/ops-backend-design-and-implementation.md`。
 
 ## 首屏 UI 设计要点
 

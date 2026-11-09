@@ -139,6 +139,31 @@ pkill -f preview-transition/serve.py
 git 分支 `full-animation-mode`。决策见 `wiki/frontend-home-workspace-transition.md` 与
 `doc/20260529/frontend-transition-animation-plan.md`。原型三套实现保留作选型留档。
 
+## 小红书公开热词
+
+`growth/fetch_xhs_keywords.py` 拉取小红书当前公开热词，结果写到 `data/growth/xhs/`。热词榜不需要账号。同一版榜单不会重复写入。
+
+按关键词搜公开笔记需要 `config/dataxapi.env` 里的 `DATAXAPI_API_KEY`（模板见 `config/dataxapi.env.example`）。每个词约 0.19 元，失败不收费。已成功的词会跳过。
+
+```bash
+python3 script/growth/fetch_xhs_keywords.py
+python3 script/growth/fetch_xhs_keywords.py --search
+```
+
+`growth/fetch_xhs_login_search.py` 用本机已扫码的小红书登录态，按收藏量再搜一页。服务需先在本机 18060 端口启动。已成功的「关键词 + 排序」会跳过。
+
+```bash
+python3 script/growth/fetch_xhs_login_search.py
+```
+
+## 小红书文案封面图生成
+
+`growth/generate_xhs_cover.py` 调用火山方舟 Seedream 5.0 生图模型（`doubao-seedream-5-0-pro-260628`），按提示词生成 3:4 竖图封面并下载保存。密钥从 `config/llm.env` 读取。
+
+```bash
+python3 script/growth/generate_xhs_cover.py "<英文提示词>" "<文件名.png>"
+```
+
 ## 场景案例生成与挑选
 
 `scene-showcase/` 用于给首页「别人做的页面」准备案例，只在测试环境使用。
@@ -153,3 +178,67 @@ cd code/backend && . .venv/bin/activate
 python ../../script/scene-showcase/generate_variants.py --token-file /tmp/sp-test-session.txt
 python ../../script/scene-showcase/shoot_variants.py --variants /tmp/scene-audit/variants.json
 ```
+
+## 预览库同步首页案例
+
+分支预览用独立库 `stars_page_preview`（建库只跑迁移，没有业务数据），首页「别人做的页面」会是空的。`sync_preview_showcases.py` 从生产库只读复制 `scene_showcases` 及其页面链路（用户、会话、批次、页面、版本），按 id 幂等，可重复执行。作者账号不复制手机号、邮箱和密码；目标库名必须以 `_preview` 结尾。页面 HTML 在共享 OSS，复制后即可打开。
+
+```bash
+set -a && . config/db.env && set +a
+code/backend/.venv/bin/python script/sync_preview_showcases.py
+```
+
+## 宣传素材：真实界面截图
+
+`promo-capture/` 截取线上 https://stars-page.com 的真实界面，输出到 `data/文案/202610/00-界面截图/`。都用后端虚拟环境里的 Playwright 和服务器缓存的 Chromium。
+
+1. `shoot_site.py`：首页、场景页、四个案例页，桌面 1440×900@2x、手机 390×844@3x。已存在的图片会跳过。
+2. `shoot_generation.py`：用全新匿名身份真实跑一次「网页简历」，截填写、生成中、一版完成、并排对比四个阶段。每次运行都会消耗一次匿名免费额度，并留下一条线上生成记录，约 4～5 分钟。
+3. `compose_xhs_images.py`：把截图拼成小红书 3:4 配图，只用真实截图，不往图上加字。
+
+```bash
+cd code/backend && . .venv/bin/activate
+python ../../script/promo-capture/shoot_site.py
+python ../../script/promo-capture/shoot_generation.py
+python ../../script/promo-capture/compose_xhs_images.py
+```
+
+注意：
+
+- 服务器要装 `fonts-noto-color-emoji`，否则场景按钮里的 emoji 会截成方块。
+- 屏幕外的 iframe 不跑入场动画，整页截图需先把视口拉到整页高度，脚本已处理。
+- 截图里的坐标按 CSS 像素算，不要按缩小后的预览图量。
+
+## 补跑卡住的生成
+
+`resume_stuck_generations.py` 把某个批次里仍是 `running`、还没写完页面的任务用原生成流程再跑一遍。结果写回原来的任务和页面，前端重新打开这条历史就能看到，不用用户再提交。
+
+```bash
+code/backend/.venv/bin/python script/resume_stuck_generations.py --batch-id <批次 uuid>
+```
+
+已成功的任务会跳过。某一路失败会自动再试一次。
+
+## 宣传视频：hyperframes
+
+`promo-video/` 配合 [hyperframes](https://github.com/heygen-com/hyperframes)（HTML 写画面、GSAP 动画、无头 Chrome 逐帧渲染）做宣传视频。工程在 `data/视频/202610/星页一分钟讲解/`。
+
+1. `build_voice.py`：读工程里的 `src/script.json`，逐句调用百炼 `qwen3-tts-flash` 合成中文配音（默认音色 Cherry），拼成 `assets/voice.wav`，写出每句实际时长 `src/timings.json`。已合成的句子会跳过。
+2. `build_index.py`：把时长填进 `src/index.html.tpl`，生成 `index.html`。每段画面从这段第一句配音开始，字幕逐句出现。
+
+```bash
+cd code/backend && . .venv/bin/activate
+python ../../script/promo-video/build_voice.py --project "data/视频/202610/星页一分钟讲解"
+cd ../.. && python3 script/promo-video/build_index.py --project "data/视频/202610/星页一分钟讲解"
+cd "data/视频/202610/星页一分钟讲解"
+npx --yes hyperframes@0.8.150 lint
+npx --yes hyperframes@0.8.150 snapshot --at 3,14,24,34,47,55 --no-end
+npx --yes hyperframes@0.8.150 render --quality looks --output renders/星页一分钟讲解.mp4
+```
+
+注意：
+
+- 改台词：删掉 `assets/voice-parts/` 里对应的 wav 再跑 `build_voice.py`。只改画面：改 `src/index.html.tpl` 后重跑 `build_index.py`。不要直接改 `index.html`，下次生成会覆盖。
+- 模板必须放在 `src/` 里。工程根目录出现第二个带 `data-composition-id` 的 html，lint 会报 `multiple_root_compositions`。
+- 当前服务器只有 2 核、3GB 内存，hyperframes 自动走低内存模式，单进程逐帧截图。`snapshot` 每帧都重新加载页面，约 1 分钟一帧。`check` 跑 10 分钟也没结束，只用 `lint` 加 `snapshot` 检查。
+- 不登录 HeyGen 就没有它的曲库，当前视频没有背景音乐。

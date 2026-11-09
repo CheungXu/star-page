@@ -116,8 +116,9 @@ journalctl -u star-page-backend.service -f
 
 - **授权快照**：`users.allow_training`（默认开）是当前开关；`generation_batches` / `generation_tasks` / `page_versions` / `page_assets` / `analytics_events` 的 `training_consent` 记录**数据产生那一刻**的状态：`granted` / `denied` / `legacy`（协议上线前的数据，或尚未看到更新告知的老用户）。判定在 `consent_service.training_consent_for`。**训练取数口径**：`training_consent='granted'` 且所属用户当前 `allow_training=true`。
 - **同意记录**：`user_consents` 只追加，事件 `login_agree`（登录勾选，带 `agreement_version`）/ `notice_ack`（老用户点「知道了」）/ `anon_notice`（匿名首访）/ `preference`（开关变更）/ `merge_opt_out`（匿名关过、登录归并时带到正式账号）。协议版本常量 `POLICY_VERSION` 与前端 `LEGAL_POLICY_VERSION` 必须同步。
-- **授权九折**：倍率读 `config/billing.json.training_discount_rate`（限 0.5–1.0）。按批次快照判断，`granted` 时 `apply_training_discount` 向下取整（至少 1 积分），优惠额记 `credit_transactions.training_discount_credits`；事后关开关不补扣。
-- **匿名结构样本**：`granted` 的生成结算后，`training_samples.store_training_sample` 抽取去掉全部文字/链接/联系方式的 HTML 骨架入 `training_samples`（不含 user/page id，按 `content_hash` 去重，`EXTRACTOR_VERSION` 区分抽取规则），关开关不撤回。
+- **授权优惠**：倍率读 `config/billing.json.training_discount_rate`（限 0.5–1.0，当前 0.9）。按批次快照判断，`granted` 时 `apply_training_discount` 向下取整（至少 1 积分），优惠额记 `credit_transactions.training_discount_credits`；事后关开关不补扣。前台文案统一写「积分优惠」，不写死折数，方便直接改配置调价。
+- **匿名结构样本**：`granted` 的生成结算后，`training_samples.store_training_sample` 抽取去掉文字/链接/联系方式的 HTML 骨架入 `training_samples`（不含 user/page id，按 `content_hash` 去重，`EXTRACTOR_VERSION` 区分抽取规则），关开关不撤回。
+- **成本只给管理员看**：生成进度、完成事件、会话详情和用户积分流水接口只向用户返回扣掉的积分和优惠（`credits_charged` / `discount_credits`），不再返回 `cost`、`raw_cost_cny`、`revenue_cny`；回放旧事件时也会去掉 `cost`。实际金额仍记在 `page_versions` 和 `credit_transactions` 里，供 `/admin` 与 `/ops` 读取。
 - 接口：`GET / PUT /api/privacy/preferences`（PUT 会给未登录访客懒建匿名身份）、`POST /api/privacy/notice-ack`。`/api/auth/me` 返回 `allow_training`、`needs_policy_notice`。
 - **举报**：公开页浮标「举报」跳平台 `/report?page=&slug=`（生成页 CSP 禁止直接请求接口）。`GET /api/reports/target`、`POST /api/reports`（同 IP 同页 24h 一次、每 IP 每日 20 次）；管理端 `GET /api/admin/reports?status=pending|taken_down|rejected|all`、`POST /api/admin/reports/{id}/review`（`takedown` / `reject` / `restore`）。下架即 `pages.moderation_status='blocked'`，`/p` 与 `/u` 返回 451「该页面因违规已下架」，不可再发布，案例墙同步过滤。
 
@@ -152,11 +153,11 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - `status`：普通状态文案。
 - `reasoning_delta`：模型流式返回的 `reasoning_content`。
 - `answer_started`：模型进入正式 HTML 输出阶段，前端开始展示“页面创建中”。
-- `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。`model_output` 完成时携带真实 `input_tokens`/`output_tokens` 及自算 `cost`（元）。
-- `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；可选携带 `usage` 与 `cost` 摘要。
+- `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。`model_output` 完成时携带真实 `input_tokens`/`output_tokens`。
+- `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；携带 `usage` 与 `billing`（扣掉的积分和授权优惠）。
 - `failed`：生成失败。
 
-`model_thinking` 节点承载模型 reasoning 内容，前端默认展开且支持收起。`model_output` 生成中优先展示估算 output tokens；完成后展示 API 返回的真实输入/输出 token，并在进度区下方显示费用摘要（按 `llm.models.json` 的 `pricing` 自算，含分档标签）。用量写入 `page_versions`（迁移 `008_llm_usage_cost.sql`）。
+`model_thinking` 节点承载模型 reasoning 内容，前端默认展开且支持收起。`model_output` 生成中优先展示估算 output tokens；完成后展示 API 返回的真实输入/输出 token，并在进度区下方显示消耗的积分与优惠。实际金额成本（按 `llm.models.json` 的 `pricing` 自算）只写入 `page_versions` 与 `credit_transactions` 供后台查看，不再下发给用户。
 
 ## 网页制作技能（page-skills）
 

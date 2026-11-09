@@ -1,0 +1,12 @@
+[
+  {"scene": "hook", "text": "简历发给 HR，对方多半是在手机上看。"},
+  {"scene": "hook", "text": "一份密密麻麻的 PDF，放大缩小翻半天，很可能就划走了。"},
+  {"scene": "intro", "text": "试试星页。打开浏览器就能用，不装软件，不写代码。"},
+  {"scene": "input", "text": "点「网页简历」，上传旧简历，或者直接粘贴一段经历。"},
+  {"scene": "models", "text": "同一份资料，交给几个国内大模型同时做，各出一版。"},
+  {"scene": "models", "text": "放在一起比，挑你最顺眼的那版。"},
+  {"scene": "result", "text": "做出来是一张能在手机上滑着看的网页，电话邮箱默认打码，需要纸质版也能直接打印。"},
+  {"scene": "share", "text": "发布后得到一条固定链接，微信里一点就开。之后再改，链接不变。"},
+  {"scene": "more", "text": "博主主页、产品落地页、活动邀请函，也是同样的做法。"},
+  {"scene": "cta", "text": "星页 StarPage，网址是 stars-page.com。", "speak": "星页 StarPage，网址是 stars 杠 page 点 com。"}
+]

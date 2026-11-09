@@ -1,0 +1,62 @@
+[
+  {
+    "scene": "hook",
+    "text": "简历发给 HR，对方多半是在手机上看。",
+    "start": 0.0,
+    "duration": 4.0
+  },
+  {
+    "scene": "hook",
+    "text": "一份密密麻麻的 PDF，放大缩小翻半天，很可能就划走了。",
+    "start": 4.35,
+    "duration": 6.0
+  },
+  {
+    "scene": "intro",
+    "text": "试试星页。打开浏览器就能用，不装软件，不写代码。",
+    "start": 10.7,
+    "duration": 5.76
+  },
+  {
+    "scene": "input",
+    "text": "点「网页简历」，上传旧简历，或者直接粘贴一段经历。",
+    "start": 16.81,
+    "duration": 5.04
+  },
+  {
+    "scene": "models",
+    "text": "同一份资料，交给几个国内大模型同时做，各出一版。",
+    "start": 22.2,
+    "duration": 4.72
+  },
+  {
+    "scene": "models",
+    "text": "放在一起比，挑你最顺眼的那版。",
+    "start": 27.27,
+    "duration": 2.72
+  },
+  {
+    "scene": "result",
+    "text": "做出来是一张能在手机上滑着看的网页，电话邮箱默认打码，需要纸质版也能直接打印。",
+    "start": 30.34,
+    "duration": 7.52
+  },
+  {
+    "scene": "share",
+    "text": "发布后得到一条固定链接，微信里一点就开。之后再改，链接不变。",
+    "start": 38.21,
+    "duration": 5.92
+  },
+  {
+    "scene": "more",
+    "text": "博主主页、产品落地页、活动邀请函，也是同样的做法。",
+    "start": 44.48,
+    "duration": 4.64
+  },
+  {
+    "scene": "cta",
+    "text": "星页 StarPage，网址是 stars-page.com。",
+    "start": 49.47,
+    "duration": 4.32
+  }
+]

@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="assets/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0f1630; }
+      #root {
+        position: relative; width: 100%; height: 100%; overflow: hidden;
+        font-family: sans-serif; color: #1c2541;
+      }
+      .layer { position: absolute; inset: 0; }
+      .bg-light {
+        background:
+          radial-gradient(900px 700px at 15% 8%, rgba(120, 140, 255, 0.35), transparent 60%),
+          radial-gradient(800px 700px at 95% 40%, rgba(186, 150, 255, 0.28), transparent 60%),
+          linear-gradient(180deg, #eef1ff 0%, #f6f3ff 100%);
+      }
+      .grid {
+        background-image:
+          linear-gradient(rgba(60, 80, 160, 0.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 80, 160, 0.06) 1px, transparent 1px);
+        background-size: 60px 60px;
+      }
+      .scene { width: 100%; height: 100%; }
+      .inner { position: absolute; inset: 0; }
+
+      /* 顶部标题区 */
+      .head { position: absolute; left: 80px; right: 80px; top: 170px; }
+      .kicker {
+        display: inline-block; font-size: 30px; font-weight: 700; letter-spacing: 4px;
+        color: #3b5bff; background: rgba(59, 91, 255, 0.1); padding: 10px 22px; border-radius: 999px;
+      }
+      .title { margin-top: 26px; font-size: 76px; font-weight: 700; line-height: 1.2; letter-spacing: 1px; }
+      .title em { font-style: normal; color: #3b5bff; }
+
+      /* 手机外框：屏幕 470x1017（390x844 视口） */
+      .phone {
+        position: absolute; width: 494px; height: 1041px; padding: 12px; border-radius: 64px;
+        background: #161a24; box-shadow: 0 50px 90px rgba(30, 40, 110, 0.35), inset 0 0 0 2px #2c3242;
+      }
+      .screen { position: relative; width: 470px; height: 1017px; border-radius: 52px; overflow: hidden; background: #fff; }
+      .screen img { display: block; width: 470px; }
+
+      /* 桌面浏览器卡片：内容 980x612（1440x900 视口） */
+      .browser {
+        position: absolute; left: 50px; width: 980px; border-radius: 26px; overflow: hidden; background: #fff;
+        box-shadow: 0 40px 90px rgba(30, 40, 110, 0.28), 0 0 0 1px rgba(30, 40, 110, 0.08);
+      }
+      .bar { height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 22px; background: #f3f4f8; }
+      .bar i { display: block; width: 14px; height: 14px; border-radius: 50%; background: #d5d8e2; }
+      .bar span { margin-left: 18px; font-size: 22px; color: #7b819a; }
+      .viewport { position: relative; width: 980px; height: 612px; overflow: hidden; }
+      .viewport img { display: block; width: 980px; height: 612px; }
+      .zoom { width: 980px; height: 612px; }
+
+      .tag {
+        display: inline-block; font-size: 32px; font-weight: 700; color: #1c2541; background: #fff;
+        padding: 16px 28px; border-radius: 999px; box-shadow: 0 14px 30px rgba(30, 40, 110, 0.15);
+      }
+      .tags { position: absolute; left: 0; right: 0; display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; }
+
+      /* 字幕 */
+      .cap { position: absolute; left: 70px; right: 70px; top: 1500px; display: flex; justify-content: center; }
+      .cap span {
+        display: block; max-width: 940px; text-align: center; font-size: 44px; line-height: 1.45; font-weight: 700;
+        color: #fff; background: rgba(16, 22, 48, 0.82); padding: 18px 34px; border-radius: 24px;
+      }
+
+      .brandmark { position: absolute; left: 80px; top: 80px; display: flex; align-items: center; gap: 14px; font-size: 30px; font-weight: 700; color: #1c2541; }
+      .brandmark img { width: 52px; height: 49px; }
+
+      /* 开场 */
+      #s-hook .dark { background: radial-gradient(900px 900px at 50% 40%, #1d2a5c, #0b1024 70%); }
+      #s-hook .title { color: #fff; }
+      #s-hook .title em { color: #ff7a59; }
+      .pdf { position: absolute; inset: 0; background: #fff; padding: 30px 26px; }
+      .pdf .row { height: 9px; border-radius: 4px; background: #c9ced9; margin-bottom: 9px; }
+      .pdf .box { border: 2px solid #c9ced9; height: 130px; margin: 18px 0; }
+      .pdf .h { height: 18px; width: 45%; background: #8a92a6; margin: 16px 0 14px; border-radius: 4px; }
+
+      /* 结尾 */
+      .cta { position: absolute; left: 0; right: 0; top: 520px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+      .cta img { width: 260px; height: 245px; }
+      .cta .name { margin-top: 40px; font-size: 96px; font-weight: 700; }
+      .cta .name em { font-style: normal; color: #3b5bff; }
+      .cta .sub { margin-top: 26px; font-size: 44px; color: #4a5272; }
+      .cta .url {
+        margin-top: 70px; font-size: 56px; font-weight: 700; color: #fff; background: #3b5bff;
+        padding: 26px 60px; border-radius: 999px; box-shadow: 0 24px 50px rgba(59, 91, 255, 0.35);
+      }
+      .link-pill {
+        position: absolute; left: 90px; right: 90px; top: 1290px; display: flex; align-items: center; gap: 20px;
+        background: #fff; border-radius: 30px; padding: 26px 32px; box-shadow: 0 24px 50px rgba(30, 40, 110, 0.2);
+        font-size: 36px; font-weight: 700; color: #1c2541;
+      }
+      .link-pill b { display: block; flex: none; width: 56px; height: 56px; border-radius: 16px; background: #3b5bff; }
+      .more-phone { position: absolute; display: block; width: 326px; height: 687px; }
+      .phone.mini { left: 0; top: 0; transform: scale(0.66); transform-origin: 0 0; }
+      .label { position: absolute; width: 330px; text-align: center; font-size: 34px; font-weight: 700; color: #1c2541; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1080" data-height="1920" data-duration="58.59">
+      <div id="bg" class="clip layer bg-light" data-start="0" data-duration="58.59" data-track-index="0">
+        <div class="layer grid"></div>
+      </div>
+
+      <!-- 1 开场：PDF 在手机上难读 -->
+      <section id="s-hook" class="clip scene" data-start="0.0" data-duration="11.3" data-track-index="1">
+        <div class="layer dark"></div>
+        <div class="inner" id="hook-in">
+          <div class="head">
+            <div class="title" id="hook-t1">简历发出去了</div>
+            <div class="title" id="hook-t2">HR 真的<em>点开</em>了吗？</div>
+          </div>
+          <div class="phone" id="hook-phone" style="left: 293px; top: 470px">
+            <div class="screen">
+              <div class="pdf" id="hook-pdf">
+                <div class="h"></div>
+                <div class="row"></div><div class="row" style="width: 80%"></div><div class="row"></div>
+                <div class="box"></div>
+                <div class="h"></div>
+                <div class="row"></div><div class="row"></div><div class="row" style="width: 70%"></div><div class="row"></div>
+                <div class="box"></div>
+                <div class="h"></div>
+                <div class="row"></div><div class="row" style="width: 85%"></div><div class="row"></div><div class="row"></div>
+                <div class="box"></div>
+                <div class="row"></div><div class="row" style="width: 60%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2 介绍：浏览器打开即用 -->
+      <section id="s-intro" class="clip scene" data-start="11.3" data-duration="6.11" data-track-index="1">
+        <div class="inner" id="intro-in">
+          <div class="head" style="text-align: center">
+            <img id="intro-logo" src="assets/logo.png" alt="" style="width: 150px; height: 141px; display: block; margin: 0 auto" />
+            <div class="title" id="intro-title">试试 <em>星页 StarPage</em></div>
+          </div>
+          <div class="more-phone" id="intro-phone" style="left: 337px; top: 500px; width: 405px; height: 854px">
+            <div class="phone" style="left: 0; top: 0; transform: scale(0.82); transform-origin: 0 0">
+              <div class="screen"><img src="assets/shots/首页-手机.png" alt="" /></div>
+            </div>
+          </div>
+          <div class="tags" id="intro-tags" style="top: 1365px">
+            <span class="tag">浏览器打开</span><span class="tag">不装软件</span><span class="tag">不写代码</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3 输入：选场景、粘贴经历 -->
+      <section id="s-input" class="clip scene" data-start="17.41" data-duration="5.39" data-track-index="1">
+        <div class="inner" id="input-in">
+          <div class="brandmark"><img src="assets/logo.png" alt="" />星页 StarPage</div>
+          <div class="head">
+            <span class="kicker">STEP 1</span>
+            <div class="title">选「网页简历」<br />贴上你的经历</div>
+          </div>
+          <div class="browser" id="input-browser" style="top: 720px">
+            <div class="bar"><i></i><i></i><i></i><span>stars-page.com</span></div>
+            <div class="viewport"><div class="zoom" id="input-zoom"><img src="assets/shots/工作区-1-填写.png" alt="" /></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4 多模型并排 -->
+      <section id="s-models" class="clip scene" data-start="22.8" data-duration="8.14" data-track-index="1">
+        <div class="inner" id="models-in">
+          <div class="brandmark"><img src="assets/logo.png" alt="" />星页 StarPage</div>
+          <div class="head">
+            <span class="kicker">STEP 2</span>
+            <div class="title">几个模型<em>同时做</em><br />各出一版</div>
+          </div>
+          <div class="browser" id="models-browser" style="top: 720px">
+            <div class="bar"><i></i><i></i><i></i><span>stars-page.com</span></div>
+            <div class="viewport">
+              <div class="zoom" id="models-zoom">
+                <img src="assets/shots/工作区-2-生成中.png" alt="" style="position: absolute; left: 0; top: 0" />
+                <img id="models-done" src="assets/shots/工作区-4-并排对比.png" alt="" style="position: absolute; left: 0; top: 0" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5 成品：手机滑动 -->
+      <section id="s-result" class="clip scene" data-start="30.94" data-duration="7.87" data-track-index="1">
+        <div class="inner" id="result-in">
+          <div class="brandmark"><img src="assets/logo.png" alt="" />星页 StarPage</div>
+          <div class="head" style="top: 150px">
+            <span class="kicker">STEP 3</span>
+            <div class="title">手机上<em>滑着看</em></div>
+          </div>
+          <div class="phone" id="result-phone" style="left: 293px; top: 420px">
+            <div class="screen"><img id="result-scroll" src="assets/shots/案例-简历-手机-整页.png" alt="" /></div>
+          </div>
+          <div class="tags" id="result-tags" style="top: 1340px">
+            <span class="tag">电话邮箱打码</span><span class="tag">可打印 / 存 PDF</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6 分享：固定链接 -->
+      <section id="s-share" class="clip scene" data-start="38.81" data-duration="6.27" data-track-index="1">
+        <div class="inner" id="share-in">
+          <div class="brandmark"><img src="assets/logo.png" alt="" />星页 StarPage</div>
+          <div class="head" style="top: 150px">
+            <span class="kicker">STEP 4</span>
+            <div class="title">一条<em>固定链接</em></div>
+          </div>
+          <div class="phone" id="share-phone" style="left: 293px; top: 400px">
+            <div class="screen"><img src="assets/shots/案例-简历-手机.png" alt="" /></div>
+          </div>
+          <div class="link-pill" id="share-link"><b></b>stars-page.com/u/p-5dbe5e19b2</div>
+        </div>
+      </section>
+
+      <!-- 7 更多场景 -->
+      <section id="s-more" class="clip scene" data-start="45.08" data-duration="4.99" data-track-index="1">
+        <div class="inner" id="more-in">
+          <div class="brandmark"><img src="assets/logo.png" alt="" />星页 StarPage</div>
+          <div class="head" style="top: 150px">
+            <div class="title">不止简历</div>
+          </div>
+          <div class="more-phone" style="left: 18px; top: 470px"><div class="phone mini"><div class="screen"><img src="assets/shots/案例-博主主页-手机.png" alt="" /></div></div></div>
+          <div class="more-phone" style="left: 377px; top: 430px"><div class="phone mini"><div class="screen"><img src="assets/shots/案例-落地页-手机.png" alt="" /></div></div></div>
+          <div class="more-phone" style="left: 736px; top: 470px"><div class="phone mini"><div class="screen"><img src="assets/shots/案例-邀请函-手机.png" alt="" /></div></div></div>
+          <div class="label more-label" style="left: 10px; top: 1190px">博主主页</div>
+          <div class="label more-label" style="left: 375px; top: 1150px">产品落地页</div>
+          <div class="label more-label" style="left: 730px; top: 1190px">活动邀请函</div>
+        </div>
+      </section>
+
+      <!-- 8 结尾 -->
+      <section id="s-cta" class="clip scene" data-start="50.07" data-duration="8.52" data-track-index="1">
+        <div class="inner" id="cta-in">
+          <div class="cta">
+            <img id="cta-logo" src="assets/logo.png" alt="" />
+            <div class="name" id="cta-name">星页 <em>StarPage</em></div>
+            <div class="sub" id="cta-sub">把资料，变成能发出去的网页</div>
+            <div class="url" id="cta-url">stars-page.com</div>
+          </div>
+        </div>
+      </section>
+
+      <div id="cap-01" class="clip cap" data-start="0.6" data-duration="4.35" data-track-index="3"><span data-t="0.6">简历发给 HR，对方多半是在手机上看。</span></div>
+      <div id="cap-02" class="clip cap" data-start="4.95" data-duration="6.35" data-track-index="3"><span data-t="4.95">一份密密麻麻的 PDF，放大缩小翻半天，很可能就划走了。</span></div>
+      <div id="cap-03" class="clip cap" data-start="11.3" data-duration="6.11" data-track-index="3"><span data-t="11.3">试试星页。打开浏览器就能用，不装软件，不写代码。</span></div>
+      <div id="cap-04" class="clip cap" data-start="17.41" data-duration="5.39" data-track-index="3"><span data-t="17.41">点「网页简历」，上传旧简历，或者直接粘贴一段经历。</span></div>
+      <div id="cap-05" class="clip cap" data-start="22.8" data-duration="5.07" data-track-index="3"><span data-t="22.8">同一份资料，交给几个国内大模型同时做，各出一版。</span></div>
+      <div id="cap-06" class="clip cap" data-start="27.87" data-duration="3.07" data-track-index="3"><span data-t="27.87">放在一起比，挑你最顺眼的那版。</span></div>
+      <div id="cap-07" class="clip cap" data-start="30.94" data-duration="7.87" data-track-index="3"><span data-t="30.94">做出来是一张能在手机上滑着看的网页，电话邮箱默认打码，需要纸质版也能直接打印。</span></div>
+      <div id="cap-08" class="clip cap" data-start="38.81" data-duration="6.27" data-track-index="3"><span data-t="38.81">发布后得到一条固定链接，微信里一点就开。之后再改，链接不变。</span></div>
+      <div id="cap-09" class="clip cap" data-start="45.08" data-duration="4.99" data-track-index="3"><span data-t="45.08">博主主页、产品落地页、活动邀请函，也是同样的做法。</span></div>
+      <div id="cap-10" class="clip cap" data-start="50.07" data-duration="4.72" data-track-index="3"><span data-t="50.07">星页 StarPage，网址是 stars-page.com。</span></div>
+      <audio id="voice" src="assets/voice.wav" data-start="0.6" data-duration="53.79" data-track-index="4" data-volume="1"></audio>
+    </div>
+
+    <script>
+      const S = {"hook": {"start": 0.0, "dur": 11.3}, "intro": {"start": 11.3, "dur": 6.11}, "input": {"start": 17.41, "dur": 5.39}, "models": {"start": 22.8, "dur": 8.14}, "result": {"start": 30.94, "dur": 7.87}, "share": {"start": 38.81, "dur": 6.27}, "more": {"start": 45.08, "dur": 4.99}, "cta": {"start": 50.07, "dur": 8.52}};
+      const tl = gsap.timeline({ paused: true });
+      const E = "power3.out";
+
+      // 每段：淡入、结尾淡出
+      for (const [key, s] of Object.entries(S)) {
+        const el = "#" + key + "-in";
+        tl.fromTo(el, { opacity: 0 }, { opacity: 1, duration: 0.35, ease: "none" }, s.start);
+        if (key !== "cta") tl.to(el, { opacity: 0, duration: 0.3, ease: "none" }, s.start + s.dur - 0.3);
+      }
+      document.querySelectorAll(".cap span").forEach((span) => {
+        const t = parseFloat(span.dataset.t);
+        tl.fromTo(span, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.25, ease: E }, t);
+      });
+
+      // 1 开场
+      let t = S.hook.start;
+      tl.fromTo("#hook-t1", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, t + 0.2);
+      tl.fromTo("#hook-t2", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, t + 0.7);
+      tl.fromTo("#hook-phone", { y: 120, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: E }, t + 0.4);
+      tl.fromTo("#hook-pdf", { scale: 1, x: 0, y: 0 }, { scale: 2.4, x: 160, y: 260, duration: 1.4, ease: "power2.inOut" }, t + 4.4);
+      tl.to("#hook-pdf", { scale: 1.6, x: -120, y: -40, duration: 1.2, ease: "power2.inOut" }, t + 6.0);
+      tl.to("#hook-pdf", { scale: 1, x: 0, y: 0, duration: 1.0, ease: "power2.inOut" }, t + 7.4);
+      tl.to("#hook-phone", { y: 900, rotation: -8, duration: 0.9, ease: "power2.in" }, t + 9.3);
+
+      // 2 介绍
+      t = S.intro.start;
+      tl.fromTo("#intro-logo", { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.7, ease: "back.out(1.8)" }, t + 0.1);
+      tl.fromTo("#intro-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, t + 0.4);
+      tl.fromTo("#intro-phone", { y: 260, opacity: 0 }, { y: 0, opacity: 1, duration: 0.9, ease: E }, t + 0.6);
+      tl.fromTo("#intro-tags .tag", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.5, ease: E }, t + 2.4);
+
+      // 3 输入：推近输入框
+      t = S.input.start;
+      tl.fromTo("#input-browser", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: E }, t + 0.1);
+      tl.fromTo("#input-zoom", { scale: 1, x: 0, y: 0 }, { scale: 1.7, x: -40, y: 10, duration: 2.2, ease: "power2.inOut" }, t + 1.2);
+
+      // 4 多模型：生成中 → 完成，推近结果区
+      t = S.models.start;
+      tl.fromTo("#models-browser", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: E }, t + 0.1);
+      tl.fromTo("#models-done", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "none" }, t + 3.0);
+      tl.fromTo("#models-zoom", { scale: 1, x: 0, y: 0 }, { scale: 1.6, x: -310, y: 0, duration: 2.0, ease: "power2.inOut" }, t + 4.2);
+
+      // 5 成品：手机里往下滚
+      t = S.result.start;
+      tl.fromTo("#result-phone", { y: 160, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: E }, t + 0.1);
+      tl.fromTo("#result-scroll", { y: 0 }, { y: -1900, duration: 5.2, ease: "power1.inOut" }, t + 1.2);
+      tl.fromTo("#result-tags .tag", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.8, ease: E }, t + 3.2);
+
+      // 6 分享
+      t = S.share.start;
+      tl.fromTo("#share-phone", { y: 160, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, ease: E }, t + 0.1);
+      tl.fromTo("#share-link", { y: 60, opacity: 0, scale: 0.9 }, { y: 0, opacity: 1, scale: 1, duration: 0.6, ease: "back.out(1.6)" }, t + 1.0);
+
+      // 7 更多场景
+      t = S.more.start;
+      tl.fromTo("#s-more .more-phone", { y: 200, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, stagger: 0.45, ease: E }, t + 0.2);
+      tl.fromTo(".more-label", { opacity: 0 }, { opacity: 1, duration: 0.4, stagger: 0.45, ease: "none" }, t + 0.6);
+
+      // 8 结尾
+      t = S.cta.start;
+      tl.fromTo("#cta-logo", { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.8, ease: "back.out(1.8)" }, t + 0.1);
+      tl.fromTo("#cta-name", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, t + 0.5);
+      tl.fromTo("#cta-sub", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, t + 0.9);
+      tl.fromTo("#cta-url", { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.6, ease: "back.out(1.6)" }, t + 1.4);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

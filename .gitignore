@@ -9,3 +9,15 @@ config/*.env
 # Python 虚拟环境
 .venv/
 code/backend/.venv/
+
+# hyperframes 视频工程的中间产物（逐句配音、检查截帧、渲染日志）
+data/视频/**/assets/voice-parts/
+data/视频/**/snapshots/
+data/视频/**/renders.log
+data/视频/**/renders/.hf-segments/
+
+# 小红书登录二维码，短时有效，不入库
+data/growth/xhs/login-qr.png
+
+# 小红书登录态，含账号会话，严禁入库
+cookies.json
