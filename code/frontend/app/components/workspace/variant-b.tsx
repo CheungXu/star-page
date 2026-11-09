@@ -42,7 +42,7 @@ function LiveCard({ run }: { run: WorkspaceRun }) {
 }
 
 export function VariantBProgress() {
-  const { runs, elapsed, isGenerating } = useWorkspace();
+  const { runs, elapsed, isGenerating, activeModelKey, selectModel } = useWorkspace();
   const [open, setOpen] = useState(false);
   const done = runs.filter((run) => run.status === "completed").length;
   const clock = batchElapsed(runs, elapsed);
@@ -52,10 +52,10 @@ export function VariantBProgress() {
   const title = isGenerating ? `${runs.length} 个模型生成中` : `${done}/${runs.length} 已完成`;
   const sub = isGenerating
     ? `已写 ${formatTokens(tokens)} tokens`
-    : `${formatTokens(tokens)} tokens${credits.hasBilling ? ` · 花费 ${credits.charged} 积分` : ""}`;
+    : `${formatTokens(tokens)} tokens${credits.hasBilling ? ` · ${credits.charged} 积分` : ""}`;
 
   return (
-    <div className="vb-status">
+    <div className={`vb-status ${open ? "is-open" : ""}`}>
       <button type="button" className="vb-pill" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className={`vb-pill-dot ${isGenerating ? "is-run" : "is-done"}`} />
         <span className="vb-pill-text">
@@ -70,16 +70,88 @@ export function VariantBProgress() {
       {open && (
         <ul className="vb-mini">
           {runs.map((run) => (
-            <li key={run.taskId || run.modelKey}>
-              <StatusMark status={run.status} />
-              <span>{run.modelLabel}</span>
-              <em>{stageLabel(run)}</em>
-              <b>{formatTokens(outputTokenCount(run))}</b>
-            </li>
+            <MiniRow
+              key={run.taskId || run.modelKey}
+              run={run}
+              active={run.modelKey === activeModelKey}
+              onSelect={() => selectModel(run.modelKey)}
+            />
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+const PHASES = [
+  { label: "构思", from: 0, to: 30 },
+  { label: "编写", from: 30, to: 90 },
+  { label: "发布", from: 90, to: 100 },
+];
+
+const SHORT_STAGE: Record<string, string> = {
+  读取资料: "读取",
+  整理资料: "整理",
+  构思中: "构思",
+  编写页面: "编写",
+  发布中: "发布",
+  准备中: "准备",
+};
+
+function MiniRow({ run, active, onSelect }: { run: WorkspaceRun; active: boolean; onSelect: () => void }) {
+  const { elapsed } = useWorkspace();
+  const progress = estimateProgress(run, elapsed(run));
+  const tokens = outputTokenCount(run);
+  const time = elapsed(run);
+  const pending = run.status === "thinking" || run.status === "creating";
+  const charged = run.usageSummary?.creditsCharged;
+  const discount = run.usageSummary?.discountCredits;
+  const failedAt = run.status === "failed" ? PHASES.findIndex((phase) => progress < phase.to) : -1;
+
+  return (
+    <li className={`vb-mini-row is-${run.status} ${active ? "is-active" : ""}`}>
+      <button type="button" onClick={onSelect} title={run.errorMessage || `在右侧查看 ${run.modelLabel}`}>
+        <span className="vb-mini-top">
+          <StatusMark status={run.status} />
+          <span className="vb-mini-name">{run.modelLabel}</span>
+          <span
+            className={`vb-mini-cost ${typeof charged === "number" ? "is-charged" : ""}`}
+            title={discount ? `已优惠 ${discount} 积分` : undefined}
+          >
+            {typeof charged === "number" ? (
+              <>
+                <b>{charged}</b> 积分
+                {discount ? <i aria-label="有优惠" /> : null}
+              </>
+            ) : pending ? (
+              "结算中"
+            ) : (
+              "—"
+            )}
+          </span>
+        </span>
+        <span className="vb-mini-bottom">
+          <span className="vb-pips" aria-label={`阶段：${stageLabel(run)}`}>
+            {PHASES.map((phase, index) => {
+              const fill =
+                run.status === "completed"
+                  ? 100
+                  : Math.max(0, Math.min(100, ((progress - phase.from) / (phase.to - phase.from)) * 100));
+              const state =
+                index === failedAt ? "is-fail" : fill >= 100 ? "is-full" : pending && fill > 0 ? "is-live" : "";
+              return (
+                <span key={phase.label} className={`vb-pip ${state}`} title={phase.label}>
+                  <span style={{ width: `${index === failedAt ? 100 : fill}%` }} />
+                </span>
+              );
+            })}
+          </span>
+          <span className="vb-mini-stage">{SHORT_STAGE[stageLabel(run)] ?? stageLabel(run)}</span>
+          <span className="vb-mini-num">{tokens > 0 ? formatTokens(tokens) : "—"}</span>
+          <span className="vb-mini-num vb-mini-time">{time !== null ? formatDuration(time) : ""}</span>
+        </span>
+      </button>
+    </li>
   );
 }
 

@@ -104,12 +104,12 @@
 
 .workspace-layout.layout-b,
 .workspace-layout.layout-b.compare-mode {
-  grid-template-columns: 252px 300px minmax(0, 1fr);
+  grid-template-columns: 252px 320px minmax(0, 1fr);
 }
 
 .workspace-layout.layout-b.sidebar-collapsed,
 .workspace-layout.layout-b.compare-mode.sidebar-collapsed {
-  grid-template-columns: 72px 300px minmax(0, 1fr);
+  grid-template-columns: 72px 320px minmax(0, 1fr);
 }
 
 /* ---------- 方案 A：轻量看板 ---------- */
@@ -450,7 +450,16 @@
 
 /* ---------- 方案 B：沉浸画廊 ---------- */
 
-.vb-status { margin-top: 2px; }
+.vb-status {
+  margin-top: 2px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: #fff;
+  transition: box-shadow 0.18s ease;
+}
+
+.vb-status.is-open { box-shadow: var(--shadow-md); }
 
 .vb-pill {
   display: flex;
@@ -458,14 +467,13 @@
   gap: 10px;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--color-border) !important;
-  border-radius: 14px;
-  background: #fff !important;
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 650;
   text-align: left;
 }
+
+.vb-pill:hover .vb-pill-more { color: var(--color-primary); }
 
 .vb-pill-text {
   display: flex;
@@ -491,14 +499,10 @@
   color: var(--color-text-tertiary);
 }
 
-.vb-pill-more {
-  flex-shrink: 0;
-  font-size: 11px;
-}
-
 .vb-pill-dot {
   width: 8px;
   height: 8px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--color-success);
 }
@@ -508,30 +512,165 @@
   animation: dot-breathe 1.5s ease-in-out infinite;
 }
 
-.vb-pill-more { margin-left: auto; color: var(--color-text-muted); }
+.vb-pill-more {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
 
+/* 展开明细：两行一组，上行"谁 + 花多少"，下行"走到哪 + 写了多少 + 用了多久" */
 .vb-mini {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 8px 0 0;
-  padding: 8px 10px;
+  margin: 0;
+  padding: 4px 6px 6px;
   list-style: none;
-  border-radius: 12px;
-  background: var(--color-surface-soft);
+  border-top: 1px solid var(--color-border);
+  animation: vb-mini-in 0.2s ease;
 }
 
-.vb-mini li {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto auto;
-  gap: 8px;
+@keyframes vb-mini-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.vb-mini-row button {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.vb-mini-row button:hover { background: var(--color-surface-soft); }
+.vb-mini-row.is-active button { background: var(--color-primary-soft); }
+
+.vb-mini-top,
+.vb-mini-bottom {
+  display: flex;
   align-items: center;
-  color: var(--color-text-secondary);
-  font-size: 12px;
+  min-width: 0;
 }
 
-.vb-mini em { font-style: normal; color: var(--color-text-tertiary); }
-.vb-mini b { font-weight: 700; }
+.vb-mini-top { gap: 7px; }
+.vb-mini-bottom { gap: 8px; padding-left: 23px; }
+
+.vb-mini-top .vp-mark { width: 16px; height: 16px; font-size: 9px; }
+
+.vb-mini-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-mini-cost {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.vb-mini-cost.is-charged {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+.vb-mini-cost b {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-mini-cost i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  vertical-align: 2px;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+
+.vb-pips {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 3px;
+}
+
+.vb-pip {
+  position: relative;
+  width: 16px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.vb-pip span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 0.4s ease;
+}
+
+.vb-pip.is-live span {
+  background: linear-gradient(90deg, var(--color-primary) 0%, #8fb0ff 50%, var(--color-primary) 100%);
+  background-size: 200% 100%;
+  animation: vb-pip-flow 1.2s linear infinite;
+}
+
+@keyframes vb-pip-flow {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+.vb-mini-row.is-completed .vb-pip span { background: var(--color-success); }
+.vb-mini-row.is-failed .vb-pip span { background: rgba(180, 35, 24, 0.3); }
+.vb-mini-row.is-failed .vb-pip.is-fail span { background: var(--color-danger); }
+
+.vb-mini-stage {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.vb-mini-row.is-failed .vb-mini-stage { color: var(--color-danger); }
+
+.vb-mini-num {
+  flex-shrink: 0;
+  min-width: 34px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.vb-mini-time {
+  min-width: 40px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
 
 .vb-carousel-btn,
 .vc-all {
@@ -1079,7 +1218,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .vp-mark.is-run,
-  .vb-pill-dot.is-run { animation: none; }
+  .vb-pill-dot.is-run,
+  .vb-pip.is-live span,
+  .vb-mini { animation: none; }
   .va-total span,
   .va-bar span,
   .vc-fill,
