@@ -44,14 +44,17 @@ export type WorkspaceRun = {
   errorMessage: string;
   progressSteps: ProgressStep[];
   usageSummary?: UsageCostSummary;
-  /** 演示模式用模拟时间，真实生成没有这个字段。 */
-  simulatedElapsedMs?: number;
+  /** 服务端记录的生成用时；有值时优先于前端计时（从历史还原的结果没有前端计时）。 */
+  durationMs?: number;
 };
+
+/** 这一轮基于哪个结果修改。roundIndex 是被选结果所在的轮次（从 0 开始）。 */
+export type RoundBase = { modelKey: string; modelLabel: string; roundIndex: number };
 
 /** 会话里已经结束的一轮：用户这轮说了什么、基于哪个结果改、各模型的产出。 */
 export type WorkspaceRound = {
   prompt: string;
-  basedOn: { modelKey: string; modelLabel: string } | null;
+  basedOn: RoundBase | null;
   runs: WorkspaceRun[];
 };
 

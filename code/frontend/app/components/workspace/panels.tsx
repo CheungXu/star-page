@@ -59,7 +59,8 @@ export type PastRoundProps = {
   onView: () => void;
 };
 
-export function VariantBProgress({ history }: { history?: PastRoundProps } = {}) {
+/** 对话栏里的进度回复气泡。传 history 时是已结束轮次的摘要卡，点击切换右侧结果。 */
+export function GenerationProgress({ history }: { history?: PastRoundProps } = {}) {
   const { runs, elapsed, isGenerating, activeModelKey, selectModel, roundNav } = useWorkspace();
   const [open, setOpen] = useState(false);
   const done = runs.filter((run) => run.status === "completed").length;
@@ -67,6 +68,7 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
   const tokens = sumOutputTokens(runs);
   const clockText = clock === null ? "" : isGenerating ? formatClock(clock) : formatDuration(clock);
   const credits = sumCredits(runs);
+  const settled = runs.every((run) => run.status === "completed" || run.status === "failed");
   const insights = batchInsights(runs, elapsed);
   const title = isGenerating ? `${runs.length} 个模型生成中` : `${done}/${runs.length} 已完成`;
   const sub = isGenerating ? (
@@ -169,7 +171,7 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
                   {credits.charged}
                 </>
               ) : (
-                "…"
+                settled ? "—" : "…"
               )}
             </span>
           </div>
@@ -366,7 +368,8 @@ function PastRoundChip() {
   );
 }
 
-export function VariantBResults() {
+/** 右侧结果区：1-2 个模型并排，3 个以上舞台 + 胶片条 + 全屏轮播。 */
+export function GenerationResults() {
   const { runs, activeModelKey, selectModel, isUnseen, renderPreview, elapsed, roundNav } = useWorkspace();
   const [carousel, setCarousel] = useState(false);
   const many = runs.length >= 3;
@@ -461,7 +464,7 @@ export function VariantBResults() {
                       <b>{liveCount(run)}</b>
                     </span>
                   )}
-                  {isUnseen(run.modelKey) && <b className="va-unseen" aria-label="新完成" />}
+                  {isUnseen(run.modelKey) && <b className="vb-unseen" aria-label="新完成" />}
                 </span>
                 <span className="vb-frame-meta">
                   <i style={{ background: modelAccent(run.modelKey) }} />

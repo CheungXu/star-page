@@ -1,10 +1,6 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { VariantAProgress, VariantAResults } from "./variant-a";
-import { VariantBProgress, VariantBResults, type PastRoundProps } from "./variant-b";
-import { VariantCProgress, VariantCResults } from "./variant-c";
-import { VARIANT, VARIANT_PORTS } from "./variant";
 import type { AppliedSkill, PreviewPresentation, RoundNav, WorkspaceRun } from "./types";
 
 export type RenderPreview = (
@@ -73,7 +69,7 @@ function useRunTimings(runs: WorkspaceRun[]) {
 
   return useCallback(
     (run: WorkspaceRun) => {
-      if (typeof run.simulatedElapsedMs === "number") return run.simulatedElapsedMs;
+      if (typeof run.durationMs === "number") return run.durationMs;
       const item = meta[run.taskId || run.modelKey];
       if (!item) return null;
       return (item.endedAt ?? now) - item.startedAt;
@@ -162,66 +158,6 @@ export function WorkspaceProvider({
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
-}
-
-export function ProgressSlot() {
-  if (VARIANT.id === "B") return <VariantBProgress />;
-  if (VARIANT.id === "C") return <VariantCProgress />;
-  return <VariantAProgress />;
-}
-
-/** 已结束的一轮在对话栏里的摘要卡。只有方案 B 做了专门的历史样式，A/C 沿用进度卡。 */
-export function PastRoundSlot(props: PastRoundProps) {
-  if (VARIANT.id === "B") return <VariantBProgress history={props} />;
-  if (VARIANT.id === "C") return <VariantCProgress />;
-  return <VariantAProgress />;
-}
-
-export function ResultsSlot() {
-  if (VARIANT.id === "B") return <VariantBResults />;
-  if (VARIANT.id === "C") return <VariantCResults />;
-  return <VariantAResults />;
-}
-
-export function VariantBadge() {
-  const [location, setLocation] = useState<{ hostname: string; protocol: string; search: string } | null>(null);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setLocation({ hostname: window.location.hostname, protocol: window.location.protocol, search: window.location.search });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  const demoCount = location ? new URLSearchParams(location.search).get("demo") : null;
-  return (
-    <div className="variant-tag" aria-label="当前预览方案">
-      <span className="variant-dot" />
-      <span>
-        方案 {VARIANT.id} · {VARIANT.name}
-        {demoCount ? ` · 演示 ${demoCount} 个模型` : ""}
-      </span>
-      {location && (
-        <span className="variant-links">
-          {VARIANT_PORTS.map((item) => (
-            <a
-              key={item.id}
-              href={`${location.protocol}//${location.hostname}:${item.port}/${location.search}`}
-              className={item.id === VARIANT.id ? "is-current" : ""}
-              title={`方案 ${item.id} · ${item.name}`}
-            >
-              {item.id}
-            </a>
-          ))}
-          {demoCount && (
-            <a href={`/${location.search}`} title="从头重播演示">
-              重播
-            </a>
-          )}
-        </span>
-      )}
-    </div>
-  );
 }
 
 export function useArrowModelNav(enabled: boolean) {

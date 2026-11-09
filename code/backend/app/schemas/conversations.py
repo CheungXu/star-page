@@ -47,6 +47,8 @@ class ConversationNode(BaseModel):
     page_url: str
     usage: ConversationUsage | None = None
     billing: ConversationBilling | None = None
+    # 生成任务从开始到结束的用时；任务未结束或缺时间戳时为空。
+    duration_ms: int | None = None
 
 
 class ConversationBatch(BaseModel):

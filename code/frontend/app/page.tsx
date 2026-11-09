@@ -12,12 +12,11 @@ import { LEGAL_POLICY_VERSION } from "./legal/docs";
 import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
-import "./components/workspace/variants.css";
+import "./components/workspace/workspace.css";
 import { RoundSource } from "./components/workspace/bits";
-import { PastRoundSlot, ProgressSlot, ResultsSlot, VariantBadge, WorkspaceProvider } from "./components/workspace/context";
-import { buildDemoHistory, demoRound, readDemoCount, readDemoFreezeSeconds, readDemoRounds } from "./components/workspace/demo";
-import type { PreviewPresentation, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
-import { VARIANT } from "./components/workspace/variant";
+import { WorkspaceProvider } from "./components/workspace/context";
+import { GenerationProgress, GenerationResults } from "./components/workspace/panels";
+import type { PreviewPresentation, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
 
@@ -134,6 +133,7 @@ type RunState = {
   errorMessage: string;
   progressSteps: ProgressStep[];
   usageSummary?: UsageCostSummary;
+  durationMs?: number;
 };
 
 type StoredSession = {
@@ -148,8 +148,12 @@ type StoredSession = {
   appliedSkillName?: string | null;
   runs: RunState[];
   roundIndex: number;
+  /** 用户已选、还没提交的续改基础。 */
   basePageId?: string;
   baseModelLabel?: string;
+  /** 当前轮之前已结束的轮次，以及当前轮基于哪个结果。 */
+  pastRounds?: WorkspaceRound[];
+  currentBasedOn?: RoundBase | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -190,6 +194,7 @@ type ConversationNodeResponse = {
   page_url: string;
   usage?: ApiUsagePayload | null;
   billing?: { credits_charged?: number; discount_credits?: number } | null;
+  duration_ms?: number | null;
 };
 
 type ConversationBatchResponse = {
@@ -761,8 +766,6 @@ function PreviewCell({
   onRequireLogin,
   onNotice,
   presentation = "default",
-  continueLabel,
-  continueActiveLabel,
   onFrame,
 }: {
   run: RunState;
@@ -776,8 +779,6 @@ function PreviewCell({
   onRequireLogin: (message: string) => void;
   onNotice: (message: string) => void;
   presentation?: PreviewPresentation;
-  continueLabel?: string;
-  continueActiveLabel?: string;
   onFrame?: (node: HTMLIFrameElement | null) => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -811,7 +812,7 @@ function PreviewCell({
   }, [posterOpen]);
 
   useEffect(() => {
-    if (run.status !== "completed" || !run.pageId || run.pageId.startsWith("demo-")) return;
+    if (run.status !== "completed" || !run.pageId) return;
     let cancelled = false;
     void apiFetch(`/api/pages/${run.pageId}/stats`).then(async (response) => {
       if (!response.ok || cancelled) return;
@@ -960,7 +961,7 @@ function PreviewCell({
                   title={`${run.modelLabel} 生成页面预览`}
                   src={absoluteUrl}
                   onLoad={handlePreviewLoad}
-                  sandbox={absoluteUrl.includes("/demo-result") ? "allow-scripts allow-same-origin allow-popups" : "allow-scripts allow-popups allow-popups-to-escape-sandbox"}
+                  sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
                   style={iframeStyle}
                 />
               </div>
@@ -997,7 +998,7 @@ function PreviewCell({
             {canContinue && (
               <button className="continue-button" type="button" onClick={onContinue} aria-pressed={selectedAsBase}>
                 <span className="button-icon" aria-hidden="true"><BranchIcon /></span>
-                {selectedAsBase ? (continueActiveLabel ?? "已选为基础") : (continueLabel ?? "以此结果继续")}
+                {selectedAsBase ? "已选为基础" : "以此结果继续"}
               </button>
             )}
           </div>
@@ -1343,9 +1344,9 @@ export default function HomePage() {
   const [appliedSkill, setAppliedSkill] = useState<{ key: string; name: string } | null>(null);
   const [roundIndex, setRoundIndex] = useState(0);
   const [continueBase, setContinueBase] = useState<{ pageId: string; modelLabel: string } | null>(null);
-  // 已结束的轮次与当前轮的来源。目前只有演示模式会填，接入后端时从会话详情的 batches 还原。
+  // 已结束的轮次与当前轮的来源：会话内提交新一轮时归档上一轮，打开历史时从会话详情的 batches 还原。
   const [pastRounds, setPastRounds] = useState<WorkspaceRound[]>([]);
-  const [currentBasedOn, setCurrentBasedOn] = useState<WorkspaceRound["basedOn"]>(null);
+  const [currentBasedOn, setCurrentBasedOn] = useState<RoundBase | null>(null);
   const [viewedRound, setViewedRound] = useState<{ index: number; modelKey: string } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPromptAttention, setIsPromptAttention] = useState(false);
@@ -1362,6 +1363,7 @@ export default function HomePage() {
   const activeScene = scenes.find((item) => item.key === activeSceneKey) ?? null;
 
   const eventSourcesRef = useRef<EventSource[]>([]);
+  const runStartedAtRef = useRef<Record<string, number>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragCounterRef = useRef(0);
@@ -1454,7 +1456,6 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    if (readDemoCount()) return;
     if (!hasHydratedRef.current || phase === "idle" || !conversationId) return;
 
     const now = new Date().toISOString();
@@ -1472,11 +1473,13 @@ export default function HomePage() {
       roundIndex,
       basePageId: continueBase?.pageId,
       baseModelLabel: continueBase?.modelLabel,
+      pastRounds,
+      currentBasedOn,
       createdAt: readCurrentSession()?.createdAt ?? now,
       updatedAt: now,
     };
     writeCurrentSession(session);
-  }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, appliedSkill, roundIndex, continueBase]);
+  }, [phase, conversationId, authUser?.id, batchId, runs, submittedPrompt, submittedFileNames, selectedModelKeys, appliedSkill, roundIndex, continueBase, pastRounds, currentBasedOn]);
 
   async function initializeAuthState(): Promise<AuthUser | null> {
     const user = await loadMe();
@@ -1646,35 +1649,6 @@ export default function HomePage() {
     };
   }, [isModelMenuOpen]);
 
-  useEffect(() => {
-    const count = readDemoCount();
-    if (!count) return;
-    const frozen = readDemoFreezeSeconds();
-    const rounds = readDemoRounds();
-    const startedAt = Date.now() - (frozen ?? 0) * 1000;
-    const history = buildDemoHistory(count, rounds);
-    const publish = () => {
-      const elapsed = frozen != null ? frozen * 1000 : Date.now() - startedAt;
-      const current = demoRound(rounds - 1, count, elapsed);
-      setPhase("active");
-      setSubmittedPrompt(current.prompt);
-      setSubmittedFileNames([]);
-      setConversationId("");
-      setBatchId("");
-      setRoundIndex(rounds - 1);
-      setPastRounds(history);
-      setCurrentBasedOn(current.basedOn);
-      setRuns(current.runs as RunState[]);
-    };
-    const kick = window.setTimeout(publish, 0);
-    if (frozen != null) return () => window.clearTimeout(kick);
-    const timer = window.setInterval(publish, 400);
-    return () => {
-      window.clearTimeout(kick);
-      window.clearInterval(timer);
-    };
-  }, []);
-
   function toggleModel(key: string) {
     const model = availableModels.find((item) => item.key === key);
     // 匿名：高价模型可见但不可选，点击轻提示引导注册。
@@ -1758,8 +1732,21 @@ export default function HomePage() {
     const pendingRuns: RunState[] = selectedModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), hasFile));
 
     const shownPrompt = trimmedPrompt || effectivePrompt;
+    const submittedAt = currentTimeMs();
+    const finishedRound: WorkspaceRound | null =
+      inConversation && runs.length > 0
+        ? { prompt: submittedPrompt, basedOn: currentBasedOn, runs: runs.map((run) => ({ ...run, reasoning: "" })) }
+        : null;
+    const nextBasedOn = inConversation && continueBase ? locateRoundBase(continueBase.pageId) : null;
 
     playTransition(() => {
+      if (finishedRound) {
+        setPastRounds((current) => [...current, finishedRound]);
+      } else if (!inConversation) {
+        setPastRounds([]);
+      }
+      setCurrentBasedOn(nextBasedOn);
+      setViewedRound(null);
       setPhase("active");
       setSubmittedPrompt(shownPrompt);
       setSubmittedFileNames(fileNames);
@@ -1835,6 +1822,9 @@ export default function HomePage() {
       if (fileInputRef.current) fileInputRef.current.value = "";
 
       const nextRuns = data.runs.map((run) => makeRunFromResponse(run, hasFile));
+      nextRuns.forEach((run) => {
+        runStartedAtRef.current[run.taskId] = submittedAt;
+      });
       setRuns(nextRuns);
       setActiveModelKey(nextRuns[0]?.modelKey ?? "");
       void loadHistory();
@@ -1855,6 +1845,11 @@ export default function HomePage() {
 
     const patch = (updater: (run: RunState) => RunState) => {
       setRuns((current) => current.map((run) => (run.taskId === taskId ? updater(run) : run)));
+    };
+    // 只有本次会话里发起的任务知道起点；从历史恢复后重连的任务交给工作区自己计时。
+    const finishedDuration = (run: RunState) => {
+      const startedAt = runStartedAtRef.current[taskId];
+      return run.durationMs ?? (startedAt ? Date.now() - startedAt : undefined);
     };
 
     source.addEventListener("status", (event) => {
@@ -1922,6 +1917,7 @@ export default function HomePage() {
         pageUrl: payload.url ?? run.pageUrl,
         pageId: payload.page_id ?? run.pageId,
         usageSummary: buildUsageSummary(payload) ?? run.usageSummary,
+        durationMs: finishedDuration(run),
         progressSteps: run.progressSteps.map((step) => ({
           ...step,
           status: step.status === "pending" || step.status === "running" ? "completed" : step.status,
@@ -1939,6 +1935,7 @@ export default function HomePage() {
         status: "failed",
         statusText: "生成失败",
         errorMessage: payload.message ?? "页面生成失败，请稍后重试。",
+        durationMs: finishedDuration(run),
         progressSteps: run.progressSteps.map((step) => (step.status === "running" ? { ...step, status: "failed" } : step)),
       }));
       void loadHistory();
@@ -1975,8 +1972,21 @@ export default function HomePage() {
       setFullscreenRun(null);
       setRoundIndex(0);
       setContinueBase(null);
+      setPastRounds([]);
+      setCurrentBasedOn(null);
+      setViewedRound(null);
       setAppliedSkill(null);
     });
+  }
+
+  /** 按页面 id 找到续改基础所在的轮次和模型。 */
+  function locateRoundBase(pageId: string): RoundBase | null {
+    const rounds = [...pastRounds.map((round) => round.runs), runs];
+    for (let index = rounds.length - 1; index >= 0; index -= 1) {
+      const run = rounds[index].find((item) => item.pageId === pageId);
+      if (run) return { modelKey: run.modelKey, modelLabel: run.modelLabel, roundIndex: index };
+    }
+    return null;
   }
 
   async function restoreHistoryItem(item: HistoryItem) {
@@ -2094,6 +2104,9 @@ export default function HomePage() {
     setFileError("");
     setPrompt("");
     setRoundIndex(session.roundIndex ?? 0);
+    setPastRounds(session.pastRounds ?? []);
+    setCurrentBasedOn(session.currentBasedOn ?? null);
+    setViewedRound(null);
     setContinueBase(
       session.basePageId ? { pageId: session.basePageId, modelLabel: session.baseModelLabel ?? "上一结果" } : null,
     );
@@ -2811,8 +2824,6 @@ export default function HomePage() {
     <PreviewCell
       run={run as RunState}
       presentation={options?.presentation}
-      continueLabel={VARIANT.id === "C" ? "选为最佳" : undefined}
-      continueActiveLabel={VARIANT.id === "C" ? "已选为最佳" : undefined}
       onFrame={options?.onFrame}
       onOpenPreview={() => setFullscreenRun(run as RunState)}
       onContinue={() => startContinueFrom(run as RunState)}
@@ -2838,7 +2849,6 @@ export default function HomePage() {
 
   return (
     <div className="app-stage" ref={stageRef}>
-      <VariantBadge />
       {phase === "idle" ? (
         <main key="hero" className={`home-shell ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
           <div className="hero-aurora" aria-hidden="true">
@@ -2884,12 +2894,15 @@ export default function HomePage() {
             renderPreview={renderPreview}
             roundNav={roundNav}
           >
-          <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMulti ? "compare-mode" : ""} ${VARIANT.layoutClass}`}>
+          <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMulti ? "compare-mode" : ""} layout-gallery`}>
             {renderHistorySidebar()}
             <aside className="conversation-pane">
               <div className="conversation-scroll">
                 {pastRounds.map((round, index) => {
                   const viewing = viewedRound?.index === index;
+                  const laterBases = [...pastRounds.slice(index + 1).map((item) => item.basedOn), currentBasedOn];
+                  const pickedBy = laterBases.findIndex((base) => base?.roundIndex === index);
+                  const picked = pickedBy >= 0 ? laterBases[pickedBy] : null;
                   return (
                     <div key={`round-${index}`} className="chat-round is-past">
                       <div className="chat-message user-message">
@@ -2910,11 +2923,13 @@ export default function HomePage() {
                         pinnedModelKey={viewing ? viewedRound?.modelKey : undefined}
                         trackUnseen={false}
                       >
-                        <PastRoundSlot
-                          viewing={viewing}
-                          pickedKey={(index === pastRounds.length - 1 ? currentBasedOn : pastRounds[index + 1]?.basedOn)?.modelKey ?? ""}
-                          nextLabel={`第 ${index + 2} 轮`}
-                          onView={() => setViewedRound((current) => (current?.index === index ? current : { index, modelKey: "" }))}
+                        <GenerationProgress
+                          history={{
+                            viewing,
+                            pickedKey: picked?.modelKey ?? "",
+                            nextLabel: `第 ${index + pickedBy + 2} 轮`,
+                            onView: () => setViewedRound((current) => (current?.index === index ? current : { index, modelKey: "" })),
+                          }}
                         />
                       </WorkspaceProvider>
                     </div>
@@ -2944,7 +2959,7 @@ export default function HomePage() {
                   )}
                 </div>
 
-                <ProgressSlot />
+                <GenerationProgress />
                 </div>
               </div>
               <div className="composer-wrap">{renderPromptForm(true)}</div>
@@ -2965,10 +2980,10 @@ export default function HomePage() {
                   roundNav={roundNav}
                   trackUnseen={false}
                 >
-                  <ResultsSlot />
+                  <GenerationResults />
                 </WorkspaceProvider>
               ) : (
-                <ResultsSlot />
+                <GenerationResults />
               )}
             </section>
           </section>
@@ -3004,6 +3019,10 @@ export default function HomePage() {
       )}
     </div>
   );
+}
+
+function currentTimeMs(): number {
+  return Date.now();
 }
 
 function makePendingRun(modelKey: string, modelLabel: string, hasFile: boolean): RunState {
@@ -3141,10 +3160,44 @@ function mapNodeStatus(pageStatus: string, generationStatus?: string | null): Ge
 function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSession {
   const batches = detail.batches ?? [];
   const latest = batches[batches.length - 1];
-  const baseBatch = latest;
-  const hasFile = (baseBatch?.file_names ?? []).length > 0;
+  const roundOfPage = new Map<string, number>();
+  batches.forEach((batch, index) => batch.nodes.forEach((node) => roundOfPage.set(node.page_id, index)));
 
-  const runs: RunState[] = (baseBatch?.nodes ?? []).map((node) => {
+  const roundBase = (batch: ConversationBatchResponse): RoundBase | null => {
+    if (!batch.base_page_id) return null;
+    const roundIndex = roundOfPage.get(batch.base_page_id);
+    if (roundIndex === undefined) return null;
+    const node = batches[roundIndex].nodes.find((item) => item.page_id === batch.base_page_id);
+    if (!node) return null;
+    return { modelKey: node.model_key ?? "", modelLabel: node.model_label ?? node.model_key ?? "上一结果", roundIndex };
+  };
+
+  const pastRounds: WorkspaceRound[] = batches.slice(0, -1).map((batch) => ({
+    prompt: batch.user_prompt || batch.prompt,
+    basedOn: roundBase(batch),
+    runs: buildRunsFromBatch(batch) as WorkspaceRun[],
+  }));
+
+  const now = new Date().toISOString();
+  return {
+    conversationId: detail.id,
+    batchId: latest?.batch_id ?? "",
+    title: detail.title,
+    prompt: latest?.user_prompt || latest?.prompt || detail.title,
+    fileNames: latest?.file_names ?? [],
+    selectedModelKeys: latest?.selected_models ?? [],
+    runs: latest ? buildRunsFromBatch(latest) : [],
+    roundIndex: Math.max(0, batches.length - 1),
+    pastRounds,
+    currentBasedOn: latest ? roundBase(latest) : null,
+    createdAt: detail.created_at ?? now,
+    updatedAt: detail.updated_at ?? now,
+  };
+}
+
+function buildRunsFromBatch(batch: ConversationBatchResponse): RunState[] {
+  const hasFile = (batch.file_names ?? []).length > 0;
+  return batch.nodes.map((node) => {
     const status = mapNodeStatus(node.page_status, node.generation_status);
     const usageSummary = buildUsageSummaryFromDetail(node.usage, node.billing);
     return {
@@ -3170,28 +3223,9 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
             : step.tokenSource,
       })),
       usageSummary,
+      durationMs: node.duration_ms ?? undefined,
     };
   });
-
-  const baseNode = baseBatch?.base_page_id
-    ? (batches.flatMap((batch) => batch.nodes).find((node) => node.page_id === baseBatch.base_page_id) ?? null)
-    : null;
-
-  const now = new Date().toISOString();
-  return {
-    conversationId: detail.id,
-    batchId: baseBatch?.batch_id ?? "",
-    title: detail.title,
-    prompt: baseBatch?.user_prompt || baseBatch?.prompt || detail.title,
-    fileNames: baseBatch?.file_names ?? [],
-    selectedModelKeys: baseBatch?.selected_models ?? [],
-    runs,
-    roundIndex: Math.max(0, batches.length - 1),
-    basePageId: baseBatch?.base_page_id ?? undefined,
-    baseModelLabel: baseNode?.model_label ?? undefined,
-    createdAt: detail.created_at ?? now,
-    updatedAt: detail.updated_at ?? now,
-  };
 }
 
 function getStoredStatusText(status: GenerationStatus): string {

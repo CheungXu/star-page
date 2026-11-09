@@ -1,55 +1,4 @@
-/* 三套生成进度 / 多模型结果方案。只服务演示分支，选定后再收进正式样式。 */
-
-.variant-tag {
-  position: fixed;
-  top: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(10px);
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  box-shadow: var(--shadow-md);
-}
-
-.variant-links {
-  display: inline-flex;
-  gap: 2px;
-  margin-left: 4px;
-  padding-left: 8px;
-  border-left: 1px solid var(--color-border);
-}
-
-.variant-links a {
-  padding: 1px 7px;
-  border-radius: 999px;
-  color: var(--color-text-tertiary);
-  text-decoration: none;
-}
-
-.variant-links a:hover {
-  color: var(--color-primary);
-}
-
-.variant-links a.is-current {
-  background: var(--color-primary);
-  color: #fff;
-}
-
-.variant-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-primary);
-}
+/* 生成工作区：左侧对话栏（需求气泡 + 进度回复气泡 + 多轮回看）与右侧结果区（1-2 个并排，3 个以上画廊）。 */
 
 .vp-mark {
   display: inline-flex;
@@ -102,18 +51,18 @@
   transition: stroke-dashoffset 0.4s ease;
 }
 
-.workspace-layout.layout-b,
-.workspace-layout.layout-b.compare-mode {
+.workspace-layout.layout-gallery,
+.workspace-layout.layout-gallery.compare-mode {
   --conv-width: clamp(340px, 26vw, 420px);
   grid-template-columns: 252px var(--conv-width) minmax(0, 1fr);
 }
 
-.workspace-layout.layout-b.sidebar-collapsed,
-.workspace-layout.layout-b.compare-mode.sidebar-collapsed {
+.workspace-layout.layout-gallery.sidebar-collapsed,
+.workspace-layout.layout-gallery.compare-mode.sidebar-collapsed {
   grid-template-columns: 72px var(--conv-width) minmax(0, 1fr);
 }
 
-.workspace-layout.layout-b .preview-pane {
+.workspace-layout.layout-gallery .preview-pane {
   position: relative;
 }
 
@@ -177,90 +126,10 @@ body.is-resizing-panes iframe {
   pointer-events: none;
 }
 
-/* ---------- 方案 A：轻量看板 ---------- */
 
-.va-board {
-  padding: 14px 14px 10px;
-}
-
-.va-head,
-.va-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.va-head strong {
-  display: block;
-  font-size: 14px;
-}
-
-.va-head span,
-.va-foot,
-.va-comfort,
-.va-stage,
-.va-time,
-.va-keyhint {
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.va-total,
-.va-bar {
-  display: block;
-  height: 4px;
-  margin-top: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--color-surface-soft);
-}
-
-.va-total span,
-.va-bar span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--color-primary);
-  transition: width 0.4s ease;
-}
-
-.va-comfort {
-  margin: 8px 0 0;
-}
-
-.va-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.va-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  padding: 4px 4px 6px;
-  border-radius: 10px;
-}
-
-.va-row.is-active {
-  background: var(--color-primary-soft);
-}
-
-.va-row-main,
-.va-think,
-.va-tab,
-.va-seg button,
+/* 结果区通用：按钮复位、预览容器伸缩、缩略图与舞台模式的预览卡 */
 .vb-pill,
 .vb-carousel-btn,
-.vc-all,
-.vc-lane button,
-.vc-drawer-card,
-.vc-drawer header button,
 .vb-nav,
 .vb-carousel header button,
 .vb-carousel-body > button {
@@ -270,138 +139,7 @@ body.is-resizing-panes iframe {
   cursor: pointer;
 }
 
-.va-row-main {
-  display: grid;
-  grid-template-columns: 16px 8px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 28px;
-  padding: 0 4px;
-  color: var(--color-text-primary);
-  text-align: left;
-}
-
-.va-accent {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.va-name,
-.va-stage {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.va-name { font-size: 13px; font-weight: 700; }
-.va-time { font-variant-numeric: tabular-nums; }
-
-.va-think {
-  padding: 2px 6px;
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.va-think:hover { color: var(--color-primary); }
-
-.va-bar { grid-column: 1 / -1; margin: 4px 8px 0 28px; }
-
-.va-error,
-.vc-lane-error {
-  grid-column: 1 / -1;
-  margin: 4px 8px 0 28px;
-  color: var(--color-danger);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.va-reasoning {
-  grid-column: 1 / -1;
-  max-height: 200px;
-  margin: 6px 8px 0 28px;
-  overflow: auto;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--color-surface-soft);
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-
-.va-foot {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
-}
-
-.va-foot em {
-  margin-left: 6px;
-  color: var(--color-success);
-  font-style: normal;
-}
-
-.va-seg {
-  display: inline-flex;
-  margin-left: auto;
-  padding: 2px;
-  border-radius: 999px;
-  background: var(--color-surface-soft);
-}
-
-.va-seg button {
-  min-height: 26px;
-  padding: 0 12px;
-  border-radius: 999px;
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.va-seg button[aria-pressed="true"] {
-  background: #fff;
-  color: var(--color-text-primary);
-  box-shadow: var(--shadow-sm);
-}
-
-.va-switcher {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px 0;
-  overflow-x: auto;
-}
-
-.va-tab {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  max-width: 180px;
-  min-height: 32px;
-  padding: 0 10px;
-  border-radius: 999px;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.va-tab span:nth-child(2) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.va-tab.is-active {
-  background: var(--color-primary-soft);
-  color: var(--color-primary-active);
-}
-
-.va-unseen {
+.vb-unseen {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -411,69 +149,22 @@ body.is-resizing-panes iframe {
   background: #f97316;
 }
 
-.va-keyhint { margin-left: auto; flex-shrink: 0; }
-
-.va-focus,
-.va-overview,
-.vb-gallery,
-.vc-ab {
+.vb-gallery {
   flex: 1;
   min-height: 0;
 }
 
-.va-focus {
-  display: flex;
-  padding: 12px;
-}
-
-.va-focus .preview-cell,
 .vb-stage-body .preview-cell,
-.vc-slot-body .preview-cell,
-.vb-live > .preview-cell,
-.va-pair > .preview-cell {
+.vb-live > .preview-cell {
   flex: 1;
   min-width: 0;
   min-height: 0;
 }
 
-.va-pair {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-}
-
-.va-focus .preview-cell-head,
-.vc-slot-body .preview-cell-head {
-  display: none;
-}
-
-.va-overview {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 12px;
-  overflow: auto;
-}
-
-.va-overview-card,
 .vb-live {
   position: relative;
   min-width: 0;
   min-height: 180px;
-}
-
-.va-overview-card .preview-cell { height: 210px; }
-
-.va-hit {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.va-overview-card.is-active .preview-cell {
-  border-color: var(--color-primary);
 }
 
 .preview-cell.presentation-thumb .link-actions,
@@ -508,12 +199,9 @@ body.is-resizing-panes iframe {
   opacity: 1;
 }
 
-.va-overview-card .preview-cell iframe,
 .vb-frame .preview-cell iframe {
   pointer-events: none;
 }
-
-/* ---------- 方案 B：沉浸画廊 ---------- */
 
 .vb-status {
   margin-top: 2px;
@@ -543,20 +231,20 @@ body.is-resizing-panes iframe {
   gap: 10px;
 }
 
-.layout-b .conversation-scroll {
+.layout-gallery .conversation-scroll {
   gap: 26px;
   padding-right: 20px;
   padding-left: 20px;
 }
 
 /* 对话栏是纵向 flex 且可滚动：卡片带 overflow:hidden 会被允许压扁，内容超高时必须禁止收缩 */
-.layout-b .conversation-scroll > *,
+.layout-gallery .conversation-scroll > *,
 .chat-round > * {
   flex-shrink: 0;
 }
 
 /* 回复气泡：靠左、宽度随内容，左下角收成尖角，和右下尖角的用户气泡一来一回；质感与用户气泡同一套 */
-.layout-b .conversation-scroll .vb-status {
+.layout-gallery .conversation-scroll .vb-status {
   align-self: flex-start;
   width: min(calc(100% - 20px), 440px);
   margin-top: 0;
@@ -571,16 +259,16 @@ body.is-resizing-panes iframe {
     0 12px 24px -20px rgba(15, 23, 42, 0.4);
 }
 
-.layout-b .conversation-scroll .vb-status { container-type: inline-size; }
+.layout-gallery .conversation-scroll .vb-status { container-type: inline-size; }
 
-.layout-b .conversation-scroll .vb-pill {
+.layout-gallery .conversation-scroll .vb-pill {
   gap: 10px;
   padding: 12px 14px;
 }
 
-.layout-b .conversation-scroll .vb-pill-text { gap: 3px; }
+.layout-gallery .conversation-scroll .vb-pill-text { gap: 3px; }
 
-.layout-b .conversation-scroll .vb-more-btn { padding-right: 14px; }
+.layout-gallery .conversation-scroll .vb-more-btn { padding-right: 14px; }
 
 /* 栏宽拖到很窄时，「明细」只留箭头，把位置让给摘要数字 */
 @container (max-width: 300px) {
@@ -589,7 +277,7 @@ body.is-resizing-panes iframe {
   .vb-status-head .vb-pill { gap: 8px; }
 }
 
-.layout-b .conversation-scroll .vb-status.is-viewing {
+.layout-gallery .conversation-scroll .vb-status.is-viewing {
   border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
   box-shadow:
     inset 0 1px 0 #fff,
@@ -598,7 +286,7 @@ body.is-resizing-panes iframe {
 }
 
 /* 用户气泡：左上角一层柔光 + 斜向渐变 + 顶部内高光，做出纸张般的层次；当前轮偏蓝，历史轮偏冷灰 */
-.layout-b .user-message {
+.layout-gallery .user-message {
   border: 1px solid rgba(53, 99, 233, 0.16);
   background:
     radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 55%),
@@ -609,7 +297,7 @@ body.is-resizing-panes iframe {
     0 12px 26px -20px rgba(53, 99, 233, 0.6);
 }
 
-.layout-b .chat-round.is-past .user-message {
+.layout-gallery .chat-round.is-past .user-message {
   border-color: rgba(15, 23, 42, 0.07);
   background:
     radial-gradient(120% 90% at 0% 0%, #fff 0%, rgba(255, 255, 255, 0) 60%),
@@ -620,7 +308,7 @@ body.is-resizing-panes iframe {
     0 12px 24px -20px rgba(15, 23, 42, 0.4);
 }
 
-.layout-b .user-message-meta > span:first-child {
+.layout-gallery .user-message-meta > span:first-child {
   flex-shrink: 0;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -875,7 +563,7 @@ body.is-resizing-panes iframe {
 
 /* 展开明细：左侧"谁 + 走到哪"，右侧三列数字固定宽度、右对齐，表头只写一次 */
 .vb-status {
-  --mini-cols: 24px minmax(0, 1fr) 38px 34px 42px;
+  --mini-cols: 24px minmax(0, 1fr) 38px 36px 42px;
 }
 
 .vb-mini {
@@ -920,7 +608,7 @@ body.is-resizing-panes iframe {
 
 .vb-mini-head span:first-child { grid-column: 1 / 3; }
 .vb-mini-head span:not(:first-child),
-.vb-mini-foot span:not(:first-child) { text-align: right; }
+.vb-mini-foot span:not(:first-child) { text-align: right; white-space: nowrap; }
 
 .vb-mini-row button {
   grid-template-rows: auto auto;
@@ -994,10 +682,14 @@ body.is-resizing-panes iframe {
 .vb-mini-row.is-active .vb-avatar-badge { border-color: var(--color-primary-soft); }
 
 /* 至少两个模型完成后，给用时最短、积分最少的打标，替代"完成"二字 */
+/* 放不下的标签整个折到第二行并被裁掉，不出现半截标签 */
 .vb-tags {
   display: inline-flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 0 4px;
   min-width: 0;
+  height: 17px;
+  overflow: hidden;
 }
 
 .vb-tag {
@@ -1119,6 +811,7 @@ body.is-resizing-panes iframe {
 .vb-mini-cell.is-time {
   color: var(--color-text-tertiary);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .vb-mini-cell.is-empty { color: var(--color-text-muted); font-weight: 600; }
@@ -1287,8 +980,7 @@ body.is-resizing-panes iframe {
   animation: dot-breathe 1.5s ease-in-out infinite;
 }
 
-.vb-carousel-btn,
-.vc-all {
+.vb-carousel-btn {
   margin-left: auto;
   min-height: 28px;
   padding: 0 12px;
@@ -1425,7 +1117,7 @@ body.is-resizing-panes iframe {
 
 .vb-frame-pending.is-failed { color: var(--color-danger); background: rgba(254, 242, 242, 0.9); }
 .vb-frame-pending .vp-ring { width: 30px; height: 30px; }
-.vb-frame-preview .va-unseen { top: 6px; right: 6px; }
+.vb-frame-preview .vb-unseen { top: 6px; right: 6px; }
 
 .vb-stage-label {
   position: absolute;
@@ -1485,8 +1177,7 @@ body.is-resizing-panes iframe {
   padding: 20px;
 }
 
-.vb-carousel header,
-.vc-drawer header {
+.vb-carousel header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1526,311 +1217,21 @@ body.is-resizing-panes iframe {
   min-height: 0;
 }
 
-/* ---------- 方案 C：赛道 + 双槽 ---------- */
-
-.vc-race { padding: 14px; }
-
-.vc-race-head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 10px;
-}
-
-.vc-race-head strong { font-size: 14px; }
-.vc-race-head span { color: var(--color-text-tertiary); font-size: 12px; }
-
-.vc-lanes {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.vc-lane button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  gap: 4px 8px;
-  width: 100%;
-  padding: 4px 0;
-  text-align: left;
-}
-
-.vc-lane-name,
-.vc-lane-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.vc-lane-name i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.vc-lane-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.vc-track {
-  position: relative;
-  align-self: center;
-  height: 10px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--color-surface-soft);
-}
-
-.vc-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  transition: width 0.4s ease;
-}
-
-.vc-flag {
-  position: absolute;
-  top: -3px;
-  right: 2px;
-  width: 2px;
-  height: 16px;
-  background: var(--color-text-muted);
-}
-
-.vc-flag::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 2px;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 7px solid var(--color-text-tertiary);
-}
-
-.vc-lane-meta {
-  grid-column: 1 / -1;
-  color: var(--color-text-tertiary);
-  font-weight: 650;
-}
-
-.vc-rank {
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #fef3c7;
-  color: #b45309;
-  font-style: normal;
-}
-
-.vc-rank.is-1 { background: #fde68a; color: #92400e; }
-
-.vc-lane-error { margin: 0; }
-
-.vc-sync {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.vc-ab {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
-  padding: 12px;
-}
-
-.vc-slot {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  overflow: hidden;
-}
-
-.vc-slot.is-best { border-color: var(--color-primary); }
-
-.vc-slot header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-}
-
-.vc-slot-badge {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border-radius: 7px;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.vc-slot select {
-  min-width: 0;
-  flex: 1;
-  min-height: 30px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.vc-slot-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-.vc-slot-body .preview-cell { border: 0; border-radius: 0; }
-
-.vc-drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 5;
-  width: min(360px, 92%);
-  display: flex;
-  flex-direction: column;
-  padding: 16px;
-  background: #fff;
-  box-shadow: var(--shadow-lg);
-}
-
-.vc-results { position: relative; }
-
-.vc-drawer header { color: var(--color-text-primary); }
-.vc-drawer header button { color: var(--color-text-secondary); font-weight: 700; }
-.vc-drawer p { margin: 8px 0; color: var(--color-text-tertiary); font-size: 12px; }
-
-.vc-drawer-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  overflow: auto;
-}
-
-.vc-drawer-card {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-  padding: 6px;
-  border: 1px solid var(--color-border) !important;
-  border-radius: 12px;
-  background: #fff !important;
-  cursor: grab;
-}
-
-.vc-drawer-card.in-a,
-.vc-drawer-card.in-b { border-color: var(--color-primary) !important; }
-
-.vc-drawer-thumb {
-  display: flex;
-  height: 86px;
-  overflow: hidden;
-  border-radius: 8px;
-  background: var(--color-surface-soft);
-}
-
-.vc-drawer-thumb .preview-cell { flex: 1; min-width: 0; border: 0; border-radius: 0; }
-.vc-drawer-thumb .preview-cell-head { display: none; }
-.vc-drawer-thumb iframe { pointer-events: none; }
-
-.vc-drawer-pending {
-  display: grid;
-  flex: 1;
-  place-items: center;
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.vc-drawer-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 750;
-  white-space: nowrap;
-}
-
-.vc-drawer-card em { color: var(--color-text-tertiary); font-size: 11px; font-style: normal; }
-
-.vc-drawer-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-}
-
-.vc-drawer-actions button {
-  min-height: 24px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface-soft);
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.vc-drawer-actions button:hover { color: var(--color-primary); border-color: var(--color-primary-soft-strong); }
-
-.vc-slot-track {
-  display: block;
-  height: 3px;
-  background: var(--color-surface-soft);
-}
-
-.vc-slot-track span {
-  display: block;
-  height: 100%;
-  transition: width 0.4s ease;
-}
-
 @media (max-width: 1100px) {
-  .workspace-layout.layout-a,
-  .workspace-layout.layout-b,
-  .workspace-layout.layout-b.compare-mode,
-  .workspace-layout.layout-b.sidebar-collapsed,
-  .workspace-layout.layout-c,
-  .workspace-layout.layout-c.compare-mode {
+  .workspace-layout.layout-gallery,
+  .workspace-layout.layout-gallery.compare-mode,
+  .workspace-layout.layout-gallery.sidebar-collapsed {
     grid-template-columns: 72px minmax(0, 1fr);
     height: auto;
   }
 
-  .workspace-layout.layout-a .preview-pane,
-  .workspace-layout.layout-b .preview-pane,
-  .workspace-layout.layout-c .preview-pane {
+  .workspace-layout.layout-gallery .preview-pane {
     grid-column: 2;
   }
 
   .pane-resizer { display: none; }
 
-  .va-overview,
-  .vc-ab { grid-template-columns: 1fr; }
-  .va-focus,
-  .vb-gallery,
-  .vc-slot-body { min-height: 68vh; }
+  .vb-gallery { min-height: 68vh; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1841,8 +1242,5 @@ body.is-resizing-panes iframe {
   .vb-past-chip,
   .vb-past-chip button i,
   .vb-mini { animation: none; }
-  .va-total span,
-  .va-bar span,
-  .vc-fill,
   .vp-ring-value { transition: none; }
 }

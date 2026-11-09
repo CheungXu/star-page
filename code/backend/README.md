@@ -56,7 +56,7 @@ journalctl -u star-page-backend.service -f
 - `POST /api/generations`：创建页面生成任务。
 - `GET /api/generations/{task_id}/events`：通过 SSE 推送思考过程和完成状态。
 - `GET /api/conversations`：查询当前登录用户的会话历史列表，支持 `favorite_only=true` 和 `q=关键词`。
-- `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树。
+- `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树和多轮回看。每个批次带 `kind` / `base_page_id`，每个节点带用量 `usage`、扣费 `billing` 和生成用时 `duration_ms`（任务 `finished_at - started_at`，未结束为空）。
 - `PATCH /api/conversations/{conversation_id}`：更新会话收藏状态。
 - `DELETE /api/conversations/{conversation_id}`：软删除会话，写入 `deleted_at` 后不再出现在历史列表。
 - `GET /api/models`：返回多模型目录（含可用性）供前端勾选。

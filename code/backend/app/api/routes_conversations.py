@@ -213,6 +213,7 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
                         page_url=build_page_url(settings, page.conversation_id, page.id),
                         usage=_build_usage(version),
                         billing=_build_billing(billing_by_version.get(str(version.id)) if version else None),
+                        duration_ms=_task_duration_ms(task),
                     )
                 )
 
@@ -271,6 +272,12 @@ def _build_billing(txn: CreditTransaction | None) -> ConversationBilling | None:
     if charged == 0 and discount == 0:
         return None
     return ConversationBilling(credits_charged=charged, discount_credits=discount)
+
+
+def _task_duration_ms(task: GenerationTask | None) -> int | None:
+    if task is None or task.started_at is None or task.finished_at is None:
+        return None
+    return max(int((task.finished_at - task.started_at).total_seconds() * 1000), 0)
 
 
 async def _build_conversation_list_item(

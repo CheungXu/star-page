@@ -57,15 +57,20 @@ export function RoundSource({
     );
   }
   if (basedOn) {
+    const fromEarlier = basedOn.roundIndex < roundIndex - 1;
+    const roundText = `第 ${basedOn.roundIndex + 1} 轮`;
     return (
-      <span className="round-source is-branch" title={`基于「${basedOn.modelLabel}」的结果修改`}>
+      <span
+        className="round-source is-branch"
+        title={`基于${fromEarlier ? roundText : "上一轮"}「${basedOn.modelLabel}」的结果修改`}
+      >
         <svg viewBox="0 0 12 12" aria-hidden="true">
           <circle cx="3.5" cy="2.5" r="1.3" />
           <circle cx="3.5" cy="9.5" r="1.3" />
           <circle cx="8.5" cy="3.5" r="1.3" />
           <path d="M3.5 3.8v4.4M8.5 4.8c0 2.2-5 1.4-5 3.4" />
         </svg>
-        <span className="round-source-label">基于</span>
+        <span className="round-source-label">{fromEarlier ? `基于${roundText.replace(/ /g, "")}` : "基于"}</span>
         <MiniAvatar modelKey={basedOn.modelKey} label={basedOn.modelLabel} />
         <span className="round-source-name">{basedOn.modelLabel}</span>
       </span>
