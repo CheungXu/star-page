@@ -531,7 +531,9 @@ body.is-resizing-panes iframe {
   align-items: center;
 }
 
-.vb-status-head .vb-pill { flex: 1; min-width: 0; }
+.vb-status-head .vb-pill { flex: 1 1 auto; min-width: 0; }
+
+.vb-status-head .vb-pill-text strong { white-space: nowrap; }
 
 /* 多轮：已结束的轮次在对话栏里退成一张淡卡，右侧在看它时描一圈主色 */
 .chat-round.is-past {
@@ -544,6 +546,41 @@ body.is-resizing-panes iframe {
 .layout-b .conversation-scroll > *,
 .chat-round.is-past > * {
   flex-shrink: 0;
+}
+
+/* 回复气泡：靠左、宽度随内容，左下角收成尖角，和右下尖角的用户气泡一来一回；质感与用户气泡同一套 */
+.layout-b .conversation-scroll .vb-status {
+  align-self: flex-start;
+  width: calc(100% - 28px);
+  margin-top: 0;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px 16px 16px 4px;
+  background:
+    radial-gradient(120% 90% at 100% 0%, #fff 0%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(205deg, #ffffff 0%, #f6f8fb 100%);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 24px -20px rgba(15, 23, 42, 0.4);
+}
+
+.layout-b .conversation-scroll .vb-status.is-open { width: 100%; }
+
+.layout-b .conversation-scroll .vb-status { container-type: inline-size; }
+
+/* 栏宽拖到很窄时，「明细」只留箭头，把位置让给摘要数字 */
+@container (max-width: 300px) {
+  .vb-more-label { display: none; }
+  .vb-more-btn { padding: 0 12px 0 4px; }
+  .vb-status-head .vb-pill { gap: 8px; }
+}
+
+.layout-b .conversation-scroll .vb-status.is-viewing {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 0 0 3px color-mix(in srgb, var(--color-primary) 10%, transparent),
+    0 12px 24px -18px rgba(53, 99, 233, 0.5);
 }
 
 /* 用户气泡：左上角一层柔光 + 斜向渐变 + 顶部内高光，做出纸张般的层次；当前轮偏蓝，历史轮偏冷灰 */
@@ -583,7 +620,6 @@ body.is-resizing-panes iframe {
 }
 
 .vb-status.is-history {
-  background: #fcfcfd;
   transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
@@ -625,10 +661,23 @@ body.is-resizing-panes iframe {
   transition: opacity 0.15s ease;
 }
 
+/* 「查看」只是悬停提示：浮在右侧、不占位，避免平时挤压摘要文字 */
+.vb-status-head { position: relative; }
+
 .vb-showing.is-hint {
-  background: rgba(15, 23, 42, 0.05);
-  color: var(--color-text-tertiary);
+  position: absolute;
+  top: 50%;
+  right: 64px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08), 0 4px 10px -6px rgba(15, 23, 42, 0.3);
+  color: var(--color-text-secondary);
   opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+@container (max-width: 300px) {
+  .vb-showing.is-hint { right: 40px; }
 }
 
 .vb-pill:hover .vb-showing.is-hint,

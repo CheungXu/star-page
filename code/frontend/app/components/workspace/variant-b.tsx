@@ -131,7 +131,7 @@ export function VariantBProgress({ history }: { history?: PastRoundProps } = {})
         </button>
         {view && (
           <button type="button" className="vb-more-btn" aria-expanded={open} onClick={toggle} title={open ? "收起明细" : "展开明细"}>
-            {open ? "收起" : "明细"}
+            <span className="vb-more-label">{open ? "收起" : "明细"}</span>
             <svg viewBox="0 0 10 10" aria-hidden="true">
               <path d="M2.5 3.75 5 6.25l2.5-2.5" />
             </svg>
