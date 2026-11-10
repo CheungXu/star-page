@@ -31,6 +31,20 @@ export function readContinueStyle(): ContinueStyle {
   return CONTINUE_STYLES.some((item) => item.id === raw) ? (raw as ContinueStyle) : "tab";
 }
 
+/** C1 焦点卡里用量三项与下面三个按钮按列对齐的方式：各列居中，或图标靠左对成一条竖线。地址加 ?meta= 可切换。 */
+export type MetaAlign = "center" | "left";
+
+export const META_ALIGNS: { id: MetaAlign; name: string }[] = [
+  { id: "center", name: "居中" },
+  { id: "left", name: "左对齐" },
+];
+
+export function readMetaAlign(): MetaAlign {
+  if (typeof window === "undefined") return "center";
+  const raw = new URLSearchParams(window.location.search).get("meta");
+  return raw === "left" ? "left" : "center";
+}
+
 function withParam(search: string, key: string, value: string): string {
   const params = new URLSearchParams(search);
   params.set(key, value);
@@ -50,6 +64,7 @@ export function VariantBadge() {
 
   const demo = location ? new URLSearchParams(location.search).get("demo") : null;
   const cont = location ? readContinueStyle() : null;
+  const meta = location ? readMetaAlign() : null;
   return (
     <div className="variant-tag" aria-label="当前预览方案">
       <span className="variant-dot" />
@@ -80,6 +95,16 @@ export function VariantBadge() {
           继续改
           {CONTINUE_STYLES.map((item) => (
             <a key={item.id} href={withParam(location.search, "cont", item.id)} className={item.id === cont ? "is-current" : ""}>
+              {item.name}
+            </a>
+          ))}
+        </span>
+      )}
+      {location && VARIANT.id === "C1" && (
+        <span className="variant-links" title="用量三项与下面三个按钮的对齐方式">
+          数据对齐
+          {META_ALIGNS.map((item) => (
+            <a key={item.id} href={withParam(location.search, "meta", item.id)} className={item.id === meta ? "is-current" : ""}>
               {item.name}
             </a>
           ))}

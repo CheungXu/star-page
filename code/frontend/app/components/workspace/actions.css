@@ -310,7 +310,7 @@ a.tb-address:hover .tb-address-open span {
 
 /* ---------- 方案 C1：焦点卡。左列模型名、用量和按钮，上下分别与缩略图顶边、底边对齐 ---------- */
 /* 信息列宽度随「继续改」的位置变化；卡片右内边距 6px，与缩略图的 6px 内缩一致 */
-.tb-cont-tab { --info-w: 176px; }
+.tb-cont-tab { --info-w: 180px; }
 .tb-cont-row,
 .tb-cont-thumb { --info-w: 184px; }
 
@@ -324,7 +324,7 @@ a.tb-address:hover .tb-address-open span {
 }
 
 .tb-focus:has(.tb-continue-tab) {
-  --focus-w: calc(var(--info-w, 176px) + 70px);
+  --focus-w: calc(var(--info-w, 180px) + 70px);
 }
 
 .tb-focus.is-active {
@@ -443,6 +443,40 @@ a.tb-address:hover .tb-address-open span {
   color: var(--color-text-tertiary);
   font-size: 11.5px;
   line-height: 1.45;
+}
+
+/* 用量三项与下面三个按钮共用同一套三等分列：居中时每项落在按钮正上方，左对齐时图标和按钮图标对成一条竖线 */
+.tb-focus-meta.is-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding-left: 0;
+}
+
+.tb-focus-meta.is-grid > span {
+  gap: 3px;
+}
+
+.tb-meta-center .tb-focus-meta.is-grid > span {
+  justify-self: center;
+}
+
+.tb-meta-left {
+  --col-pad: 10px;
+}
+
+.tb-meta-left.tb-cont-tab {
+  --col-pad: 8px;
+}
+
+.tb-meta-left .tb-focus-meta.is-grid > span {
+  justify-self: start;
+  padding-left: var(--col-pad);
+}
+
+.tb-meta-left .tb-card-actions .tb-act {
+  justify-content: flex-start;
+  padding-left: var(--col-pad);
 }
 
 /* 打开 / 放大 / 分享：三个等宽分段按钮，32px 高 */

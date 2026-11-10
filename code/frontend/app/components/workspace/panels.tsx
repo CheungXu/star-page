@@ -26,7 +26,7 @@ import {
   sumOutputTokens,
 } from "./progress-utils";
 import type { WorkspaceRun } from "./types";
-import { readContinueStyle, VARIANT, type ContinueStyle } from "./variant";
+import { readContinueStyle, readMetaAlign, VARIANT, type ContinueStyle, type MetaAlign } from "./variant";
 
 function liveCount(run: WorkspaceRun): string {
   const tokens = outputTokenCount(run);
@@ -198,6 +198,12 @@ const SHORT_STAGE: Record<string, string> = {
   发布中: "发布",
   准备中: "准备",
 };
+
+function minuteDuration(ms: number | null): string {
+  if (ms === null) return "—";
+  const total = Math.max(0, Math.round(ms / 1000));
+  return total < 60 ? `${total}秒` : `${Math.round(total / 60)}分`;
+}
 
 function shortDuration(ms: number | null): string {
   if (ms === null) return "—";
@@ -568,13 +574,26 @@ function StageSwap({ active }: { active: WorkspaceRun }) {
  * 方案 C1：选中的缩略图向右展开焦点卡（每格常驻，靠宽度过渡展开 / 收起）。
  * 左列是模型名、三项用量和按钮，「继续改」按 continueStyle 放在右侧竖按钮、按钮行或缩略图上。
  */
-function FocusPanel({ run, active, continueStyle }: { run: WorkspaceRun; active: boolean; continueStyle: ContinueStyle }) {
+function FocusPanel({
+  run,
+  active,
+  continueStyle,
+  metaAlign,
+}: {
+  run: WorkspaceRun;
+  active: boolean;
+  continueStyle: ContinueStyle;
+  metaAlign: MetaAlign;
+}) {
   const { elapsed, renderActions } = useWorkspace();
   const tokens = outputTokenCount(run);
   const credits = run.usageSummary?.creditsCharged;
   const duration = elapsed(run);
   const completed = run.status === "completed";
   const pending = run.status === "thinking" || run.status === "creating";
+  const grid = completed && continueStyle !== "row";
+  // 左对齐时每列只剩按钮宽度减去左缩进，「15分47」放不下，改为按分钟显示，悬停看精确值。
+  const durationText = grid && metaAlign === "left" ? minuteDuration(duration) : shortDuration(duration);
   return (
     <div className={`tb-focus ${active ? "is-active" : ""}`} inert={!active} style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
       <div className="tb-focus-inner">
@@ -585,7 +604,7 @@ function FocusPanel({ run, active, continueStyle }: { run: WorkspaceRun; active:
               <strong title={run.modelLabel}>{run.modelLabel}</strong>
               {!completed && <StatusMark status={run.status} />}
             </div>
-            <div className="tb-focus-meta">
+            <div className={`tb-focus-meta ${grid ? "is-grid" : ""}`}>
               {run.status === "failed" ? (
                 <span className="is-failed">生成失败</span>
               ) : (
@@ -594,9 +613,9 @@ function FocusPanel({ run, active, continueStyle }: { run: WorkspaceRun; active:
                     <TokenIcon />
                     {tokens > 0 ? formatTokens(tokens) : "—"}
                   </span>
-                  <span title="生成用时">
+                  <span title={`生成用时 ${formatDuration(duration ?? 0)}`}>
                     <ClockIcon />
-                    {shortDuration(duration)}
+                    {durationText}
                   </span>
                   {typeof credits === "number" && (
                     <span className="is-cost" title={`消耗 ${credits} 积分`}>
@@ -661,6 +680,7 @@ export function GenerationResults() {
   const gliderRef = useRef<HTMLSpanElement | null>(null);
   useFilmMotion(filmRef, gliderRef, many ? (active?.modelKey ?? "") : "");
   const [continueStyle] = useState(readContinueStyle);
+  const [metaAlign] = useState(readMetaAlign);
   const variant = VARIANT.id;
 
   useEffect(() => {
@@ -682,7 +702,7 @@ export function GenerationResults() {
   return (
     <>
     <PaneResizer />
-    <article className={`panel preview-panel workspace-preview vb-results tb-variant-${variant.toLowerCase()} tb-cont-${continueStyle}`}>
+    <article className={`panel preview-panel workspace-preview vb-results tb-variant-${variant.toLowerCase()} tb-cont-${continueStyle} tb-meta-${metaAlign}`}>
       <div className="panel-heading preview-heading">
         <h2>
           {roundNav && roundNav.items.length > 1 ? "" : "结果预览 · "}
@@ -780,7 +800,7 @@ export function GenerationResults() {
                       <span>{run.modelLabel}</span>
                     </span>
                   </div>
-                  {variant === "C1" && <FocusPanel run={run} active={isActive} continueStyle={continueStyle} />}
+                  {variant === "C1" && <FocusPanel run={run} active={isActive} continueStyle={continueStyle} metaAlign={metaAlign} />}
                 </div>
               );
             })}
