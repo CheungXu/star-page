@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../../lib/api";
 import { copyTextToClipboard, toAbsoluteUrl } from "../../lib/links";
 import { isDemoRun, publishDemo, type SharePublication } from "./demo";
-import { DEFAULT_SUBTITLE, downloadDataUrl, fetchPageTitle, loadImage, renderPoster } from "./share-poster";
+import { DEFAULT_SUBTITLE, downloadDataUrl, fetchPageTitle, loadImage, renderPoster, type PosterAlign } from "./share-poster";
 import { modelAccent } from "./progress-utils";
 import type { ActionLayout, WorkspaceRun } from "./types";
 import "./actions.css";
@@ -363,7 +363,7 @@ const SHARE_META_PREFIX = "star-page-share-meta:";
 const TITLE_MAX = 28;
 const SUBTITLE_MAX = 36;
 
-type ShareMetaDraft = { title?: string; subtitle?: string };
+type ShareMetaDraft = { title?: string; subtitle?: string; align?: PosterAlign };
 
 function readShareMeta(pageId: string): ShareMetaDraft {
   try {
@@ -414,14 +414,15 @@ function useShareMeta(run: WorkspaceRun) {
     ready: defaultTitle !== null,
     title: draft.title ?? defaultTitle ?? "",
     subtitle: draft.subtitle ?? DEFAULT_SUBTITLE,
-    customized: draft.title !== undefined || draft.subtitle !== undefined,
+    align: draft.align ?? "center",
+    customized: draft.title !== undefined || draft.subtitle !== undefined || draft.align !== undefined,
     update,
     reset,
   };
 }
 
 /** 标题 / 副标题一改就重绘分享图（稍作防抖，连续输入时不每个字都重画）。 */
-function usePosterImage(qrUrl: string | undefined, title: string, subtitle: string, enabled: boolean) {
+function usePosterImage(qrUrl: string | undefined, title: string, subtitle: string, align: PosterAlign, enabled: boolean) {
   const [qr, setQr] = useState<HTMLImageElement | null>(null);
   const [src, setSrc] = useState("");
 
@@ -440,9 +441,9 @@ function usePosterImage(qrUrl: string | undefined, title: string, subtitle: stri
 
   useEffect(() => {
     if (!qr || !enabled) return;
-    const timer = window.setTimeout(() => setSrc(renderPoster({ title, subtitle, qr })), 90);
+    const timer = window.setTimeout(() => setSrc(renderPoster({ title, subtitle, qr, align })), 90);
     return () => window.clearTimeout(timer);
-  }, [qr, title, subtitle, enabled]);
+  }, [qr, title, subtitle, align, enabled]);
 
   return src;
 }
@@ -474,7 +475,8 @@ function SharePopover({
   const position = usePopoverPosition(anchor, popover);
   const data = state.kind === "ready" ? state.data : null;
   const meta = useShareMeta(run);
-  const posterSrc = usePosterImage(data?.qrUrl, meta.title, meta.subtitle, meta.ready);
+  const posterSrc = usePosterImage(data?.qrUrl, meta.title, meta.subtitle, meta.align, meta.ready);
+  const titleId = useId();
 
   useEffect(() => {
     closeRef.current = onClose;
@@ -559,17 +561,36 @@ function SharePopover({
               </span>
             </header>
 
-            <label className="share-pop-field">
+            <div className="share-pop-field">
               <span className="share-pop-label">
-                标题
-                {meta.customized && (
-                  <button type="button" className="share-pop-reset" onClick={meta.reset}>
-                    恢复默认
-                  </button>
-                )}
+                <label htmlFor={titleId}>标题</label>
+                <span className="share-pop-label-tools">
+                  {meta.customized && (
+                    <button type="button" className="share-pop-reset" onClick={meta.reset}>
+                      恢复默认
+                    </button>
+                  )}
+                  <span className="share-pop-align" role="radiogroup" aria-label="分享图文字对齐">
+                    {(["center", "left"] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="radio"
+                        aria-checked={meta.align === value}
+                        className={meta.align === value ? "is-on" : ""}
+                        onClick={() => meta.update({ align: value })}
+                        data-tip={value === "center" ? "居中" : "左对齐"}
+                        aria-label={value === "center" ? "居中" : "左对齐"}
+                      >
+                        {value === "center" ? <AlignCenterIcon /> : <AlignLeftIcon />}
+                      </button>
+                    ))}
+                  </span>
+                </span>
               </span>
               <span className="share-pop-input">
                 <input
+                  id={titleId}
                   value={meta.title}
                   maxLength={TITLE_MAX}
                   placeholder={meta.ready ? "给分享图起个标题" : "正在读取页面标题…"}
@@ -578,7 +599,7 @@ function SharePopover({
                 />
                 <em>{meta.title.length}/{TITLE_MAX}</em>
               </span>
-            </label>
+            </div>
             <label className="share-pop-field">
               <span className="share-pop-label">副标题</span>
               <span className="share-pop-input">
@@ -624,7 +645,7 @@ function SharePopover({
             </div>
 
             <p className={`share-pop-note ${data?.republished ? "is-updated" : ""}`}>
-              {data?.republished ? `链接没变，内容已换成「${run.modelLabel}」这一版` : "同一个会话共用这条链接，分享哪个版本，朋友打开的就是哪个版本"}
+              {data?.republished && <span>链接没变，内容已换成「{run.modelLabel}」这一版</span>}
               {data && data.externalViews > 0 && (
                 <span className="share-pop-views">
                   <EyeIcon />
@@ -727,6 +748,18 @@ const DownloadIcon = () => (
     <path d="M12 3v12" />
     <path d="m7 10 5 5 5-5" />
     <path d="M5 21h14" />
+  </svg>
+);
+
+const AlignCenterIcon = () => (
+  <svg {...svgProps}>
+    <path d="M4 6h16M7 12h10M5 18h14" />
+  </svg>
+);
+
+const AlignLeftIcon = () => (
+  <svg {...svgProps}>
+    <path d="M4 6h16M4 12h10M4 18h14" />
   </svg>
 );
 

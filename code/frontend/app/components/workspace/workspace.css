@@ -1226,7 +1226,7 @@ body.is-resizing-panes iframe {
   from { opacity: 0; }
 }
 
-/* ---------- 方案 C1：高亮底板在胶片间滑动；选中格四周 6px，名字留在缩略图下方不动，右侧焦点卡展开 ---------- */
+/* ---------- 方案 C1：高亮底板在胶片间滑动；选中格四周 6px，缩略图长高、下方名字收起，右侧焦点卡展开 ---------- */
 .tb-variant-c1 {
   --c1-ease: cubic-bezier(0.22, 0.8, 0.24, 1);
 }
@@ -1266,20 +1266,20 @@ body.is-resizing-panes iframe {
 }
 
 .tb-variant-c1 .vb-frame-meta {
-  transition: color 0.2s ease;
+  transition: height 0.34s var(--c1-ease), margin-top 0.34s var(--c1-ease), opacity 0.2s ease;
 }
 
-/* 名字和其它胶片一样留在缩略图下方，切换时不跳位置；6 + 80 + 5 + 14 + 6 = 111，与普通胶片同高 */
+/* 名字挪进右侧焦点卡，缩略图长到 99px：6 + 99 + 6 = 111，与普通胶片同高 */
 .tb-variant-c1 .vb-frame-slot.is-active .vb-frame-preview {
-  height: 80px;
+  height: 99px;
   border-color: rgba(53, 99, 233, 0.35);
   box-shadow: 0 6px 14px -10px rgba(30, 27, 75, 0.7);
 }
 
 .tb-variant-c1 .vb-frame-slot.is-active .vb-frame-meta {
-  color: var(--color-text-primary);
-  font-size: 11.5px;
-  font-weight: 800;
+  height: 0;
+  margin-top: 0;
+  opacity: 0;
 }
 
 /* ---------- 方案 C2：聚光胶片。选中的缩略图放大浮起、带一圈主色描边，其它略暗 ---------- */

@@ -65,7 +65,19 @@ function star(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) 
   ctx.fill();
 }
 
-export function renderPoster({ title, subtitle, qr }: { title: string; subtitle: string; qr: HTMLImageElement }): string {
+export type PosterAlign = "center" | "left";
+
+export function renderPoster({
+  title,
+  subtitle,
+  qr,
+  align = "center",
+}: {
+  title: string;
+  subtitle: string;
+  qr: HTMLImageElement;
+  align?: PosterAlign;
+}): string {
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -81,23 +93,28 @@ export function renderPoster({ title, subtitle, qr }: { title: string; subtitle:
   glow(ctx, WIDTH * 0.04, HEIGHT * 0.92, 400, "rgba(56, 189, 248, 0.26)");
 
   ctx.textBaseline = "top";
+  const centered = align === "center";
+  const textX = centered ? WIDTH / 2 : MARGIN;
+  const tag = "邀你看看这个页面";
   ctx.fillStyle = "#a5b4fc";
-  star(ctx, MARGIN + 9, 112, 10);
   ctx.font = `500 21px ${FONT}`;
-  ctx.fillText("邀你看看这个页面", MARGIN + 30, 100);
+  const tagStart = centered ? (WIDTH - (ctx.measureText(tag).width + 30)) / 2 : MARGIN;
+  star(ctx, tagStart + 9, 112, 10);
+  ctx.fillText(tag, tagStart + 30, 100);
 
+  ctx.textAlign = centered ? "center" : "left";
   let y = 152;
   ctx.fillStyle = "#ffffff";
   ctx.font = `600 60px ${FONT}`;
   for (const line of wrap(ctx, title || "我用星页做了一个页面", WIDTH - MARGIN * 2, 3)) {
-    ctx.fillText(line, MARGIN, y);
+    ctx.fillText(line, textX, y);
     y += 80;
   }
   y += 10;
   ctx.fillStyle = "#cbd5e1";
   ctx.font = `400 25px ${FONT}`;
   for (const line of wrap(ctx, subtitle, WIDTH - MARGIN * 2, 2)) {
-    ctx.fillText(line, MARGIN, y);
+    ctx.fillText(line, textX, y);
     y += 38;
   }
 

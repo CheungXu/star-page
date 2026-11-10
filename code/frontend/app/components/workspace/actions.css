@@ -339,13 +339,52 @@ a.tb-address:hover .tb-address-open span {
   padding: 6px;
 }
 
-/* 面板上沿对齐缩略图顶边，下沿对齐名字行底边，整列高度与左边「缩略图 + 名字」一致 */
+/* 名字压齐缩略图顶边、按钮压齐缩略图底边，用量行在两者正中 */
 .tb-focus-info {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   width: var(--info-w, 184px);
   min-width: 0;
+}
+
+.tb-focus-title {
+  display: contents;
+}
+
+/* 行高 18px 里字形上沿约低 2px，上提 2px 让字的顶边压齐缩略图顶边 */
+.tb-focus-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 18px;
+  margin-top: -2px;
+}
+
+.tb-focus-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.tb-focus-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-focus-head .vp-mark {
+  flex-shrink: 0;
 }
 
 .tb-focus-meta {
@@ -370,9 +409,6 @@ a.tb-address:hover .tb-address-open span {
   gap: 4px;
 }
 
-.tb-focus-meta b {
-  font-weight: inherit;
-}
 
 .tb-focus-meta .vb-coin {
   width: 12px;
@@ -441,67 +477,18 @@ a.tb-address:hover .tb-address-open span {
   padding-left: var(--col-pad);
 }
 
-/* 用量 + 操作面板：上排三格用量（图标在上、数字在下），下排三个按钮，竖分隔线上下贯通 */
-.tb-dash {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 0 0 1px rgba(53, 99, 233, 0.16), 0 4px 12px -8px rgba(53, 99, 233, 0.45);
-}
-
-.tb-dash .tb-focus-meta.is-grid {
-  flex: 1;
-  height: auto;
-  background: linear-gradient(180deg, #f8faff 0%, #f0f4ff 100%);
-  box-shadow: inset 0 -1px 0 rgba(53, 99, 233, 0.12);
-}
-
-.tb-dash .tb-focus-meta.is-grid > span {
-  flex-direction: column;
+/* 模型名的位置：左对齐时缩进到和第一列按钮图标同一条竖线，居中时在整块面板里居中 */
+.tb-name-center .tb-focus-head {
   justify-content: center;
-  justify-self: stretch;
-  align-self: stretch;
-  gap: 6px;
 }
 
-.tb-dash .tb-focus-meta.is-grid > span + span,
-.tb-dash .tb-card-actions .tb-act + .tb-act {
-  box-shadow: inset 1px 0 0 rgba(53, 99, 233, 0.12);
+/* 按钮内容（13px 图标 + 5px 间距 + 两个 12px 汉字 = 42px）在列里居中，缩进量 = (列宽 - 42px) / 2 */
+.tb-name-left .tb-focus-head {
+  padding-left: var(--name-pad, calc((var(--info-w, 184px) / 3 - 42px) / 2));
 }
 
-.tb-meta-center .tb-dash .tb-focus-meta.is-grid > span {
-  align-items: center;
-}
-
-.tb-meta-left .tb-dash .tb-focus-meta.is-grid > span {
-  align-items: flex-start;
-}
-
-.tb-dash .tb-focus-meta b {
-  color: var(--color-text-primary);
-  font-size: 13.5px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  line-height: 16px;
-}
-
-.tb-dash .tb-focus-meta .is-cost b {
-  color: #b45309;
-}
-
-.tb-dash .vb-meta-icon,
-.tb-dash .tb-focus-meta .vb-coin {
-  width: 13px;
-  height: 13px;
-}
-
-.tb-dash .tb-card-actions {
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+.tb-name-left.tb-meta-left .tb-focus-head {
+  --name-pad: var(--col-pad);
 }
 
 /* 打开 / 放大 / 分享：三个等宽分段按钮，32px 高 */
@@ -683,7 +670,7 @@ a.tb-address:hover .tb-address-open span {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 30px;
+  height: 32px;
   border: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(15, 23, 42, 0.66);
@@ -991,7 +978,7 @@ a.tb-address:hover .tb-address-open span {
 .share-pop-side {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
   padding: 16px 16px 14px 18px;
 }
@@ -1028,7 +1015,7 @@ a.tb-address:hover .tb-address-open span {
 .share-pop-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .share-pop-label {
@@ -1039,6 +1026,49 @@ a.tb-address:hover .tb-address-open span {
   color: var(--color-text-tertiary);
   font-size: 11.5px;
   font-weight: 700;
+}
+
+.share-pop-label label {
+  cursor: pointer;
+}
+
+.share-pop-label-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 分享图文字对齐：两枚小图标按钮，默认居中 */
+.share-pop-align {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+}
+
+.share-pop-align button {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.share-pop-align button:hover {
+  color: var(--color-text-secondary);
+}
+
+.share-pop-align button.is-on {
+  background: #fff;
+  color: var(--color-primary);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
 }
 
 .share-pop-reset {
@@ -1059,7 +1089,7 @@ a.tb-address:hover .tb-address-open span {
 .share-pop-input {
   display: flex;
   align-items: center;
-  height: 36px;
+  height: 38px;
   border: 1px solid var(--color-border-strong);
   border-radius: 10px;
   background: #f8fafc;

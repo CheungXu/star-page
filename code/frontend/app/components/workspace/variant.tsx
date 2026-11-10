@@ -45,6 +45,20 @@ export function readMetaAlign(): MetaAlign {
   return raw === "left" ? "left" : "center";
 }
 
+/** C1 焦点卡里模型名的位置：缩进到与第一列按钮图标对齐，或在整块面板里居中。地址加 ?name= 可切换。 */
+export type NameAlign = "left" | "center";
+
+export const NAME_ALIGNS: { id: NameAlign; name: string }[] = [
+  { id: "left", name: "左对齐" },
+  { id: "center", name: "居中" },
+];
+
+export function readNameAlign(): NameAlign {
+  if (typeof window === "undefined") return "center";
+  const raw = new URLSearchParams(window.location.search).get("name");
+  return raw === "left" ? "left" : "center";
+}
+
 function withParam(search: string, key: string, value: string): string {
   const params = new URLSearchParams(search);
   params.set(key, value);
@@ -65,6 +79,7 @@ export function VariantBadge() {
   const demo = location ? new URLSearchParams(location.search).get("demo") : null;
   const cont = location ? readContinueStyle() : null;
   const meta = location ? readMetaAlign() : null;
+  const nameAlign = location ? readNameAlign() : null;
   return (
     <div className="variant-tag" aria-label="当前预览方案">
       <span className="variant-dot" />
@@ -105,6 +120,16 @@ export function VariantBadge() {
           数据对齐
           {META_ALIGNS.map((item) => (
             <a key={item.id} href={withParam(location.search, "meta", item.id)} className={item.id === meta ? "is-current" : ""}>
+              {item.name}
+            </a>
+          ))}
+        </span>
+      )}
+      {location && VARIANT.id === "C1" && (
+        <span className="variant-links" title="焦点卡里模型名的位置">
+          名称
+          {NAME_ALIGNS.map((item) => (
+            <a key={item.id} href={withParam(location.search, "name", item.id)} className={item.id === nameAlign ? "is-current" : ""}>
               {item.name}
             </a>
           ))}
