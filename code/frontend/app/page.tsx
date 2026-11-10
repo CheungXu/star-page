@@ -433,19 +433,6 @@ const BranchIcon = () => (
   </svg>
 );
 
-const ExpandIcon = () => (
-  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M8 3H3v5" />
-    <path d="M16 3h5v5" />
-    <path d="M21 16v5h-5" />
-    <path d="M3 16v5h5" />
-    <path d="M3 3l6 6" />
-    <path d="M21 3l-6 6" />
-    <path d="M21 21l-6-6" />
-    <path d="M3 21l6-6" />
-  </svg>
-);
-
 const ExternalLinkIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M14 3h7v7" />
@@ -776,7 +763,6 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
    ========================================================================== */
 function PreviewCell({
   run,
-  onOpenPreview,
   selectedAsBase,
   dimmedByBase,
   sceneFeatures,
@@ -785,7 +771,6 @@ function PreviewCell({
   onFrame,
 }: {
   run: RunState;
-  onOpenPreview: () => void;
   selectedAsBase: boolean;
   dimmedByBase: boolean;
   sceneFeatures: string[];
@@ -893,12 +878,6 @@ function PreviewCell({
                 />
               </div>
             </div>
-            {presentation === "default" && (
-              <button className="preview-hover-zoom" type="button" onClick={onOpenPreview} aria-label={`放大预览 ${run.modelLabel} 生成页面`}>
-                <span className="button-icon" aria-hidden="true"><ExpandIcon /></span>
-                放大预览
-              </button>
-            )}
           </div>
           {presentation === "default" && actions}
           {showViews && externalViews !== null && (
@@ -2784,7 +2763,6 @@ export default function HomePage() {
         run={run as RunState}
         presentation={presentation}
         onFrame={options?.onFrame}
-        onOpenPreview={() => setFullscreenRun(run as RunState)}
         selectedAsBase={continueBase?.pageId === run.pageId}
         dimmedByBase={runs.length <= 2 && continueBase ? continueBase.pageId !== run.pageId : false}
         sceneFeatures={activeScene?.features ?? []}

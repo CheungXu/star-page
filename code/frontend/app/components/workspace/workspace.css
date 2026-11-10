@@ -1206,33 +1206,20 @@ body.is-resizing-panes iframe {
   background: #fff;
 }
 
-/* 方案 B：切换模型时名字在页面左上角亮一下再淡出；悬停控制轨顶部的头像时常亮 */
-.vb-stage-label.is-flash {
-  pointer-events: none;
-  animation: vb-label-flash 2.4s ease forwards;
-}
-
-.vb-stage:has(.tb-rail-model:hover) .vb-stage-label.is-flash {
-  animation: none;
-  opacity: 1;
-}
-
-@keyframes vb-label-flash {
-  0% { opacity: 0; transform: translateY(-4px); }
-  8% { opacity: 1; transform: translateY(0); }
-  70% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
 /* 方案 C：选中的缩略图和右侧焦点卡连成一张卡 */
 .tb-variant-c .vb-frame-slot.is-active {
-  background: linear-gradient(135deg, #f0f4ff 0%, #e6edff 100%);
+  background: linear-gradient(135deg, #f3f6ff 0%, #e8eeff 100%);
   box-shadow: inset 0 0 0 1px var(--color-primary-soft-strong), 0 10px 22px -18px rgba(53, 99, 233, 0.7);
 }
 
 .tb-variant-c .vb-frame.is-active { background: transparent; }
 .tb-variant-c .vb-frame-slot.is-active .vb-frame-meta { display: none; }
-.tb-variant-c .vb-frame-slot.is-active .vb-frame-preview { height: 103px; }
+
+.tb-variant-c .vb-frame-slot.is-active .vb-frame-preview {
+  height: 103px;
+  border-color: rgba(53, 99, 233, 0.35);
+  box-shadow: 0 6px 14px -10px rgba(30, 27, 75, 0.7);
+}
 
 .vb-frame-meta {
   display: flex;
@@ -1381,6 +1368,5 @@ body.is-resizing-panes iframe {
   .vb-past-chip,
   .vb-past-chip button i,
   .vb-mini { animation: none; }
-  .vb-stage-label.is-flash { animation: none; opacity: 0; }
   .vp-ring-value { transition: none; }
 }

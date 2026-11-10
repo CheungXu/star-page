@@ -76,6 +76,7 @@ export type SharePublication = {
   /** 「打开链接」实际打开的地址；演示模式下固定链接不存在，改开本地页面。 */
   openUrl: string;
   posterUrl: string;
+  qrUrl: string;
   republished: boolean;
   externalViews: number;
 };
@@ -91,6 +92,7 @@ export async function publishDemo(run: WorkspaceRun): Promise<SharePublication> 
     url: `https://stars-page.com/u/${DEMO_SLUG}`,
     openUrl: run.pageUrl,
     posterUrl: `/demo-pages/${run.modelKey}.poster.png`,
+    qrUrl: "/demo-pages/qr.png",
     republished,
     externalViews: 12,
   };

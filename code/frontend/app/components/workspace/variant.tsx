@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 
-export type VariantId = "A" | "B" | "C";
+export type VariantId = "A" | "C";
 
 export const VARIANT_PORTS: { id: VariantId; port: number; name: string }[] = [
   { id: "A", port: 3011, name: "浏览器顶栏" },
-  { id: "B", port: 3012, name: "侧边控制轨" },
   { id: "C", port: 3013, name: "胶片联动" },
 ];
 
@@ -16,7 +15,7 @@ const current =
 /** 由启动时的 NEXT_PUBLIC_UX_VARIANT 决定当前端口展示哪一套舞台工具栏。 */
 export const VARIANT = { id: current.id, name: current.name };
 
-/** 顶部方案角标：标明当前方案，点 A/B/C 在三个端口间切换并保留地址参数。 */
+/** 顶部方案角标：标明当前方案，点 A / C 在两个端口间切换并保留地址参数。 */
 export function VariantBadge() {
   const [location, setLocation] = useState<{ hostname: string; protocol: string; search: string } | null>(null);
 

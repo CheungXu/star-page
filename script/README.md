@@ -141,13 +141,13 @@ git 分支 `full-animation-mode`。决策见 `wiki/frontend-home-workspace-trans
 
 ## 预览工具栏方案对比：`preview-toolbar-variants/`
 
-同一份前端代码起三个 `next dev`，对比「结果预览工具栏不遮挡页面」三套方案（真实 React 组件，不是静态稿）。
-`NEXT_PUBLIC_UX_VARIANT` 决定端口展示哪套，`NEXT_DIST_DIR` 让三个进程各写各的构建目录。
+同一份前端代码起两个 `next dev`，对比「结果预览工具栏不遮挡页面」的方案（真实 React 组件，不是静态稿；B 已淘汰）。
+`NEXT_PUBLIC_UX_VARIANT` 决定端口展示哪套，`NEXT_DIST_DIR` 让各进程写各自的构建目录。
 
 | 文件 | 用途 |
 |---|---|
-| `serve.sh` | `start / stop / status`：3011 方案 A 浏览器顶栏、3012 方案 B 侧边控制轨、3013 方案 C 胶片联动，日志在 `/tmp/preview-toolbar-{a,b,c}.log` |
-| `shots.mjs` | Playwright 自查：截舞台、打开分享弹窗并点复制，实测滚轮横滑胶片条。`ONLY=a,b` 只跑部分方案，`STAGE_ONLY=1` 只截舞台 |
+| `serve.sh` | `start / stop / status`：3011 方案 A 浏览器顶栏、3013 方案 C 胶片联动，日志在 `/tmp/preview-toolbar-{a,c}.log` |
+| `shots.mjs` | Playwright 自查：截舞台和 A 的地址栏悬停态，打开分享浮层并点复制，实测滚轮横滑胶片条。`ONLY=a` 只跑部分方案，`STAGE_ONLY=1` 只截舞台 |
 
 ```bash
 bash script/preview-toolbar-variants/serve.sh start

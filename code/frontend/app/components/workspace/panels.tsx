@@ -452,29 +452,6 @@ function useFilmScroll(activeKey: string) {
   return [ref, edges] as const;
 }
 
-/** 方案 B：舞台右侧的竖排控制轨。顶部是当前模型，中间是操作，底部翻页。 */
-function StageRail({ run, index, total, onStep }: { run: WorkspaceRun; index: number; total: number; onStep: (delta: number) => void }) {
-  const { renderActions } = useWorkspace();
-  return (
-    <aside className="tb-rail" aria-label="页面操作">
-      <span className="tb-rail-model" title={`${run.modelLabel} · 第 ${index + 1} 个，共 ${total} 个`}>
-        <span className="tb-rail-avatar" style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
-          {modelGlyph(run.modelLabel)}
-        </span>
-        <em>
-          {index + 1}/{total}
-        </em>
-      </span>
-      <i className="tb-rail-sep" aria-hidden="true" />
-      {renderActions(run, "rail")}
-      <span className="tb-rail-pager">
-        <button type="button" onClick={() => onStep(-1)} aria-label="上一个模型">‹</button>
-        <button type="button" onClick={() => onStep(1)} aria-label="下一个模型">›</button>
-      </span>
-    </aside>
-  );
-}
-
 /** 方案 C：选中的缩略图向右展开成焦点卡，模型信息和操作都在这里。 */
 function FocusPanel({ run, index, total }: { run: WorkspaceRun; index: number; total: number }) {
   const { elapsed, renderActions } = useWorkspace();
@@ -482,14 +459,12 @@ function FocusPanel({ run, index, total }: { run: WorkspaceRun; index: number; t
   const credits = run.usageSummary?.creditsCharged;
   const pending = run.status === "thinking" || run.status === "creating";
   return (
-    <div className="tb-focus">
+    <div className="tb-focus" style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
       <div className="tb-focus-inner">
         <div className="tb-focus-head">
-          <strong title={run.modelLabel}>{run.modelLabel}</strong>
+          <i className="tb-focus-dot" aria-hidden="true" />
+          <strong title={`${run.modelLabel} · 第 ${index + 1} 个，共 ${total} 个`}>{run.modelLabel}</strong>
           <StatusMark status={run.status} />
-          <em>
-            {index + 1}/{total}
-          </em>
         </div>
         <div className="tb-focus-meta">
           {run.status === "failed" ? (
@@ -571,32 +546,24 @@ export function GenerationResults() {
       {many && active && (
         <div className="vb-gallery">
           <div className="vb-stage">
-            {variant !== "B" && (
-              <button type="button" className="vb-nav vb-prev" onClick={() => step(-1)} aria-label="上一个模型">‹</button>
-            )}
+            <button type="button" className="vb-nav vb-prev" onClick={() => step(-1)} aria-label="上一个模型">‹</button>
             <div className="vb-stage-body">
               {variant === "A" && (
-                <div className="tb-chrome">
+                <div className="tb-chrome" style={{ "--accent": modelAccent(active.modelKey) } as CSSProperties}>
                   <span className="tb-chrome-model" title={active.modelLabel}>
-                    <i style={{ background: modelAccent(active.modelKey) }} />
+                    <span className="tb-chrome-avatar" aria-hidden="true">{modelGlyph(active.modelLabel)}</span>
                     <strong>{active.modelLabel}</strong>
                     <StatusMark status={active.status} />
-                    <em>
-                      {activeIndex + 1}/{runs.length}
-                    </em>
+                    <span className="tb-chrome-index">
+                      {activeIndex + 1}
+                      <i>/</i>
+                      {runs.length}
+                    </span>
                   </span>
                   {renderActions(active, "chrome")}
                 </div>
               )}
               <div className="vb-stage-view">
-                {variant === "B" && (
-                  <span key={active.modelKey} className="vb-stage-label is-flash" aria-hidden="true">
-                    <i style={{ background: modelAccent(active.modelKey) }} />
-                    {active.modelLabel}
-                    <StatusMark status={active.status} />
-                    <em>{activeIndex + 1} / {runs.length}</em>
-                  </span>
-                )}
                 {renderPreview(active, { presentation: "stage" })}
                 {(active.status === "thinking" || active.status === "creating") && (
                   <div className="vb-stage-overlay">
@@ -607,11 +574,7 @@ export function GenerationResults() {
                 )}
               </div>
             </div>
-            {variant === "B" ? (
-              <StageRail run={active} index={activeIndex} total={runs.length} onStep={step} />
-            ) : (
-              <button type="button" className="vb-nav vb-next" onClick={() => step(1)} aria-label="下一个模型">›</button>
-            )}
+            <button type="button" className="vb-nav vb-next" onClick={() => step(1)} aria-label="下一个模型">›</button>
           </div>
           <div
             ref={filmRef}
