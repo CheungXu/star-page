@@ -141,27 +141,38 @@ export function ResultActions({
         </span>
       </div>
     );
-  } else if (layout === "card") {
+  } else if (layout === "continue") {
+    if (!canContinue || !ready) return null;
     body = (
-      <div className="tb-card-actions">
-        <span className="tb-seg">
-          <a className="tb-seg-btn" href={absoluteUrl} target="_blank" rel="noreferrer" title="在新标签页打开" aria-label="在新标签页打开">
-            <OpenIcon />
-          </a>
-          <button type="button" className="tb-seg-btn" onClick={onOpenPreview} title="放大预览" aria-label="放大预览">
-            <ExpandIcon />
-          </button>
-          <button {...shareProps} className={`tb-seg-btn is-share ${shareOpen ? "is-open" : ""}`}>
-            <ShareIcon />
-            分享
-          </button>
-        </span>
-        {canContinue && (
-          <button type="button" className="tb-chip is-primary" onClick={onContinue} aria-pressed={selectedAsBase} title={continueText}>
-            <BranchIcon />
-            {selectedAsBase ? "已选" : "继续改"}
-          </button>
-        )}
+      <button
+        type="button"
+        className={`tb-thumb-cta ${selectedAsBase ? "is-picked" : ""}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onContinue();
+        }}
+        aria-pressed={selectedAsBase}
+        title={selectedAsBase ? "下一轮将基于这个结果修改" : "以此结果继续修改"}
+      >
+        {selectedAsBase ? <CheckIcon /> : <BranchIcon />}
+        <span>{selectedAsBase ? "已选为基础" : "继续改"}</span>
+      </button>
+    );
+  } else if (layout === "card" || layout === "menu") {
+    body = (
+      <div className={layout === "card" ? "tb-card-actions" : "tb-menu-actions"}>
+        <a className="tb-act" href={absoluteUrl} target="_blank" rel="noreferrer" title="在新标签页打开">
+          <OpenIcon />
+          <span>打开</span>
+        </a>
+        <button type="button" className="tb-act" onClick={onOpenPreview} title="放大预览">
+          <ExpandIcon />
+          <span>放大</span>
+        </button>
+        <button {...shareProps} className={`tb-act is-share ${shareOpen ? "is-open" : ""}`} title="分享">
+          <ShareIcon />
+          <span>分享</span>
+        </button>
       </div>
     );
   } else {

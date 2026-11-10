@@ -24,7 +24,7 @@ import {
   sumOutputTokens,
 } from "./progress-utils";
 import type { WorkspaceRun } from "./types";
-import { VARIANT } from "./variant";
+import { readContinueStyle, VARIANT } from "./variant";
 
 function liveCount(run: WorkspaceRun): string {
   const tokens = outputTokenCount(run);
@@ -436,7 +436,7 @@ function useFilmScroll(activeKey: string) {
   useEffect(() => {
     const film = ref.current;
     if (!film || !activeKey) return;
-    // 方案 C 的焦点卡展开有 0.3 秒动画，等宽度稳定后再算位置。
+    // 方案 C 的焦点卡 / 菜单展开有 0.3 秒动画，等宽度稳定后再算位置。
     const timer = window.setTimeout(() => {
       const slot = film.querySelector<HTMLElement>(".vb-frame-slot.is-active");
       if (!slot) return;
@@ -445,18 +445,19 @@ function useFilmScroll(activeKey: string) {
       const end = start + slot.offsetWidth;
       if (start < film.scrollLeft + pad) film.scrollTo({ left: start - pad, behavior: "smooth" });
       else if (end > film.scrollLeft + film.clientWidth - pad) film.scrollTo({ left: end - film.clientWidth + pad, behavior: "smooth" });
-    }, VARIANT.id === "C" ? 320 : 0);
+    }, VARIANT.filmCard ? 320 : 0);
     return () => window.clearTimeout(timer);
   }, [activeKey]);
 
   return [ref, edges] as const;
 }
 
-/** 方案 C：选中的缩略图向右展开成焦点卡，模型信息和操作都在这里。 */
+/** 方案 C1：选中的缩略图向右展开焦点卡。模型名、三项用量（图标代替文字）和一排等宽操作按钮。 */
 function FocusPanel({ run, index, total }: { run: WorkspaceRun; index: number; total: number }) {
   const { elapsed, renderActions } = useWorkspace();
   const tokens = outputTokenCount(run);
   const credits = run.usageSummary?.creditsCharged;
+  const duration = elapsed(run);
   const pending = run.status === "thinking" || run.status === "creating";
   return (
     <div className="tb-focus" style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
@@ -471,10 +472,16 @@ function FocusPanel({ run, index, total }: { run: WorkspaceRun; index: number; t
             <span className="is-failed">生成失败</span>
           ) : (
             <>
-              <span>{tokens > 0 ? `${formatTokens(tokens)} tokens` : stageLabel(run)}</span>
-              <span>{shortDuration(elapsed(run))}</span>
+              <span title={`输出 ${tokens} tokens`}>
+                <TokenIcon />
+                {tokens > 0 ? formatTokens(tokens) : "—"}
+              </span>
+              <span title="生成用时">
+                <ClockIcon />
+                {shortDuration(duration)}
+              </span>
               {typeof credits === "number" && (
-                <span className="is-cost">
+                <span className="is-cost" title={`消耗 ${credits} 积分`}>
                   <CoinIcon />
                   {credits}
                 </span>
@@ -492,6 +499,30 @@ function FocusPanel({ run, index, total }: { run: WorkspaceRun; index: number; t
   );
 }
 
+/** 方案 C2：不展示用量，选中的缩略图右侧只贴一列竖排菜单，三行正好和缩略图等高。 */
+function MenuPanel({ run }: { run: WorkspaceRun }) {
+  const { renderActions } = useWorkspace();
+  if (run.status !== "completed") return null;
+  return (
+    <div className="tb-menu">
+      <div className="tb-menu-inner">{renderActions(run, "menu")}</div>
+    </div>
+  );
+}
+
+const TokenIcon = () => (
+  <svg className="vb-meta-icon" viewBox="0 0 12 12" aria-hidden="true">
+    <path d="M2 3h8M2 6h8M2 9h5" />
+  </svg>
+);
+
+const ClockIcon = () => (
+  <svg className="vb-meta-icon" viewBox="0 0 12 12" aria-hidden="true">
+    <circle cx="6" cy="6" r="4.6" />
+    <path d="M6 3.6V6l1.6 1" />
+  </svg>
+);
+
 /** 右侧结果区：1-2 个模型并排，3 个以上舞台 + 胶片条 + 全屏轮播。 */
 export function GenerationResults() {
   const { runs, activeModelKey, selectModel, isUnseen, renderPreview, renderActions, elapsed, roundNav } = useWorkspace();
@@ -502,6 +533,7 @@ export function GenerationResults() {
   const active = runs[activeIndex] ?? runs[0];
   const done = runs.filter((run) => run.status === "completed").length;
   const [filmRef, filmEdges] = useFilmScroll(many ? (active?.modelKey ?? "") : "");
+  const [continueStyle] = useState(readContinueStyle);
   const variant = VARIANT.id;
 
   useEffect(() => {
@@ -523,7 +555,7 @@ export function GenerationResults() {
   return (
     <>
     <PaneResizer />
-    <article className={`panel preview-panel workspace-preview vb-results tb-variant-${variant.toLowerCase()}`}>
+    <article className={`panel preview-panel workspace-preview vb-results tb-variant-${variant.toLowerCase()} ${VARIANT.filmCard ? "tb-variant-c" : ""}`}>
       <div className="panel-heading preview-heading">
         <h2>
           {roundNav && roundNav.items.length > 1 ? "" : "结果预览 · "}
@@ -593,6 +625,7 @@ export function GenerationResults() {
                     className={`vb-frame ${isActive ? "is-active" : ""}`}
                     onClick={() => selectModel(run.modelKey)}
                     onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return;
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         selectModel(run.modelKey);
@@ -609,13 +642,17 @@ export function GenerationResults() {
                         </span>
                       )}
                       {isUnseen(run.modelKey) && <b className="vb-unseen" aria-label="新完成" />}
+                      {VARIANT.filmCard && isActive && (
+                        <span className={`tb-thumb-cta-slot is-${continueStyle}`}>{renderActions(run, "continue")}</span>
+                      )}
                     </span>
                     <span className="vb-frame-meta">
                       <i style={{ background: modelAccent(run.modelKey) }} />
                       <span>{run.modelLabel}</span>
                     </span>
                   </div>
-                  {variant === "C" && isActive && <FocusPanel run={run} index={index} total={runs.length} />}
+                  {variant === "C1" && isActive && <FocusPanel run={run} index={index} total={runs.length} />}
+                  {variant === "C2" && isActive && <MenuPanel run={run} />}
                 </div>
               );
             })}

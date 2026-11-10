@@ -141,20 +141,20 @@ git 分支 `full-animation-mode`。决策见 `wiki/frontend-home-workspace-trans
 
 ## 预览工具栏方案对比：`preview-toolbar-variants/`
 
-同一份前端代码起两个 `next dev`，对比「结果预览工具栏不遮挡页面」的方案（真实 React 组件，不是静态稿；B 已淘汰）。
+同一份前端代码起多个 `next dev`，对比「结果预览工具栏不遮挡页面」的方案（真实 React 组件，不是静态稿；B 已淘汰，C 拆成 C1、C2）。
 `NEXT_PUBLIC_UX_VARIANT` 决定端口展示哪套，`NEXT_DIST_DIR` 让各进程写各自的构建目录。
 
 | 文件 | 用途 |
 |---|---|
-| `serve.sh` | `start / stop / status`：3011 方案 A 浏览器顶栏、3013 方案 C 胶片联动，日志在 `/tmp/preview-toolbar-{a,c}.log` |
-| `shots.mjs` | Playwright 自查：截舞台和 A 的地址栏悬停态，打开分享浮层并点复制，实测滚轮横滑胶片条。`ONLY=a` 只跑部分方案，`STAGE_ONLY=1` 只截舞台 |
+| `serve.sh` | `start [A,C1,C2] / stop / status`：3011 方案 A、3013 方案 C1、3014 方案 C2，`start C1` 只重启指定方案；日志在 `/tmp/preview-toolbar-{a,c1,c2}.log` |
+| `shots.mjs` | Playwright 自查：截舞台和 A 的地址栏悬停态，打开分享浮层并点复制，实测滚轮横滑胶片条。`ONLY=a,c2` 只跑部分方案，`STAGE_ONLY=1` 只截舞台 |
 
 ```bash
 bash script/preview-toolbar-variants/serve.sh start
 node script/preview-toolbar-variants/shots.mjs /tmp/preview-toolbar-shots 1600x900
 ```
 
-地址加 `?demo=9` 进演示模式（9 个模型的真实页面存在 `code/frontend/public/demo-pages/`，不调后端）。
+地址加 `?demo=9` 进演示模式（9 个模型的真实页面存在 `code/frontend/public/demo-pages/`，不调后端）；C1、C2 再加 `&cont=pill|bar|corner` 切换缩略图上「继续改」的样式。
 headless Chromium 渲染 9 个 WebGL 页面很慢，单次截图可能要几十秒，偶发超时重跑即可。选定方案后删除本目录。
 
 ## 小红书公开热词

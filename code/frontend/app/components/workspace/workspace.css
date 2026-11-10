@@ -1213,13 +1213,18 @@ body.is-resizing-panes iframe {
 }
 
 .tb-variant-c .vb-frame.is-active { background: transparent; }
-.tb-variant-c .vb-frame-slot.is-active .vb-frame-meta { display: none; }
 
 .tb-variant-c .vb-frame-slot.is-active .vb-frame-preview {
-  height: 103px;
   border-color: rgba(53, 99, 233, 0.35);
   box-shadow: 0 6px 14px -10px rgba(30, 27, 75, 0.7);
 }
+
+/* C1：名字挪进焦点卡，缩略图拉高到整张卡的高度 */
+.tb-variant-c1 .vb-frame-slot.is-active .vb-frame-meta { display: none; }
+.tb-variant-c1 .vb-frame-slot.is-active .vb-frame-preview { height: 103px; }
+
+/* C2：名字留在缩略图下方，和其它胶片一致，只加重颜色 */
+.tb-variant-c2 .vb-frame-slot.is-active .vb-frame-meta { color: var(--color-text-primary); }
 
 .vb-frame-meta {
   display: flex;

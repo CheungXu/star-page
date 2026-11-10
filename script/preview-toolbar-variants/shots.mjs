@@ -1,4 +1,4 @@
-// 用服务器上的 Playwright Chromium 给两套方案截图自查，并实测胶片条滚轮横滑和分享浮层。
+// 用服务器上的 Playwright Chromium 给各方案截图自查，并实测胶片条滚轮横滑和分享浮层。
 // 用法：node script/preview-toolbar-variants/shots.mjs [输出目录] [宽x高]
 import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
@@ -12,8 +12,8 @@ const outDir = process.argv[2] || "/tmp/preview-toolbar-shots";
 const [width, height] = (process.argv[3] || "1600x900").split("x").map(Number);
 mkdirSync(outDir, { recursive: true });
 
-const ports = { a: 3011, c: 3013 };
-const shareSelector = { a: ".tb-btn.is-share", c: ".tb-seg-btn.is-share" };
+const ports = { a: 3011, c1: 3013, c2: 3014 };
+const shareSelector = { a: ".tb-btn.is-share", c1: ".tb-act.is-share", c2: ".tb-act.is-share" };
 const only = process.env.ONLY ? process.env.ONLY.split(",") : Object.keys(ports);
 const tag = `${width}x${height}`;
 const shot = (name, options = {}) => page.screenshot({ path: path.join(outDir, `${name}-${tag}.png`), timeout: 90_000, ...options });
