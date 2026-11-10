@@ -1205,7 +1205,7 @@ body.is-resizing-panes iframe {
   background: #fff;
 }
 
-/* 舞台换模型：新页面图层在上，加载好后淡入；旧页面在下面垫着，淡入完再移除 */
+/* 舞台换模型：新页面图层点击即淡入；还没画出来时背景透明，下面的旧页面先顶着，加载完再移除旧页面 */
 .vb-stage-layer {
   position: absolute;
   inset: 0;
@@ -1214,14 +1214,16 @@ body.is-resizing-panes iframe {
 
 .vb-stage-layer.is-top {
   z-index: 1;
-  opacity: 0;
-  transform: scale(0.994);
-  transition: opacity 0.34s ease, transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: vb-stage-in 0.2s ease-out both;
 }
 
-.vb-stage-layer.is-top.is-ready {
-  opacity: 1;
-  transform: none;
+.vb-stage-layer.is-top:not(.is-ready) .preview-viewport,
+.vb-stage-layer.is-top:not(.is-ready) .preview-scale-shell iframe {
+  background: transparent;
+}
+
+@keyframes vb-stage-in {
+  from { opacity: 0; }
 }
 
 /* ---------- 方案 C1：高亮底板在胶片间滑动，选中格的缩略图长高、名字收起、右侧焦点卡展开 ---------- */
@@ -1236,7 +1238,7 @@ body.is-resizing-panes iframe {
   z-index: 0;
   width: 0;
   border-radius: 12px;
-  background: linear-gradient(135deg, #f3f6ff 0%, #e7edff 100%);
+  background: linear-gradient(180deg, #f5f8ff 0%, #ecf1ff 100%);
   box-shadow: inset 0 0 0 1px var(--color-primary-soft-strong), 0 10px 22px -18px rgba(53, 99, 233, 0.7);
   opacity: 0;
   pointer-events: none;
@@ -1248,8 +1250,14 @@ body.is-resizing-panes iframe {
   z-index: 1;
 }
 
+.tb-variant-c1 .vb-frame {
+  transition: padding 0.34s var(--c1-ease);
+}
+
+/* 选中后整张卡统一 6px 内边距：缩略图四周 6px，右侧文字列的按钮离卡片右、下边也是 6px */
 .tb-variant-c1 .vb-frame.is-active,
 .tb-variant-c1 .vb-frame.is-active:hover {
+  padding: 6px;
   background: transparent;
 }
 
@@ -1262,7 +1270,7 @@ body.is-resizing-panes iframe {
 }
 
 .tb-variant-c1 .vb-frame-slot.is-active .vb-frame-preview {
-  height: 103px;
+  height: 99px;
   border-color: rgba(53, 99, 233, 0.35);
   box-shadow: 0 6px 14px -10px rgba(30, 27, 75, 0.7);
 }
@@ -1492,6 +1500,7 @@ body.is-resizing-panes iframe {
   .vb-avatar::before,
   .vb-past-chip,
   .vb-past-chip button i,
+  .vb-stage-layer.is-top,
   .vb-mini { animation: none; }
   .vp-ring-value { transition: none; }
 }

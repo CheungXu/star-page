@@ -309,13 +309,13 @@ a.tb-address:hover .tb-address-open span {
 }
 
 /* ---------- 方案 C1：焦点卡。左列模型名、用量和按钮，上下分别与缩略图顶边、底边对齐 ---------- */
-/* 信息列宽度随「继续改」的位置变化：放在右侧竖按钮时收窄，给竖按钮让位 */
+/* 信息列宽度随「继续改」的位置变化；卡片右内边距 6px，与缩略图的 6px 内缩一致 */
 .tb-cont-tab { --info-w: 176px; }
 .tb-cont-row,
-.tb-cont-thumb { --info-w: 188px; }
+.tb-cont-thumb { --info-w: 184px; }
 
 .tb-focus {
-  --focus-w: calc(var(--info-w, 188px) + 14px);
+  --focus-w: calc(var(--info-w, 184px) + 12px);
   width: 0;
   min-width: 0;
   overflow: hidden;
@@ -324,7 +324,7 @@ a.tb-address:hover .tb-address-open span {
 }
 
 .tb-focus:has(.tb-continue-tab) {
-  --focus-w: calc(var(--info-w, 176px) + 72px);
+  --focus-w: calc(var(--info-w, 176px) + 70px);
 }
 
 .tb-focus.is-active {
@@ -333,28 +333,26 @@ a.tb-address:hover .tb-address-open span {
   transition: width 0.34s var(--c1-ease), opacity 0.28s ease 0.1s;
 }
 
-/* 上下内边距 4px，与缩略图外框（.vb-frame 的 4px）一致，内容区正好是缩略图的高度 */
+/* 四周 6px，与选中缩略图的内缩一致：内容区上下正好等于缩略图高度，缩略图和文字之间 6+6=12px */
 .tb-focus-inner {
   display: flex;
   gap: 8px;
   width: var(--focus-w);
   height: 100%;
-  padding: 4px 4px 4px 10px;
+  padding: 6px;
 }
 
+/* 名字压齐缩略图顶边、按钮压齐缩略图底边，用量行在两者正中 */
 .tb-focus-info {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  width: var(--info-w, 188px);
+  width: var(--info-w, 184px);
   min-width: 0;
 }
 
 .tb-focus-title {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-width: 0;
+  display: contents;
 }
 
 /* 行高 18px 里字形上沿约低 2px，上提 2px 让字的顶边压齐缩略图顶边 */

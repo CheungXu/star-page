@@ -521,7 +521,10 @@ function useFilmMotion(filmRef: RefObject<HTMLDivElement | null>, gliderRef: Ref
 
 type StageLayer = { key: string; run: WorkspaceRun; ready: boolean };
 
-/** 舞台换模型时新旧页面交叉淡化：新页面加载好再淡入，旧页面在下面垫着，淡入完成后移除。 */
+/**
+ * 舞台换模型：新页面图层立刻淡入（跟手），没画出来之前透明，由下面的旧页面顶着防闪白；
+ * 新页面加载完（或最多 1.5 秒）后移除旧页面。
+ */
 function StageSwap({ active }: { active: WorkspaceRun }) {
   const { renderPreview } = useWorkspace();
   const [layers, setLayers] = useState<StageLayer[]>(() => [{ key: active.modelKey, run: active, ready: true }]);
@@ -535,16 +538,15 @@ function StageSwap({ active }: { active: WorkspaceRun }) {
     setLayers((current) => current.map((layer) => (layer.key === key && !layer.ready ? { ...layer, ready: true } : layer)));
   }, []);
 
-  // 新页面迟迟没加载完也不卡住：最多等 1.2 秒就淡入。
   useEffect(() => {
     if (top.ready) return;
-    const timer = window.setTimeout(() => markReady(top.key), 1200);
+    const timer = window.setTimeout(() => markReady(top.key), 1500);
     return () => window.clearTimeout(timer);
   }, [top.key, top.ready, markReady]);
 
   useEffect(() => {
     if (!top.ready || layers.length < 2) return;
-    const timer = window.setTimeout(() => setLayers((current) => current.slice(-1)), 380);
+    const timer = window.setTimeout(() => setLayers((current) => current.slice(-1)), 120);
     return () => window.clearTimeout(timer);
   }, [top.ready, layers.length]);
 
