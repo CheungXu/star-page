@@ -12,11 +12,15 @@ import { LEGAL_POLICY_VERSION } from "./legal/docs";
 import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
+import { toAbsoluteUrl } from "./lib/links";
 import "./components/workspace/workspace.css";
+import { ResultActions } from "./components/workspace/actions";
 import { RoundSource } from "./components/workspace/bits";
 import { WorkspaceProvider } from "./components/workspace/context";
+import { isDemoRun, readDemo } from "./components/workspace/demo";
 import { GenerationProgress, GenerationResults } from "./components/workspace/panels";
-import type { PreviewPresentation, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
+import type { ActionLayout, PreviewPresentation, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
+import { VariantBadge } from "./components/workspace/variant";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
 
@@ -450,13 +454,6 @@ const ExternalLinkIcon = () => (
   </svg>
 );
 
-const CopyIcon = () => (
-  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="9" y="9" width="13" height="13" rx="2" />
-    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-  </svg>
-);
-
 const UserIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M20 21a8 8 0 0 0-16 0" />
@@ -780,27 +777,20 @@ function motionStageTransition(stage: HTMLElement, motionLib: MotionLib, mutate:
 function PreviewCell({
   run,
   onOpenPreview,
-  onContinue,
-  canContinue,
   selectedAsBase,
   dimmedByBase,
-  shareGate,
   sceneFeatures,
-  onRequireLogin,
-  onNotice,
+  actions,
   presentation = "default",
   onFrame,
 }: {
   run: RunState;
   onOpenPreview: () => void;
-  onContinue: () => void;
-  canContinue: boolean;
   selectedAsBase: boolean;
   dimmedByBase: boolean;
-  shareGate?: () => boolean;
   sceneFeatures: string[];
-  onRequireLogin: (message: string) => void;
-  onNotice: (message: string) => void;
+  /** 卡片底栏的操作；舞台和缩略图不带，操作由结果区按方案摆放。 */
+  actions?: ReactNode;
   presentation?: PreviewPresentation;
   onFrame?: (node: HTMLIFrameElement | null) => void;
 }) {
@@ -811,12 +801,8 @@ function PreviewCell({
     contentHeight: PREVIEW_DEFAULT_HEIGHT,
     scale: 0.5,
   });
-  const [copied, setCopied] = useState(false);
-  const [copyFeedback, setCopyFeedback] = useState("");
   const [externalViews, setExternalViews] = useState<number | null>(null);
-  const [published, setPublished] = useState<{ url: string; posterUrl: string; qrUrl: string } | null>(null);
-  const [publishing, setPublishing] = useState(false);
-  const [posterOpen, setPosterOpen] = useState(false);
+  const showViews = presentation === "default" && sceneFeatures.includes("view_count") && !isDemoRun(run);
 
   const absoluteUrl = useMemo(() => toAbsoluteUrl(run.pageUrl), [run.pageUrl]);
 
@@ -826,16 +812,7 @@ function PreviewCell({
   }, [absoluteUrl, run.status, onFrame]);
 
   useEffect(() => {
-    if (!posterOpen) return;
-    const close = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setPosterOpen(false);
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [posterOpen]);
-
-  useEffect(() => {
-    if (run.status !== "completed" || !run.pageId) return;
+    if (!showViews || run.status !== "completed" || !run.pageId) return;
     let cancelled = false;
     void apiFetch(`/api/pages/${run.pageId}/stats`).then(async (response) => {
       if (!response.ok || cancelled) return;
@@ -845,7 +822,7 @@ function PreviewCell({
     return () => {
       cancelled = true;
     };
-  }, [run.pageId, run.status]);
+  }, [run.pageId, run.status, showViews]);
 
   function recomputeMetrics() {
     const stage = stageRef.current;
@@ -876,79 +853,6 @@ function PreviewCell({
 
   function handlePreviewLoad() {
     recomputeMetrics();
-  }
-
-  async function publishStableLink() {
-    if (!run.pageId || publishing) return;
-    setPublishing(true);
-    try {
-      const response = await apiFetch("/api/publications", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page_id: run.pageId }),
-      });
-      if (response.status === 401) {
-        onRequireLogin("登录后才能发布固定链接");
-        return;
-      }
-      if (!response.ok) {
-        onNotice("发布没有成功，请再试一次");
-        return;
-      }
-      const data = (await response.json()) as {
-        url: string;
-        poster_url: string;
-        qr_url: string;
-        republished?: boolean;
-        external_view_count?: number;
-      };
-      const version = Date.now();
-      setPublished({
-        url: data.url,
-        posterUrl: `${toAbsoluteUrl(data.poster_url)}?v=${version}`,
-        qrUrl: `${toAbsoluteUrl(data.qr_url)}?v=${version}`,
-      });
-      if (typeof data.external_view_count === "number") setExternalViews(data.external_view_count);
-      try {
-        await copyTextToClipboard(data.url);
-        onNotice(data.republished ? "公开链接还是原来的地址，内容已换成这一版" : "已复制固定链接");
-      } catch {
-        onNotice("链接已发布，复制失败，请从下方地址手动复制");
-      }
-    } finally {
-      setPublishing(false);
-    }
-  }
-
-  function exportPdf() {
-    const target = published?.url || absoluteUrl;
-    if (!target) return;
-    const join = target.includes("?") ? "&" : "?";
-    const opened = window.open(`${target}${join}print=1`, "_blank");
-    if (!opened) {
-      onNotice("浏览器拦住了打印窗口，请允许弹窗后再试");
-      return;
-    }
-    opened.opener = null;
-  }
-
-  async function copyUrl() {
-    if (!absoluteUrl) return;
-    // 匿名访客复制分享链接时拦截并引导登录（避免未登录散播无归属链接）。
-    if (shareGate && shareGate()) return;
-    try {
-      await copyTextToClipboard(absoluteUrl);
-      setCopied(true);
-      setCopyFeedback("已复制链接");
-      window.setTimeout(() => {
-        setCopied(false);
-        setCopyFeedback("");
-      }, 1800);
-    } catch {
-      setCopied(false);
-      setCopyFeedback("复制失败，请手动复制");
-      window.setTimeout(() => setCopyFeedback(""), 2400);
-    }
   }
 
   const shellStyle = {
@@ -989,71 +893,16 @@ function PreviewCell({
                 />
               </div>
             </div>
-            <button className="preview-hover-zoom" type="button" onClick={onOpenPreview} aria-label={`放大预览 ${run.modelLabel} 生成页面`}>
-              <span className="button-icon" aria-hidden="true"><ExpandIcon /></span>
-              放大预览
-            </button>
-          </div>
-          <div className="link-actions">
-            <div className="link-secondary-actions">
-              <a className="link-icon-button" href={absoluteUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${run.modelLabel} 生成页面`} title="打开页面">
-                <ExternalLinkIcon />
-                <span>打开</span>
-              </a>
-              <button className={`link-icon-button ${copied ? "copied" : ""}`} type="button" onClick={copyUrl} aria-label={`复制 ${run.modelLabel} 页面链接`} title="复制链接">
-                <CopyIcon />
-                <span>{copied ? "已复制" : copyFeedback || "复制"}</span>
-              </button>
-              <button className="link-icon-button" type="button" onClick={() => void publishStableLink()} disabled={publishing}>
-                <span>{publishing ? "发布中" : published ? "更新公开链接" : "发布固定链接"}</span>
-              </button>
-              {sceneFeatures.includes("print_pdf") && (
-                <button className="link-icon-button" type="button" onClick={exportPdf}>
-                  <span>打印或存为 PDF</span>
-                </button>
-              )}
-              {published && (
-                <button className="link-icon-button" type="button" onClick={() => setPosterOpen(true)}>
-                  <span>发朋友圈</span>
-                </button>
-              )}
-            </div>
-            {canContinue && (
-              <button className="continue-button" type="button" onClick={onContinue} aria-pressed={selectedAsBase}>
-                <span className="button-icon" aria-hidden="true"><BranchIcon /></span>
-                {selectedAsBase ? "已选为基础" : "以此结果继续"}
+            {presentation === "default" && (
+              <button className="preview-hover-zoom" type="button" onClick={onOpenPreview} aria-label={`放大预览 ${run.modelLabel} 生成页面`}>
+                <span className="button-icon" aria-hidden="true"><ExpandIcon /></span>
+                放大预览
               </button>
             )}
           </div>
-          {sceneFeatures.includes("view_count") && externalViews !== null && (
+          {presentation === "default" && actions}
+          {showViews && externalViews !== null && (
             <p className="scene-view-count">{externalViews === 0 ? "还没有别人打开" : `别人打开 ${externalViews} 次`}</p>
-          )}
-          {published && (
-            <div className="scene-publish-result">
-              <img src={published.qrUrl} alt="固定链接二维码" width={96} height={96} />
-              <p className="scene-published-url">{published.url}</p>
-            </div>
-          )}
-          {published && posterOpen && (
-            <div className="poster-modal-backdrop" role="presentation" onClick={() => setPosterOpen(false)}>
-              <section
-                className="poster-modal"
-                role="dialog"
-                aria-modal="true"
-                aria-label="朋友圈海报"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <img src={published.posterUrl} alt={`${run.modelLabel} 页面海报`} />
-                <p className="poster-modal-tip">手机上长按图片保存，再发到朋友圈</p>
-                <p className="poster-modal-sub">海报里的二维码会打开这条固定链接</p>
-                <div className="poster-modal-actions">
-                  <a className="poster-modal-primary" href={published.posterUrl} download="星页海报.png">
-                    下载海报
-                  </a>
-                  <button type="button" onClick={() => setPosterOpen(false)}>关闭</button>
-                </div>
-              </section>
-            </div>
           )}
         </>
       ) : run.status === "failed" ? (
@@ -1474,6 +1323,24 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // 演示模式（?demo=9）：直接还原一次 9 模型会话，不调后端，用于方案对比。
+  useEffect(() => {
+    const demo = readDemo();
+    if (!demo) return;
+    const timer = window.setTimeout(() => {
+      setPhase("active");
+      setSubmittedPrompt(demo.prompt);
+      setSubmittedFileNames([]);
+      setConversationId("");
+      setBatchId("");
+      setRoundIndex(0);
+      setPastRounds([]);
+      setCurrentBasedOn(null);
+      setRuns(demo.runs as RunState[]);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const playTransition = (mutate: () => void) => {
@@ -2884,23 +2751,22 @@ export default function HomePage() {
         }
       : null;
 
-  const renderPreview = (run: WorkspaceRun, options?: { presentation?: PreviewPresentation; onFrame?: (node: HTMLIFrameElement | null) => void }) => (
-    <PreviewCell
-      run={run as RunState}
-      presentation={options?.presentation}
-      onFrame={options?.onFrame}
-      onOpenPreview={() => setFullscreenRun(run as RunState)}
-      onContinue={() => startContinueFrom(run as RunState)}
+  const renderActions = (run: WorkspaceRun, layout: ActionLayout) => (
+    <ResultActions
+      run={run}
+      layout={layout}
       canContinue={!isGenerating && Boolean(run.pageId)}
       selectedAsBase={continueBase?.pageId === run.pageId}
-      dimmedByBase={runs.length <= 2 && continueBase ? continueBase.pageId !== run.pageId : false}
-      sceneFeatures={activeScene?.features ?? []}
+      printable={(activeScene?.features ?? []).includes("print_pdf")}
+      onContinue={() => startContinueFrom(run as RunState)}
+      onOpenPreview={() => setFullscreenRun(run as RunState)}
       onRequireLogin={(message) => {
         showNotice(message);
         setIsAuthModalOpen(true);
       }}
       onNotice={showNotice}
       shareGate={() => {
+        // 匿名访客复制或分享时拦截并引导登录（避免未登录散播无归属链接）。
         if (!authUser) {
           showNotice("登录后即可复制并分享你的作品链接");
           setIsAuthModalOpen(true);
@@ -2910,6 +2776,22 @@ export default function HomePage() {
       }}
     />
   );
+
+  const renderPreview = (run: WorkspaceRun, options?: { presentation?: PreviewPresentation; onFrame?: (node: HTMLIFrameElement | null) => void }) => {
+    const presentation = options?.presentation ?? "default";
+    return (
+      <PreviewCell
+        run={run as RunState}
+        presentation={presentation}
+        onFrame={options?.onFrame}
+        onOpenPreview={() => setFullscreenRun(run as RunState)}
+        selectedAsBase={continueBase?.pageId === run.pageId}
+        dimmedByBase={runs.length <= 2 && continueBase ? continueBase.pageId !== run.pageId : false}
+        sceneFeatures={activeScene?.features ?? []}
+        actions={presentation === "default" ? renderActions(run, "bar") : undefined}
+      />
+    );
+  };
 
   return (
     <div className="app-stage" ref={stageRef}>
@@ -2956,6 +2838,7 @@ export default function HomePage() {
             isGenerating={isGenerating}
             continueBasePageId={continueBase?.pageId ?? ""}
             renderPreview={renderPreview}
+            renderActions={renderActions}
             roundNav={roundNav}
           >
           <section className={`workspace-layout ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMulti ? "compare-mode" : ""} layout-gallery`}>
@@ -2986,6 +2869,7 @@ export default function HomePage() {
                           isGenerating={false}
                           continueBasePageId=""
                           renderPreview={renderPreview}
+                          renderActions={renderActions}
                           pinnedModelKey={viewing ? viewedRound?.modelKey : undefined}
                           trackUnseen={false}
                         >
@@ -3058,6 +2942,7 @@ export default function HomePage() {
                   isGenerating={false}
                   continueBasePageId={continueBase?.pageId ?? ""}
                   renderPreview={renderPreview}
+                  renderActions={renderActions}
                   pinnedModelKey={viewedRound?.modelKey}
                   roundNav={roundNav}
                   trackUnseen={false}
@@ -3072,6 +2957,7 @@ export default function HomePage() {
           </WorkspaceProvider>
         </main>
       )}
+      <VariantBadge />
       {notice && <div className="app-toast" role="status">{notice}</div>}
       {fullscreenPreviewRun && <FullscreenPreviewModal run={fullscreenPreviewRun} onClose={() => setFullscreenRun(null)} />}
       {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
@@ -3139,22 +3025,6 @@ function makeRunFromResponse(run: GenerationRunResponse, hasFile: boolean): RunS
 
 function labelForModel(key: string, models: ModelInfo[]): string {
   return models.find((model) => model.key === key)?.label ?? key;
-}
-
-function toAbsoluteUrl(pageUrl: string): string {
-  if (!pageUrl) return "";
-  if (typeof window === "undefined") return pageUrl;
-
-  try {
-    const url = new URL(pageUrl, window.location.origin);
-    if (url.pathname.startsWith("/p/") || url.pathname.startsWith("/u/")) {
-      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`;
-    }
-    return url.toString();
-  } catch {
-    if (pageUrl.startsWith("/")) return `${window.location.origin}${pageUrl}`;
-    return pageUrl;
-  }
 }
 
 function readCurrentSession(): StoredSession | null {
@@ -3448,28 +3318,4 @@ function formatFileSize(size: number): string {
 function resizePromptTextarea(textarea: HTMLTextAreaElement): void {
   textarea.style.height = "auto";
   textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-}
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-
-  const success = document.execCommand("copy");
-  document.body.removeChild(textarea);
-
-  if (!success) {
-    throw new Error("复制失败");
-  }
 }

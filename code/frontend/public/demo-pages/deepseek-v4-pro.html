@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>星辰水晶 · 宇宙之核</title>
+<style>
+        :root {
+            --bg: #04060f;
+            --glow-gold: #c89460;
+            --glow-rose: #b87a6a;
+            --glow-blue: #3a5f8a;
+            --text-subtle: #8a7a6a;
+            color-scheme: dark;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg);
+            font-family: 'Georgia', 'Noto Serif SC', 'STSong', 'Songti SC', 'SimSun', 'Times New Roman', serif;
+            -webkit-font-smoothing: antialiased;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: pan-x pan-y pinch-zoom;
+        }
+
+        #canvas-container {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* 光晕叠加层 */
+        .glow-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 2;
+            pointer-events: none;
+            mix-blend-mode: screen;
+        }
+
+        .glow-orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.18;
+            transition: transform 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        }
+
+        .glow-orb.g1 {
+            width: 420px;
+            height: 420px;
+            background: radial-gradient(circle, #d4a060 0%, #8a5040 30%, transparent 70%);
+            top: -10%;
+            left: -8%;
+        }
+
+        .glow-orb.g2 {
+            width: 350px;
+            height: 350px;
+            background: radial-gradient(circle, #7a9ec0 0%, #3a5080 30%, transparent 70%);
+            bottom: -12%;
+            right: -6%;
+        }
+
+        .glow-orb.g3 {
+            width: 280px;
+            height: 280px;
+            background: radial-gradient(circle, #c08070 0%, #6a3040 30%, transparent 70%);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            opacity: 0.12;
+        }
+
+        /* 微光粒子 */
+        .dust-particles {
+            position: fixed;
+            inset: 0;
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        .dust-dot {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            border-radius: 50%;
+            background: #e8c890;
+            opacity: 0;
+            animation: dustFloat 6s ease-in-out infinite;
+        }
+
+        .dust-dot:nth-child(1) {
+            top: 18%;
+            left: 22%;
+            animation-delay: 0s;
+            animation-duration: 5.5s;
+        }
+        .dust-dot:nth-child(2) {
+            top: 35%;
+            left: 72%;
+            animation-delay: 1.2s;
+            animation-duration: 6.8s;
+        }
+        .dust-dot:nth-child(3) {
+            top: 62%;
+            left: 15%;
+            animation-delay: 2.5s;
+            animation-duration: 5.2s;
+        }
+        .dust-dot:nth-child(4) {
+            top: 78%;
+            left: 55%;
+            animation-delay: 3.7s;
+            animation-duration: 7.1s;
+        }
+        .dust-dot:nth-child(5) {
+            top: 25%;
+            left: 48%;
+            animation-delay: 4.8s;
+            animation-duration: 6.3s;
+        }
+        .dust-dot:nth-child(6) {
+            top: 52%;
+            left: 82%;
+            animation-delay: 1.8s;
+            animation-duration: 5.9s;
+        }
+        .dust-dot:nth-child(7) {
+            top: 42%;
+            left: 8%;
+            animation-delay: 3.1s;
+            animation-duration: 4.7s;
+        }
+        .dust-dot:nth-child(8) {
+            top: 70%;
+            left: 38%;
+            animation-delay: 5.2s;
+            animation-duration: 6.5s;
+        }
+
+        @keyframes dustFloat {
+            0%,
+            100% {
+                opacity: 0;
+                transform: translate(0, 0) scale(0.5);
+            }
+            15% {
+                opacity: 0.7;
+                transform: translate(12px, -18px) scale(1.4);
+            }
+            30% {
+                opacity: 0.3;
+                transform: translate(-8px, -30px) scale(0.8);
+            }
+            45% {
+                opacity: 0.85;
+                transform: translate(20px, -12px) scale(1.6);
+            }
+            60% {
+                opacity: 0.2;
+                transform: translate(-16px, -26px) scale(0.6);
+            }
+            75% {
+                opacity: 0.5;
+                transform: translate(6px, -8px) scale(1.2);
+            }
+            90% {
+                opacity: 0.1;
+                transform: translate(-4px, -20px) scale(0.4);
+            }
+        }
+
+        /* UI提示 */
+        .ui-hint {
+            position: fixed;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            pointer-events: none;
+            font-size: 0.75rem;
+            letter-spacing: 0.2em;
+            color: rgba(200, 170, 130, 0.6);
+            text-align: center;
+            transition: opacity 1.5s ease;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .ui-title {
+            position: fixed;
+            top: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            pointer-events: none;
+            font-size: clamp(0.85rem, 1.5vw, 1.1rem);
+            letter-spacing: 0.35em;
+            color: rgba(210, 180, 140, 0.7);
+            text-align: center;
+            font-weight: normal;
+            text-wrap: balance;
+        }
+
+        @media (max-width: 768px) {
+            .glow-orb.g1 {
+                width: 220px;
+                height: 220px;
+                top: -8%;
+                left: -15%;
+            }
+            .glow-orb.g2 {
+                width: 200px;
+                height: 200px;
+                bottom: -10%;
+                right: -12%;
+            }
+            .glow-orb.g3 {
+                width: 160px;
+                height: 160px;
+                opacity: 0.08;
+            }
+            .ui-hint {
+                bottom: 18px;
+                font-size: 0.65rem;
+                letter-spacing: 0.15em;
+            }
+            .ui-title {
+                top: 18px;
+                font-size: 0.75rem;
+                letter-spacing: 0.25em;
+            }
+            .dust-dot {
+                width: 1.5px;
+                height: 1.5px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .dust-dot {
+                animation-duration: 12s !important;
+            }
+            .glow-orb {
+                transition-duration: 2s !important;
+            }
+        }
+    </style>
+<meta content="完成一个网页，充分发挥你最顶级的审美、艺术设计和3D编程能力，在构图、光影、材质..." property="og:title"/><meta content="完成一个网页，充分发挥你最顶级的审美、艺术设计和3D编程能力，在构图、光影、材质... · 由星页 StarPage 生成" property="og:description"/><meta content="website" property="og:type"/><meta content="https://stars-page.com/p/7eb0371f-c9e0-43fa-aa3c-bb90f8b475b6/c8872abc-93d0-41ad-b46f-920a7325b8b0" property="og:url"/><meta content="完成一个网页，充分发挥你最顶级的审美、艺术设计和3D编程能力，在构图、光影、材质... · 由星页 StarPage 生成" name="description"/></head>
+<body>
+<div id="canvas-container"></div>
+<div aria-hidden="true" class="glow-overlay">
+<div class="glow-orb g1"></div>
+<div class="glow-orb g2"></div>
+<div class="glow-orb g3"></div>
+</div>
+<div aria-hidden="true" class="dust-particles">
+<div class="dust-dot"></div>
+<div class="dust-dot"></div>
+<div class="dust-dot"></div>
+<div class="dust-dot"></div>
+<div class="dust-dot"></div>
+<div class="dust-dot"></div>
+<div class="dust-dot"></div>
+<div class="dust-dot"></div>
+</div>
+<p class="ui-title">星 辰 水 晶</p>
+<p class="ui-hint" id="hint">拖拽旋转  ·  滚轮缩放</p>
+<script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+<script type="module">
+        import * as THREE from 'three';
+
+        // ==================== DOM 元素 ====================
+        const container = document.getElementById('canvas-container');
+        const hintEl = document.getElementById('hint');
+        const glowOrbs = document.querySelectorAll('.glow-orb');
+
+        // ==================== 场景初始化 ====================
+        const isMobile = window.innerWidth < 768;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.3;
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        container.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.15, 80);
+        camera.position.set(0, 1.2, 7.5);
+        camera.lookAt(0, 0, 0);
+
+        // ==================== 灯光 ====================
+        const ambientLight = new THREE.AmbientLight('#1a2a40', 0.7);
+        scene.add(ambientLight);
+
+        const keyLight = new THREE.DirectionalLight('#ffe8d0', 3.5);
+        keyLight.position.set(5, 4, 3);
+        scene.add(keyLight);
+
+        const rimLight = new THREE.DirectionalLight('#8090c0', 2.0);
+        rimLight.position.set(-3, -1, -4);
+        scene.add(rimLight);
+
+        const topLight = new THREE.DirectionalLight('#f0d8b0', 1.8);
+        topLight.position.set(0, 6, 0);
+        scene.add(topLight);
+
+        // ==================== 主场景组 ====================
+        const mainGroup = new THREE.Group();
+        scene.add(mainGroup);
+
+        // 水晶子组（用于自转）
+        const crystalGroup = new THREE.Group();
+        mainGroup.add(crystalGroup);
+
+        // ==================== 粒子发光贴图 ====================
+        function createGlowTexture(innerColor, outerColor, size = 128) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            const half = size / 2;
+            const gradient = ctx.createRadialGradient(half, half, 0, half, half, half);
+            gradient.addColorStop(0, innerColor || 'rgba(255,240,220,1)');
+            gradient.addColorStop(0.08, innerColor || 'rgba(255,230,200,0.95)');
+            gradient.addColorStop(0.25, 'rgba(240,180,120,0.55)');
+            gradient.addColorStop(0.5, 'rgba(180,100,60,0.12)');
+            gradient.addColorStop(0.75, 'rgba(60,20,10,0.02)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, size, size);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.needsUpdate = true;
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            return tex;
+        }
+
+        const glowTexLarge = createGlowTexture('rgba(255,245,230,1)', 'rgba(200,140,80,0)', 128);
+        const glowTexSmall = createGlowTexture('rgba(255,250,240,1)', 'rgba(180,120,60,0)', 64);
+        const glowTexBlue = createGlowTexture('rgba(200,220,255,1)', 'rgba(80,120,180,0)', 96);
+
+        // ==================== 星空背景 ====================
+        function createStarfield(count, radius) {
+            const positions = new Float32Array(count * 3);
+            const sizes = new Float32Array(count);
+            for (let i = 0; i < count; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const r = radius * (0.85 + Math.random() * 0.3);
+                positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                positions[i * 3 + 2] = r * Math.cos(phi);
+                sizes[i] = Math.random() * 2.5 + 0.4;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+            const mat = new THREE.PointsMaterial({
+                map: glowTexSmall,
+                color: '#c8d8f0',
+                size: 0.12,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.75,
+            });
+            const stars = new THREE.Points(geo, mat);
+            stars.name = 'starfield';
+            return stars;
+        }
+
+        const starfield = createStarfield(isMobile ? 1500 : 3000, 18);
+        scene.add(starfield);
+
+        // ==================== 水晶核心 ====================
+        // 内部发光球
+        const innerSphereGeo = new THREE.SphereGeometry(0.55, 48, 48);
+        const innerSphereMat = new THREE.MeshBasicMaterial({
+            color: '#fff8ee',
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+        });
+        const innerSphere = new THREE.Mesh(innerSphereGeo, innerSphereMat);
+        crystalGroup.add(innerSphere);
+
+        // 内层光晕球
+        const innerGlowGeo = new THREE.SphereGeometry(0.7, 48, 48);
+        const innerGlowMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uColor1: { value: new THREE.Color('#fff4e0') },
+                uColor2: { value: new THREE.Color('#f0a040') },
+            },
+            vertexShader: /* glsl */ `
+            varying vec3 vPos;
+            varying vec3 vNormal;
+            varying vec3 vWorldPos;
+            void main() {
+              vec4 worldPos = modelMatrix * vec4(position, 1.0);
+              vWorldPos = worldPos.xyz;
+              vPos = position;
+              vNormal = normalize(mat3(modelMatrix) * normal);
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }`,
+            fragmentShader: /* glsl */ `
+            varying vec3 vPos;
+            varying vec3 vNormal;
+            varying vec3 vWorldPos;
+            uniform float uTime;
+            uniform vec3 uColor1;
+            uniform vec3 uColor2;
+            void main() {
+              vec3 viewDir = normalize(cameraPosition - vWorldPos);
+              float NdotV = abs(dot(normalize(vNormal), viewDir));
+              float fresnel = pow(1.0 - NdotV, 4.5);
+              float pulse = 1.0 + 0.3 * sin(uTime * 1.8 + length(vPos) * 3.0);
+              float alpha = (0.35 + fresnel * 0.65) * pulse;
+              alpha = clamp(alpha, 0.05, 1.0);
+              vec3 col = mix(uColor1, uColor2, fresnel * 0.7 + 0.1 * sin(uTime * 0.9));
+              gl_FragColor = vec4(col, alpha);
+            }`,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const innerGlow = new THREE.Mesh(innerGlowGeo, innerGlowMat);
+        crystalGroup.add(innerGlow);
+
+        // 主体水晶 - 二十面体
+        const crystalGeo = new THREE.IcosahedronGeometry(1.05, isMobile ? 3 : 4);
+        const crystalMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uInnerColor: { value: new THREE.Color('#1a1050') },
+                uEdgeColor: { value: new THREE.Color('#e8b860') },
+                uMidColor: { value: new THREE.Color('#3a2080') },
+            },
+            vertexShader: /* glsl */ `
+            varying vec3 vWorldPos;
+            varying vec3 vWorldNormal;
+            varying vec3 vViewDir;
+            varying vec3 vLocalPos;
+            void main() {
+              vec4 worldPos = modelMatrix * vec4(position, 1.0);
+              vWorldPos = worldPos.xyz;
+              vLocalPos = position;
+              vWorldNormal = normalize(mat3(modelMatrix) * normal);
+              vViewDir = normalize(cameraPosition - worldPos.xyz);
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }`,
+            fragmentShader: /* glsl */ `
+            varying vec3 vWorldPos;
+            varying vec3 vWorldNormal;
+            varying vec3 vViewDir;
+            varying vec3 vLocalPos;
+            uniform float uTime;
+            uniform vec3 uInnerColor;
+            uniform vec3 uEdgeColor;
+            uniform vec3 uMidColor;
+            void main() {
+              vec3 N = normalize(vWorldNormal);
+              vec3 V = normalize(vViewDir);
+              float NdotV = abs(dot(N, V));
+              float fresnel = pow(1.0 - NdotV, 3.8);
+              // 微妙的彩虹色散模拟
+              float dispersion = (fresnel * 0.06) * sin(vLocalPos.x * 12.0 + uTime * 0.7) * cos(vLocalPos.y * 9.0 - uTime * 0.5);
+              float pulse = 1.0 + 0.12 * sin(uTime * 1.3 + vLocalPos.y * 5.0) * cos(uTime * 0.9 + vLocalPos.x * 4.0);
+              vec3 baseColor = mix(uInnerColor, uMidColor, fresnel * 0.7);
+              vec3 edgeContrib = uEdgeColor * (fresnel * 0.85 + dispersion);
+              vec3 col = mix(baseColor, edgeContrib, fresnel * 0.9 + 0.1);
+              col *= pulse;
+              float alpha = 0.72 + fresnel * 0.28;
+              alpha = clamp(alpha, 0.55, 0.95);
+              gl_FragColor = vec4(col, alpha);
+            }`,
+            transparent: true,
+            depthWrite: true,
+        });
+        const crystal = new THREE.Mesh(crystalGeo, crystalMat);
+        crystalGroup.add(crystal);
+
+        // 线框外壳
+        const wireframeGeo = new THREE.IcosahedronGeometry(1.25, isMobile ? 2 : 3);
+        const wireframeMat = new THREE.MeshBasicMaterial({
+            color: '#d4a050',
+            wireframe: true,
+            transparent: true,
+            opacity: 0.35,
+            depthWrite: false,
+        });
+        const wireframe = new THREE.Mesh(wireframeGeo, wireframeMat);
+        crystalGroup.add(wireframe);
+
+        // 外层细线框
+        const outerWireGeo = new THREE.IcosahedronGeometry(1.45, isMobile ? 1 : 2);
+        const outerWireMat = new THREE.MeshBasicMaterial({
+            color: '#c08050',
+            wireframe: true,
+            transparent: true,
+            opacity: 0.18,
+            depthWrite: false,
+        });
+        const outerWire = new THREE.Mesh(outerWireGeo, outerWireMat);
+        crystalGroup.add(outerWire);
+
+        // ==================== 顶点射线 ====================
+        function createRays() {
+            const baseIcoGeo = new THREE.IcosahedronGeometry(1.0, 1);
+            const verts = baseIcoGeo.getAttribute('position');
+            const uniqueVerts = [];
+            const seen = new Set();
+            for (let i = 0; i < verts.count; i++) {
+                const x = verts.getX(i);
+                const y = verts.getY(i);
+                const z = verts.getZ(i);
+                const key = `${x.toFixed(6)},${y.toFixed(6)},${z.toFixed(6)}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    uniqueVerts.push(new THREE.Vector3(x, y, z).normalize());
+                }
+            }
+            const rayGroup = new THREE.Group();
+            uniqueVerts.forEach(dir => {
+                const start = dir.clone().multiplyScalar(1.1);
+                const end = dir.clone().multiplyScalar(2.6 + Math.random() * 1.6);
+                const points = [start, end];
+                const geo = new THREE.BufferGeometry().setFromPoints(points);
+                const mat = new THREE.LineBasicMaterial({
+                    color: '#e0b860',
+                    transparent: true,
+                    opacity: 0.28 + Math.random() * 0.35,
+                    depthWrite: false,
+                    blending: THREE.AdditiveBlending,
+                });
+                const line = new THREE.Line(geo, mat);
+                rayGroup.add(line);
+            });
+            return rayGroup;
+        }
+        const rays = createRays();
+        crystalGroup.add(rays);
+
+        // ==================== 粒子环 ====================
+        function createParticleRing(radius, count, tiltAngle, colorHex, particleSize, speed) {
+            const group = new THREE.Group();
+            const positions = new Float32Array(count * 3);
+            const sizesArr = new Float32Array(count);
+            for (let i = 0; i < count; i++) {
+                const angle = (i / count) * Math.PI * 2;
+                const r = radius + (Math.random() - 0.5) * 0.35;
+                const x = Math.cos(angle) * r;
+                const z = Math.sin(angle) * r;
+                const y = (Math.random() - 0.5) * 0.25;
+                positions[i * 3] = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+                sizesArr[i] = particleSize * (0.4 + Math.random() * 1.3);
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(sizesArr, 1));
+            const mat = new THREE.PointsMaterial({
+                map: glowTexLarge,
+                color: colorHex,
+                size: particleSize,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.7,
+            });
+            const points = new THREE.Points(geo, mat);
+            group.add(points);
+            group.rotation.x = tiltAngle;
+            group.userData = { speed, points, radius, count, basePositions: new Float32Array(positions) };
+            return group;
+        }
+
+        const ring1 = createParticleRing(1.6, isMobile ? 300 : 500, 0.25, '#f0c878', 0.06, 0.35);
+        const ring2 = createParticleRing(2.0, isMobile ? 250 : 420, 1.1, '#e8a860', 0.05, -0.28);
+        const ring3 = createParticleRing(2.35, isMobile ? 200 : 380, 1.85, '#d09050', 0.055, 0.22);
+        mainGroup.add(ring1);
+        mainGroup.add(ring2);
+        mainGroup.add(ring3);
+
+        // ==================== 自由漂浮粒子云 ====================
+        function createFreeParticles(count, spreadRadius) {
+            const positions = new Float32Array(count * 3);
+            const sizesArr = new Float32Array(count);
+            const velocities = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const r = spreadRadius * (0.3 + Math.random() * 1.0);
+                positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                positions[i * 3 + 2] = r * Math.cos(phi);
+                sizesArr[i] = Math.random() * 1.8 + 0.3;
+                velocities[i * 3] = (Math.random() - 0.5) * 0.008;
+                velocities[i * 3 + 1] = (Math.random() - 0.5) * 0.008;
+                velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.008;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(sizesArr, 1));
+            const mat = new THREE.PointsMaterial({
+                map: glowTexLarge,
+                color: '#e8d0a0',
+                size: 0.04,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.6,
+            });
+            const points = new THREE.Points(geo, mat);
+            points.userData = { velocities, spreadRadius, count };
+            return points;
+        }
+
+        const freeParticles = createFreeParticles(isMobile ? 800 : 1800, 5.5);
+        mainGroup.add(freeParticles);
+
+        // ==================== 蒸发粒子系统 ====================
+        function createEvaporationParticles(count) {
+            const positions = new Float32Array(count * 3);
+            const sizesArr = new Float32Array(count);
+            const lifeData = new Float32Array(count); // 0-1 life progress
+            const spawnData = new Float32Array(count * 3); // spawn direction
+            for (let i = 0; i < count; i++) {
+                resetEvapParticle(i, positions, sizesArr, lifeData, spawnData, true);
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(sizesArr, 1));
+            const mat = new THREE.PointsMaterial({
+                map: glowTexBlue,
+                color: '#c8d8f8',
+                size: 0.035,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.65,
+            });
+            const points = new THREE.Points(geo, mat);
+            points.userData = { count, lifeData, spawnData, positions, sizesArr };
+            return points;
+        }
+
+        function resetEvapParticle(i, positions, sizesArr, lifeData, spawnData, randomLife = false) {
+            const phi = Math.acos(2 * Math.random() - 1);
+            const theta = Math.random() * Math.PI * 2;
+            const dir = new THREE.Vector3(
+                Math.sin(phi) * Math.cos(theta),
+                Math.sin(phi) * Math.sin(theta),
+                Math.cos(phi)
+            ).normalize();
+            const startR = 1.0 + Math.random() * 0.3;
+            positions[i * 3] = dir.x * startR;
+            positions[i * 3 + 1] = dir.y * startR;
+            positions[i * 3 + 2] = dir.z * startR;
+            spawnData[i * 3] = dir.x;
+            spawnData[i * 3 + 1] = dir.y;
+            spawnData[i * 3 + 2] = dir.z;
+            sizesArr[i] = 0.15 + Math.random() * 1.2;
+            lifeData[i] = randomLife ? Math.random() : 0.0;
+        }
+
+        const evapParticles = createEvaporationParticles(isMobile ? 300 : 600);
+        mainGroup.add(evapParticles);
+
+        // ==================== 螺旋光带 ====================
+        function createSpiralBand(turns, radiusStart, radiusEnd, height, colorHex, offsetAngle) {
+            const curvePoints = [];
+            const segments = 300;
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const angle = t * Math.PI * 2 * turns + offsetAngle;
+                const r = radiusStart + (radiusEnd - radiusStart) * t;
+                const x = Math.cos(angle) * r;
+                const y = (t - 0.5) * height;
+                const z = Math.sin(angle) * r;
+                curvePoints.push(new THREE.Vector3(x, y, z));
+            }
+            const curve = new THREE.CatmullRomCurve3(curvePoints);
+            const tubeGeo = new THREE.TubeGeometry(curve, 200, 0.025, 12, false);
+            const tubeMat = new THREE.MeshBasicMaterial({
+                color: colorHex,
+                transparent: true,
+                opacity: 0.45,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+            });
+            const tube = new THREE.Mesh(tubeGeo, tubeMat);
+            return tube;
+        }
+
+        const spiral1 = createSpiralBand(3.5, 1.15, 3.2, 6.5, '#e8c060', 0);
+        const spiral2 = createSpiralBand(2.8, 1.2, 2.8, 5.8, '#d4a040', Math.PI / 3);
+        const spiral3 = createSpiralBand(4.2, 1.05, 3.5, 7.0, '#c89050', Math.PI * 1.4);
+        mainGroup.add(spiral1);
+        mainGroup.add(spiral2);
+        mainGroup.add(spiral3);
+
+        // ==================== 鼠标交互状态 ====================
+        const mouse = { x: 0, y: 0, prevX: 0, prevY: 0, isDown: false };
+        const rotationTarget = { x: 0.3, y: 0.5 };
+        const rotationCurrent = { x: 0.3, y: 0.5 };
+        let zoomTarget = 7.5;
+        let zoomCurrent = 7.5;
+        let inertiaX = 0;
+        let inertiaY = 0;
+
+        function onMouseDown(e) {
+            mouse.isDown = true;
+            mouse.prevX = e.clientX;
+            mouse.prevY = e.clientY;
+            inertiaX = 0;
+            inertiaY = 0;
+            if (hintEl) hintEl.style.opacity = '0';
+        }
+
+        function onMouseMove(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            if (mouse.isDown) {
+                const dx = e.clientX - mouse.prevX;
+                const dy = e.clientY - mouse.prevY;
+                rotationTarget.y += dx * 0.005;
+                rotationTarget.x += dy * 0.005;
+                rotationTarget.x = Math.max(-1.2, Math.min(1.2, rotationTarget.x));
+                inertiaX = dy * 0.005;
+                inertiaY = dx * 0.005;
+                mouse.prevX = e.clientX;
+                mouse.prevY = e.clientY;
+            }
+            // 光晕随鼠标微移
+            const mx = mouse.x * 18;
+            const my = mouse.y * 14;
+            if (glowOrbs[0]) glowOrbs[0].style.transform = `translate(${mx}px, ${my}px)`;
+            if (glowOrbs[1]) glowOrbs[1].style.transform = `translate(${-mx * 0.7}px, ${-my * 0.7}px)`;
+            if (glowOrbs[2]) glowOrbs[2].style.transform = `translate(calc(-50% + ${mx * 0.4}px), calc(-50% + ${my * 0.4}px))`;
+        }
+
+        function onMouseUp() {
+            mouse.isDown = false;
+        }
+
+        function onWheel(e) {
+            e.preventDefault();
+            zoomTarget += e.deltaY * 0.006;
+            zoomTarget = Math.max(3.5, Math.min(16, zoomTarget));
+        }
+
+        function onTouchStart(e) {
+            if (e.touches.length === 1) {
+                mouse.isDown = true;
+                mouse.prevX = e.touches[0].clientX;
+                mouse.prevY = e.touches[0].clientY;
+                inertiaX = 0;
+                inertiaY = 0;
+                if (hintEl) hintEl.style.opacity = '0';
+            }
+        }
+
+        function onTouchMove(e) {
+            if (e.touches.length === 1 && mouse.isDown) {
+                const dx = e.touches[0].clientX - mouse.prevX;
+                const dy = e.touches[0].clientY - mouse.prevY;
+                rotationTarget.y += dx * 0.005;
+                rotationTarget.x += dy * 0.005;
+                rotationTarget.x = Math.max(-1.2, Math.min(1.2, rotationTarget.x));
+                inertiaX = dy * 0.005;
+                inertiaY = dx * 0.005;
+                mouse.prevX = e.touches[0].clientX;
+                mouse.prevY = e.touches[0].clientY;
+            }
+            if (e.touches.length === 2) {
+                const dist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                if (mouse._prevPinchDist) {
+                    zoomTarget -= (dist - mouse._prevPinchDist) * 0.025;
+                    zoomTarget = Math.max(3.5, Math.min(16, zoomTarget));
+                }
+                mouse._prevPinchDist = dist;
+                mouse.isDown = false;
+            }
+        }
+
+        function onTouchEnd() {
+            mouse.isDown = false;
+            mouse._prevPinchDist = null;
+        }
+
+        window.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+        window.addEventListener('wheel', onWheel, { passive: false });
+        window.addEventListener('touchstart', onTouchStart, { passive: false });
+        window.addEventListener('touchmove', onTouchMove, { passive: false });
+        window.addEventListener('touchend', onTouchEnd);
+
+        // ==================== 动画循环 ====================
+        const clock = new THREE.Clock();
+        let timeAccum = 0;
+
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.1);
+            timeAccum += dt;
+
+            // 惯性衰减
+            if (!mouse.isDown) {
+                rotationTarget.y += inertiaY;
+                rotationTarget.x += inertiaX;
+                rotationTarget.x = Math.max(-1.2, Math.min(1.2, rotationTarget.x));
+                inertiaX *= 0.94;
+                inertiaY *= 0.94;
+                if (Math.abs(inertiaX) < 0.0001) inertiaX = 0;
+                if (Math.abs(inertiaY) < 0.0001) inertiaY = 0;
+                // 微弱的自动旋转
+                if (Math.abs(inertiaY) < 0.0003 && Math.abs(inertiaX) < 0.0003) {
+                    rotationTarget.y += dt * 0.08;
+                }
+            }
+
+            // 平滑插值
+            rotationCurrent.x += (rotationTarget.x - rotationCurrent.x) * 4.5 * dt;
+            rotationCurrent.y += (rotationTarget.y - rotationCurrent.y) * 4.5 * dt;
+            zoomCurrent += (zoomTarget - zoomCurrent) * 5.0 * dt;
+
+            // 应用旋转
+            mainGroup.rotation.x = rotationCurrent.x;
+            mainGroup.rotation.y = rotationCurrent.y;
+
+            // 应用缩放
+            camera.position.z = zoomCurrent;
+            camera.lookAt(0, 0, 0);
+
+            // 水晶自转
+            crystalGroup.rotation.y += dt * 0.25;
+            crystalGroup.rotation.x += dt * 0.12;
+            crystalGroup.rotation.z += dt * 0.08;
+
+            // 线框反向旋转
+            wireframe.rotation.y -= dt * 0.35;
+            wireframe.rotation.x -= dt * 0.18;
+            outerWire.rotation.y -= dt * 0.22;
+            outerWire.rotation.z += dt * 0.15;
+
+            // 粒子环旋转
+            ring1.rotation.y += dt * ring1.userData.speed;
+            ring2.rotation.y += dt * ring2.userData.speed;
+            ring3.rotation.y += dt * ring3.userData.speed;
+
+            // 螺旋光带微旋转
+            spiral1.rotation.y += dt * 0.1;
+            spiral2.rotation.y -= dt * 0.07;
+            spiral3.rotation.y += dt * 0.13;
+
+            // 更新shader时间
+            crystalMat.uniforms.uTime.value = timeAccum;
+            innerGlowMat.uniforms.uTime.value = timeAccum;
+
+            // 更新自由粒子
+            const fpData = freeParticles.userData;
+            const fpPos = freeParticles.geometry.getAttribute('position');
+            const fpArr = fpPos.array;
+            const fpVel = fpData.velocities;
+            const fpSpread = fpData.spreadRadius;
+            for (let i = 0; i < fpData.count; i++) {
+                fpArr[i * 3] += fpVel[i * 3];
+                fpArr[i * 3 + 1] += fpVel[i * 3 + 1];
+                fpArr[i * 3 + 2] += fpVel[i * 3 + 2];
+                const dist = Math.sqrt(
+                    fpArr[i * 3] ** 2 + fpArr[i * 3 + 1] ** 2 + fpArr[i * 3 + 2] ** 2
+                );
+                if (dist > fpSpread * 1.1 || dist < 0.6) {
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    const theta = Math.random() * Math.PI * 2;
+                    const r = fpSpread * (0.3 + Math.random() * 0.7);
+                    fpArr[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                    fpArr[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                    fpArr[i * 3 + 2] = r * Math.cos(phi);
+                    fpVel[i * 3] = (Math.random() - 0.5) * 0.008;
+                    fpVel[i * 3 + 1] = (Math.random() - 0.5) * 0.008;
+                    fpVel[i * 3 + 2] = (Math.random() - 0.5) * 0.008;
+                }
+            }
+            fpPos.needsUpdate = true;
+
+            // 更新蒸发粒子
+            const evData = evapParticles.userData;
+            const evPos = evapParticles.geometry.getAttribute('position');
+            const evArr = evPos.array;
+            const evLife = evData.lifeData;
+            const evSpwn = evData.spawnData;
+            const evSizes = evData.sizesArr;
+            const evCount = evData.count;
+            for (let i = 0; i < evCount; i++) {
+                evLife[i] += dt * (0.25 + Math.random() * 0.05);
+                if (evLife[i] >= 1.0) {
+                    resetEvapParticle(i, evArr, evSizes, evLife, evSpwn, false);
+                } else {
+                    const t = evLife[i];
+                    const ease = t * t;
+                    const dirX = evSpwn[i * 3];
+                    const dirY = evSpwn[i * 3 + 1];
+                    const dirZ = evSpwn[i * 3 + 2];
+                    const startR = 1.05;
+                    const endR = 5.5;
+                    const r = startR + (endR - startR) * ease;
+                    const wobble = Math.sin(t * 20 + i) * 0.15 * (1 - t);
+                    evArr[i * 3] = dirX * r + wobble * (Math.cos(t * 15) * 0.5);
+                    evArr[i * 3 + 1] = dirY * r + wobble * (Math.sin(t * 18) * 0.5);
+                    evArr[i * 3 + 2] = dirZ * r + wobble * (Math.cos(t * 22) * 0.5);
+                    evSizes[i] = (0.15 + Math.random() * 0.05) * (1 - t * 0.8);
+                }
+            }
+            evPos.needsUpdate = true;
+            evapParticles.geometry.getAttribute('size').needsUpdate = true;
+
+            // 星空微动
+            starfield.rotation.y += dt * 0.015;
+            starfield.rotation.x += dt * 0.006;
+
+            // 渲染
+            renderer.render(scene, camera);
+
+            // 长时间后重新显示提示
+            if (!mouse.isDown && hintEl && hintEl.style.opacity === '0' && timeAccum > 8 &&
+                Math.abs(inertiaX) < 0.0005 && Math.abs(inertiaY) < 0.0005) {
+                hintEl.style.opacity = '1';
+            }
+        }
+
+        // ==================== 窗口调整 ====================
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ==================== 键盘快捷键 ====================
+        window.addEventListener('keydown', (e) => {
+            switch (e.key.toLowerCase()) {
+                case 'r':
+                    rotationTarget.x = 0.3;
+                    rotationTarget.y = 0.5;
+                    zoomTarget = 7.5;
+                    inertiaX = 0;
+                    inertiaY = 0;
+                    if (hintEl) hintEl.style.opacity = '1';
+                    break;
+                case '0':
+                    zoomTarget = 7.5;
+                    break;
+                default:
+                    break;
+            }
+        });
+
+        // ==================== 启动 ====================
+        // 初始将光晕定位
+        if (glowOrbs[2]) glowOrbs[2].style.transform = 'translate(-50%, -50%)';
+        requestAnimationFrame(animate);
+
+        // 几秒后渐隐提示
+        setTimeout(() => {
+            if (hintEl && !mouse.isDown) hintEl.style.opacity = '0.25';
+        }, 6000);
+
+        console.log('%c✨ 星辰水晶 · 宇宙之核 %c已就绪 %c| %c拖拽旋转 %c· %c滚轮缩放 %c· %c按R重置',
+            'color:#e8c060;font-size:1.1em;',
+            'color:#aaa;',
+            'color:#888;',
+            'color:#c8a060;',
+            'color:#888;',
+            'color:#c8a060;',
+            'color:#888;',
+            'color:#c8a060;');
+    </script>
+<script>
+(function () {
+  var cfg = {"remix": "https://stars-page.com/?utm_source=made_with&ref=c8872abc-93d0-41ad-b46f-920a7325b8b0", "poster": "", "report": "https://stars-page.com/report?page=c8872abc-93d0-41ad-b46f-920a7325b8b0"};
+  try { if (window.self !== window.top) return; } catch (e) { return; }
+  if (document.getElementById('sp-made-with')) return;
+  var host = document.createElement('div');
+  host.id = 'sp-made-with';
+  host.style.cssText = 'all:initial;position:fixed;z-index:2147483646;right:0;bottom:0;';
+  var root = host.attachShadow ? host.attachShadow({ mode: 'closed' }) : host;
+  var mobile = window.matchMedia && window.matchMedia('(max-width: 720px)').matches;
+  var showPoster = Boolean(cfg.poster) && mobile;
+  root.innerHTML = [
+    '<style>',
+    ':host{all:initial}',
+    '.bar{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));display:flex;gap:6px;align-items:center;font:500 12.5px/1 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;}',
+    '.pill{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 13px;border-radius:999px;border:1px solid rgba(255,255,255,.55);background:rgba(17,24,39,.72);color:#fff;text-decoration:none;cursor:pointer;-webkit-backdrop-filter:blur(12px) saturate(140%);backdrop-filter:blur(12px) saturate(140%);box-shadow:0 6px 20px -8px rgba(15,23,42,.45);letter-spacing:.01em;transition:transform .18s ease,background .18s ease;}',
+    '.pill:hover{transform:translateY(-1px);background:rgba(17,24,39,.86)}',
+    '.pill.light{background:rgba(255,255,255,.86);color:#111827;border-color:rgba(15,23,42,.08)}',
+    '.star{color:#a5b4fc;font-size:13px}',
+    '.report{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:999px;background:rgba(255,255,255,.7);color:#64748b;font-size:11px;text-decoration:none;border:1px solid rgba(15,23,42,.08)}',
+    '.report:hover{color:#b42318}',
+    '.mask{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(15,23,42,.62);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}',
+    '.mask.open{display:flex}',
+    '.sheet{width:min(360px,100%);max-height:100%;overflow:auto;padding:14px;border-radius:20px;background:#fff;text-align:center;font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:#111827}',
+    '.sheet img{display:block;width:100%;border-radius:12px;background:#f3f4f6;-webkit-touch-callout:default}',
+    '.tip{margin:12px 0 4px;font-weight:600}',
+    '.sub{margin:0 0 12px;color:#6b7280;font-size:12.5px}',
+    '.close{height:36px;width:100%;border:0;border-radius:10px;background:#f3f4f6;color:#111827;font:inherit;cursor:pointer}',
+    '@media print{.bar,.mask{display:none!important}}',
+    '</style>',
+    '<div class="bar">',
+    showPoster ? '<button class="pill light" type="button" data-act="poster">发朋友圈</button>' : '',
+    '<a class="pill" href="' + cfg.remix + '" target="_blank" rel="noopener"><span class="star">✦</span>用星页做同款</a>',
+    cfg.report ? '<a class="report" href="' + cfg.report + '" target="_blank" rel="noopener" title="举报违规内容">举报</a>' : '',
+    '</div>',
+    showPoster ? '<div class="mask" data-act="close"><div class="sheet" role="dialog" aria-label="朋友圈海报"><img alt="页面海报" src="' + cfg.poster + '"><p class="tip">长按图片保存，再发到朋友圈</p><p class="sub">海报里的二维码会打开这个页面</p><button class="close" type="button" data-act="close">关闭</button></div></div>' : ''
+  ].join('');
+  root.addEventListener('click', function (event) {
+    var target = event.target;
+    var act = target && target.getAttribute && target.getAttribute('data-act');
+    var mask = root.querySelector('.mask');
+    if (act === 'poster' && mask) { mask.classList.add('open'); }
+    if (act === 'close' && mask && (target === mask || target.classList.contains('close'))) { mask.classList.remove('open'); }
+  });
+  (document.body || document.documentElement).appendChild(host);
+})();
+</script></body>
+</html>

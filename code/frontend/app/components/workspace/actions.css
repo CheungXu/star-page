@@ -1,0 +1,1200 @@
+/* 结果操作的四种摆放（底栏 / 舞台顶栏 / 侧边控制轨 / 胶片焦点卡）与分享弹窗。 */
+
+.tb-btn,
+.tb-address-btn,
+.tb-address-text,
+.tb-tile,
+.tb-ico,
+.tb-chip,
+.tb-rail-pager button,
+.share-close,
+.share-copy,
+.share-error button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.tb-btn svg,
+.tb-tile svg,
+.tb-ico svg,
+.tb-chip svg {
+  flex-shrink: 0;
+}
+
+/* ---------- 卡片底栏（1-2 个模型）：分享按钮用主色浅底，和「打开 / 复制」拉开层级 ---------- */
+.link-actions .link-icon-button.is-share {
+  border-color: var(--color-primary-soft-strong);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.link-actions .link-icon-button.is-share:hover {
+  border-color: rgba(53, 99, 233, 0.32);
+  background: #dfe8ff;
+  color: var(--color-primary-active);
+}
+
+/* ---------- 方案 A：舞台顶栏。模型名、地址栏和操作都在页面上方，页面本身不再被盖住 ---------- */
+.tb-chrome {
+  container-type: inline-size;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  height: 46px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.tb-chrome-model {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 34%;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.tb-chrome-model i {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.05);
+}
+
+.tb-chrome-model strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-chrome-model em {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-chrome-actions {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 地址栏本身就是「复制」：点地址或右侧按钮都会复制，像在真浏览器里拷网址 */
+.tb-address {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 460px;
+  height: 30px;
+  margin-right: 4px;
+  padding: 0 3px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tb-address:hover {
+  border-color: var(--color-border-strong);
+  background: #fff;
+}
+
+.tb-address.is-copied {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.06);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
+}
+
+.tb-address.is-disabled {
+  opacity: 0.7;
+}
+
+.tb-address-globe {
+  flex-shrink: 0;
+  margin-right: 4px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.tb-address-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.tb-address-text:disabled {
+  cursor: default;
+}
+
+.tb-address-host {
+  color: var(--color-text-secondary);
+  font-weight: 650;
+}
+
+.tb-address-path {
+  color: var(--color-text-muted);
+}
+
+.tb-address-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tb-address-btn svg {
+  font-size: 12.5px;
+}
+
+.tb-address-btn:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.tb-address.is-copied .tb-address-btn.is-copy {
+  color: var(--color-success);
+}
+
+.tb-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tb-btn svg {
+  font-size: 14px;
+}
+
+.tb-btn:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-primary);
+}
+
+.tb-btn.is-icon {
+  width: 30px;
+  padding: 0;
+}
+
+.tb-btn.is-share {
+  border-color: var(--color-primary-soft-strong);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.tb-btn.is-share:hover:not(:disabled) {
+  border-color: rgba(53, 99, 233, 0.32);
+  background: #dfe8ff;
+}
+
+.tb-btn.is-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #4f7bff 0%, #3563e9 60%, #2f57d6 100%);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 14px -8px rgba(53, 99, 233, 0.75);
+}
+
+.tb-btn.is-primary:hover:not(:disabled) {
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 18px -8px rgba(53, 99, 233, 0.85);
+}
+
+.tb-btn.is-primary[aria-pressed="true"] {
+  background: var(--color-primary-active);
+}
+
+.tb-btn:disabled,
+.tb-address-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@container (max-width: 700px) {
+  .tb-btn.is-primary {
+    width: 30px;
+    padding: 0;
+  }
+
+  .tb-btn.is-primary span {
+    display: none;
+  }
+}
+
+@container (max-width: 580px) {
+  .tb-address-btn.is-copy span,
+  .tb-chrome-model em {
+    display: none;
+  }
+}
+
+@container (max-width: 480px) {
+  .tb-btn.is-share {
+    width: 30px;
+    padding: 0;
+  }
+
+  .tb-btn.is-share span {
+    display: none;
+  }
+}
+
+/* ---------- 方案 B：侧边控制轨。操作竖排在页面右侧，宽屏下横向空间比纵向宽裕 ---------- */
+.tb-rail {
+  display: flex;
+  flex: 0 0 62px;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 0;
+  margin-left: 10px;
+  padding: 8px 5px 6px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 28px -20px rgba(15, 23, 42, 0.4);
+}
+
+.tb-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.tb-rail-model {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0 4px;
+  cursor: default;
+}
+
+.tb-rail-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 14%, #fff);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tb-rail-model em {
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-rail-sep {
+  flex-shrink: 0;
+  width: 26px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border-strong);
+}
+
+.tb-rail-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+}
+
+.tb-tile {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.tb-tile svg {
+  font-size: 17px;
+}
+
+.tb-tile:hover:not(:disabled) {
+  background: var(--color-surface-soft);
+  color: var(--color-primary);
+}
+
+.tb-tile.is-share {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.tb-tile.is-share:hover:not(:disabled) {
+  background: #dfe8ff;
+}
+
+.tb-tile.is-copied {
+  background: rgba(22, 163, 74, 0.1);
+  color: var(--color-success);
+}
+
+.tb-tile.is-primary {
+  background: linear-gradient(160deg, #4f7bff 0%, #3563e9 70%);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 16px -10px rgba(53, 99, 233, 0.85);
+}
+
+.tb-tile.is-primary:hover:not(:disabled) {
+  background: linear-gradient(160deg, #4570f5 0%, #2849c8 70%);
+  color: #fff;
+}
+
+.tb-tile.is-primary[aria-pressed="true"] {
+  background: var(--color-primary-active);
+}
+
+.tb-tile:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.tb-rail-pager {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.tb-rail-pager button {
+  width: 24px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.tb-rail-pager button:hover {
+  background: var(--color-surface-soft);
+  color: var(--color-primary);
+}
+
+@media (max-height: 820px) {
+  .tb-tile {
+    height: 44px;
+    gap: 3px;
+  }
+}
+
+@media (max-height: 700px) {
+  .tb-tile {
+    height: 36px;
+  }
+
+  .tb-tile span {
+    display: none;
+  }
+}
+
+/* ---------- 方案 C：胶片焦点卡。操作跟着选中的缩略图走，舞台只放页面 ---------- */
+.tb-focus {
+  width: 252px;
+  min-width: 0;
+  overflow: hidden;
+  animation: tb-focus-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.tb-focus-inner {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+  width: 244px;
+  height: 100%;
+  padding: 7px 8px 7px 2px;
+}
+
+.tb-focus-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tb-focus-head strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-focus-head em {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-focus-meta {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tb-focus-meta > span + span::before {
+  content: "·";
+  margin: 0 6px;
+  color: var(--color-text-muted);
+}
+
+.tb-focus-meta .is-cost {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #b45309;
+}
+
+.tb-focus-meta .is-failed {
+  color: var(--color-danger);
+}
+
+.tb-focus-hint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.tb-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tb-ico {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(53, 99, 233, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.tb-ico svg {
+  font-size: 13.5px;
+}
+
+.tb-ico:hover {
+  border-color: var(--color-primary-soft-strong);
+  color: var(--color-primary);
+}
+
+.tb-ico.is-copied {
+  border-color: rgba(22, 163, 74, 0.35);
+  color: var(--color-success);
+}
+
+.tb-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.tb-chip svg {
+  font-size: 13px;
+}
+
+.tb-chip.is-share {
+  margin-left: 2px;
+  border-color: var(--color-primary-soft-strong);
+  background: #fff;
+  color: var(--color-primary);
+}
+
+.tb-chip.is-share:hover {
+  background: var(--color-primary-soft);
+}
+
+.tb-chip.is-primary {
+  background: linear-gradient(135deg, #4f7bff 0%, #3563e9 60%);
+  color: #fff;
+  box-shadow: 0 6px 12px -8px rgba(53, 99, 233, 0.85);
+}
+
+.tb-chip.is-primary[aria-pressed="true"] {
+  background: var(--color-primary-active);
+}
+
+@keyframes tb-focus-in {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+}
+
+/* ---------- 分享弹窗：左边分享图（背后铺一层同色氛围光），右边链接 + 复制 ---------- */
+.share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(1200px 640px at 50% 42%, rgba(30, 27, 75, 0.36), rgba(15, 23, 42, 0.64));
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  animation: share-fade 0.18s ease both;
+}
+
+.share-dialog {
+  position: relative;
+  display: grid;
+  grid-template-columns: 308px minmax(0, 1fr);
+  width: min(780px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  border-radius: 26px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.06),
+    0 40px 100px -30px rgba(15, 23, 42, 0.55),
+    0 18px 40px -24px rgba(30, 27, 75, 0.45);
+  animation: share-rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.share-visual {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  overflow: hidden;
+  padding: 30px 28px 22px;
+  background:
+    radial-gradient(120% 80% at 85% 0%, rgba(99, 102, 241, 0.45) 0%, transparent 60%),
+    linear-gradient(180deg, #111827 0%, #1e1b4b 100%);
+}
+
+.share-ambient {
+  position: absolute;
+  inset: -48px;
+  z-index: -2;
+  background-position: center;
+  background-size: cover;
+  filter: blur(42px) saturate(160%);
+  opacity: 0.8;
+  transform: scale(1.15);
+  animation: share-fade 0.7s ease both;
+}
+
+.share-visual::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(75% 55% at 50% 46%, transparent 0%, rgba(2, 6, 23, 0.55) 100%);
+}
+
+.share-poster {
+  position: relative;
+  width: 236px;
+  margin: 0;
+  overflow: hidden;
+  aspect-ratio: 2 / 3;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 30px 54px -20px rgba(0, 0, 0, 0.75),
+    0 12px 22px -14px rgba(0, 0, 0, 0.55);
+  animation: share-poster-in 0.55s 0.08s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transition: transform 0.3s ease;
+}
+
+.share-poster:hover {
+  transform: translateY(-3px) rotate(-0.6deg);
+}
+
+.share-poster img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.share-poster.is-loaded img {
+  opacity: 1;
+}
+
+.share-poster::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.24) 50%, transparent 65%);
+  transform: translateX(-130%);
+}
+
+.share-poster.is-loaded::after {
+  animation: share-sheen 1.1s 0.2s ease both;
+}
+
+.share-poster-skeleton {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 26px 20px;
+}
+
+.share-poster-skeleton i,
+.share-poster-skeleton b {
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.07) 25%, rgba(255, 255, 255, 0.16) 45%, rgba(255, 255, 255, 0.07) 65%);
+  background-size: 300% 100%;
+  animation: share-shimmer 1.3s ease infinite;
+}
+
+.share-poster-skeleton i {
+  height: 12px;
+}
+
+.share-poster-skeleton i:nth-child(1) { width: 42%; }
+.share-poster-skeleton i:nth-child(2) { width: 88%; height: 20px; margin-top: 6px; }
+.share-poster-skeleton i:nth-child(3) { width: 62%; height: 20px; }
+
+.share-poster-skeleton b {
+  width: 108px;
+  height: 120px;
+  margin: auto auto 16px;
+  border-radius: 12px;
+}
+
+.share-visual-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: rgba(226, 232, 240, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.share-visual-tip svg {
+  font-size: 13px;
+}
+
+.share-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 30px 30px 20px;
+}
+
+.share-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.share-close:hover {
+  background: var(--color-surface-soft);
+  color: var(--color-text-primary);
+}
+
+.share-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 36px;
+}
+
+.share-eyebrow {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.share-eyebrow svg {
+  font-size: 12px;
+}
+
+.share-head h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.share-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.share-source i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.share-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-label {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.share-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 7px 0 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fbfcfe 0%, #f4f6fa 100%);
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.share-link:hover {
+  border-color: rgba(53, 99, 233, 0.32);
+}
+
+.share-link.is-copied {
+  border-color: rgba(22, 163, 74, 0.45);
+  background: linear-gradient(180deg, #f7fdf9 0%, #eefaf2 100%);
+  box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.12);
+}
+
+.share-link-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--color-primary);
+  font-size: 17px;
+  box-shadow: 0 0 0 1px var(--color-border), 0 4px 10px -6px rgba(53, 99, 233, 0.5);
+}
+
+.share-link.is-copied .share-link-icon {
+  color: var(--color-success);
+}
+
+.share-link-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+
+.share-link-text b {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.share-link-text.is-placeholder {
+  font-family: inherit;
+  user-select: none;
+  animation: share-pulse 1.3s ease-in-out infinite;
+}
+
+.share-copy {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 84px;
+  height: 42px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4f7bff 0%, #3563e9 55%, #2849c8 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 750;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 18px -10px rgba(53, 99, 233, 0.9);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+}
+
+.share-copy svg {
+  font-size: 15px;
+}
+
+.share-copy:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 12px 22px -10px rgba(53, 99, 233, 0.9);
+}
+
+.share-copy:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.share-copy:focus-visible {
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 0 0 4px rgba(53, 99, 233, 0.22);
+}
+
+.share-copy:disabled {
+  background: #cbd5e1;
+  box-shadow: none;
+  cursor: default;
+}
+
+.share-link.is-copied .share-copy {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 18px -10px rgba(22, 163, 74, 0.9);
+}
+
+.share-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.share-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.share-note.is-updated {
+  color: #b45309;
+}
+
+.share-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.share-tile {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.share-tile:hover {
+  border-color: rgba(53, 99, 233, 0.28);
+  box-shadow: 0 12px 24px -18px rgba(53, 99, 233, 0.6);
+  transform: translateY(-1px);
+}
+
+.share-tile.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.share-tile-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 16px;
+}
+
+.share-tile:first-child .share-tile-icon {
+  background: linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%);
+  color: #5b21b6;
+}
+
+.share-tile-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.share-tile-text strong {
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  font-weight: 750;
+}
+
+.share-tile-text small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border-strong);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.share-views {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-secondary);
+}
+
+.share-views svg {
+  font-size: 13px;
+}
+
+.share-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid rgba(180, 35, 24, 0.15);
+  border-radius: 14px;
+  background: rgba(254, 242, 242, 0.8);
+}
+
+.share-error strong {
+  color: var(--color-danger);
+  font-size: 14px;
+}
+
+.share-error span {
+  color: var(--color-text-tertiary);
+  font-size: 12.5px;
+}
+
+.share-error button {
+  align-self: flex-start;
+  height: 32px;
+  margin-top: 6px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@keyframes share-fade {
+  from { opacity: 0; }
+}
+
+@keyframes share-rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+}
+
+@keyframes share-sheet {
+  from { transform: translateY(100%); }
+}
+
+@keyframes share-poster-in {
+  from { opacity: 0; transform: translateY(18px) rotate(-3deg) scale(0.96); }
+}
+
+@keyframes share-sheen {
+  from { transform: translateX(-130%); }
+  to { transform: translateX(130%); }
+}
+
+@keyframes share-pulse {
+  50% { opacity: 0.45; }
+}
+
+@keyframes share-shimmer {
+  to { background-position: -150% 0; }
+}
+
+/* 手机：改成底部弹起的面板，分享图在上、链接在下 */
+@media (max-width: 680px) {
+  /* 页面比屏幕宽时 fixed 层会跟着变宽，按屏幕宽度定死，面板才不会被裁掉 */
+  .share-backdrop {
+    right: auto;
+    width: 100vw;
+    place-items: end center;
+    padding: 0;
+  }
+
+  .share-dialog {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    min-height: 0;
+    max-height: 94vh;
+    overflow-y: auto;
+    border-radius: 24px 24px 0 0;
+    animation: share-sheet 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .share-visual {
+    padding: 26px 20px 16px;
+  }
+
+  .share-poster {
+    width: min(196px, 50vw);
+  }
+
+  .share-body {
+    gap: 18px;
+    overflow: visible;
+    padding: 22px 20px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share-backdrop,
+  .share-dialog,
+  .share-ambient,
+  .share-poster,
+  .share-poster.is-loaded::after,
+  .share-poster-skeleton i,
+  .share-poster-skeleton b,
+  .share-link-text.is-placeholder,
+  .tb-focus {
+    animation: none;
+  }
+}

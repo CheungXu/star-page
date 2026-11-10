@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { AppliedSkill, PreviewPresentation, RoundNav, WorkspaceRun } from "./types";
+import type { ActionLayout, AppliedSkill, PreviewPresentation, RoundNav, WorkspaceRun } from "./types";
 
 export type RenderPreview = (
   run: WorkspaceRun,
@@ -10,6 +10,8 @@ export type RenderPreview = (
     onFrame?: (node: HTMLIFrameElement | null) => void;
   },
 ) => ReactNode;
+
+export type RenderActions = (run: WorkspaceRun, layout: ActionLayout) => ReactNode;
 
 type WorkspaceContextValue = {
   runs: WorkspaceRun[];
@@ -21,6 +23,7 @@ type WorkspaceContextValue = {
   appliedSkill: AppliedSkill;
   isGenerating: boolean;
   renderPreview: RenderPreview;
+  renderActions: RenderActions;
   continueBasePageId: string;
   roundNav: RoundNav | null;
 };
@@ -86,6 +89,7 @@ export function WorkspaceProvider({
   isGenerating,
   continueBasePageId,
   renderPreview,
+  renderActions,
   pinnedModelKey,
   roundNav = null,
   trackUnseen = true,
@@ -98,6 +102,7 @@ export function WorkspaceProvider({
   isGenerating: boolean;
   continueBasePageId: string;
   renderPreview: RenderPreview;
+  renderActions: RenderActions;
   /** 外部指定的聚焦模型，优先于组件内的点选（用于跨轮次联动）。 */
   pinnedModelKey?: string;
   roundNav?: RoundNav | null;
@@ -151,10 +156,11 @@ export function WorkspaceProvider({
       appliedSkill,
       isGenerating,
       renderPreview,
+      renderActions,
       continueBasePageId,
       roundNav,
     }),
-    [runs, focusedKey, selectModel, isUnseen, completionOrder, elapsed, appliedSkill, isGenerating, renderPreview, continueBasePageId, roundNav],
+    [runs, focusedKey, selectModel, isUnseen, completionOrder, elapsed, appliedSkill, isGenerating, renderPreview, renderActions, continueBasePageId, roundNav],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

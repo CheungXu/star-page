@@ -139,6 +139,24 @@ pkill -f preview-transition/serve.py
 git 分支 `full-animation-mode`。决策见 `wiki/frontend-home-workspace-transition.md` 与
 `doc/20260529/frontend-transition-animation-plan.md`。原型三套实现保留作选型留档。
 
+## 预览工具栏方案对比：`preview-toolbar-variants/`
+
+同一份前端代码起三个 `next dev`，对比「结果预览工具栏不遮挡页面」三套方案（真实 React 组件，不是静态稿）。
+`NEXT_PUBLIC_UX_VARIANT` 决定端口展示哪套，`NEXT_DIST_DIR` 让三个进程各写各的构建目录。
+
+| 文件 | 用途 |
+|---|---|
+| `serve.sh` | `start / stop / status`：3011 方案 A 浏览器顶栏、3012 方案 B 侧边控制轨、3013 方案 C 胶片联动，日志在 `/tmp/preview-toolbar-{a,b,c}.log` |
+| `shots.mjs` | Playwright 自查：截舞台、打开分享弹窗并点复制，实测滚轮横滑胶片条。`ONLY=a,b` 只跑部分方案，`STAGE_ONLY=1` 只截舞台 |
+
+```bash
+bash script/preview-toolbar-variants/serve.sh start
+node script/preview-toolbar-variants/shots.mjs /tmp/preview-toolbar-shots 1600x900
+```
+
+地址加 `?demo=9` 进演示模式（9 个模型的真实页面存在 `code/frontend/public/demo-pages/`，不调后端）。
+headless Chromium 渲染 9 个 WebGL 页面很慢，单次截图可能要几十秒，偶发超时重跑即可。选定方案后删除本目录。
+
 ## 小红书公开热词
 
 `growth/fetch_xhs_keywords.py` 拉取小红书当前公开热词，结果写到 `data/growth/xhs/`。热词榜不需要账号。同一版榜单不会重复写入。

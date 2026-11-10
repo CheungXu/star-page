@@ -24,6 +24,7 @@ import {
   sumOutputTokens,
 } from "./progress-utils";
 import type { WorkspaceRun } from "./types";
+import { VARIANT } from "./variant";
 
 function liveCount(run: WorkspaceRun): string {
   const tokens = outputTokenCount(run);
@@ -368,15 +369,165 @@ function PastRoundChip() {
   );
 }
 
+/** 胶片条：竖向滚轮直接横向滚动（不用按 Shift），两端渐隐提示还有内容；选中项自动滚进可视区。 */
+function useFilmScroll(activeKey: string) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [edges, setEdges] = useState({ start: true, end: true });
+
+  useEffect(() => {
+    const film = ref.current;
+    if (!film) return;
+    let target = film.scrollLeft;
+    let expected = film.scrollLeft;
+    let frame = 0;
+
+    const syncEdges = () => {
+      const max = film.scrollWidth - film.clientWidth;
+      const start = film.scrollLeft <= 1;
+      const end = film.scrollLeft >= max - 1;
+      setEdges((current) => (current.start === start && current.end === end ? current : { start, end }));
+    };
+    const tick = () => {
+      // 拖滚动条、自动滚到选中项等别处改了位置时，平滑动画让出，不来回拉扯。
+      if (Math.abs(film.scrollLeft - expected) > 2) {
+        frame = 0;
+        return;
+      }
+      const diff = target - film.scrollLeft;
+      if (Math.abs(diff) < 1) {
+        film.scrollLeft = target;
+        frame = 0;
+        return;
+      }
+      film.scrollLeft += Math.sign(diff) * Math.max(1, Math.abs(diff) * 0.2);
+      expected = film.scrollLeft;
+      frame = requestAnimationFrame(tick);
+    };
+    const onWheel = (event: WheelEvent) => {
+      // 触控板横滑和 Shift+滚轮本来就是横向，交给浏览器；Ctrl+滚轮是缩放。
+      if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      const max = film.scrollWidth - film.clientWidth;
+      if (max <= 0) return;
+      const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? film.clientWidth : 1;
+      const base = frame ? target : film.scrollLeft;
+      const next = Math.max(0, Math.min(max, base + event.deltaY * unit));
+      if (next === base) return;
+      event.preventDefault();
+      target = next;
+      if (!frame) {
+        expected = film.scrollLeft;
+        frame = requestAnimationFrame(tick);
+      }
+    };
+
+    film.addEventListener("wheel", onWheel, { passive: false });
+    film.addEventListener("scroll", syncEdges, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(syncEdges);
+    observer?.observe(film);
+    syncEdges();
+    return () => {
+      film.removeEventListener("wheel", onWheel);
+      film.removeEventListener("scroll", syncEdges);
+      observer?.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  useEffect(() => {
+    const film = ref.current;
+    if (!film || !activeKey) return;
+    // 方案 C 的焦点卡展开有 0.3 秒动画，等宽度稳定后再算位置。
+    const timer = window.setTimeout(() => {
+      const slot = film.querySelector<HTMLElement>(".vb-frame-slot.is-active");
+      if (!slot) return;
+      const pad = 28;
+      const start = slot.offsetLeft;
+      const end = start + slot.offsetWidth;
+      if (start < film.scrollLeft + pad) film.scrollTo({ left: start - pad, behavior: "smooth" });
+      else if (end > film.scrollLeft + film.clientWidth - pad) film.scrollTo({ left: end - film.clientWidth + pad, behavior: "smooth" });
+    }, VARIANT.id === "C" ? 320 : 0);
+    return () => window.clearTimeout(timer);
+  }, [activeKey]);
+
+  return [ref, edges] as const;
+}
+
+/** 方案 B：舞台右侧的竖排控制轨。顶部是当前模型，中间是操作，底部翻页。 */
+function StageRail({ run, index, total, onStep }: { run: WorkspaceRun; index: number; total: number; onStep: (delta: number) => void }) {
+  const { renderActions } = useWorkspace();
+  return (
+    <aside className="tb-rail" aria-label="页面操作">
+      <span className="tb-rail-model" title={`${run.modelLabel} · 第 ${index + 1} 个，共 ${total} 个`}>
+        <span className="tb-rail-avatar" style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
+          {modelGlyph(run.modelLabel)}
+        </span>
+        <em>
+          {index + 1}/{total}
+        </em>
+      </span>
+      <i className="tb-rail-sep" aria-hidden="true" />
+      {renderActions(run, "rail")}
+      <span className="tb-rail-pager">
+        <button type="button" onClick={() => onStep(-1)} aria-label="上一个模型">‹</button>
+        <button type="button" onClick={() => onStep(1)} aria-label="下一个模型">›</button>
+      </span>
+    </aside>
+  );
+}
+
+/** 方案 C：选中的缩略图向右展开成焦点卡，模型信息和操作都在这里。 */
+function FocusPanel({ run, index, total }: { run: WorkspaceRun; index: number; total: number }) {
+  const { elapsed, renderActions } = useWorkspace();
+  const tokens = outputTokenCount(run);
+  const credits = run.usageSummary?.creditsCharged;
+  const pending = run.status === "thinking" || run.status === "creating";
+  return (
+    <div className="tb-focus">
+      <div className="tb-focus-inner">
+        <div className="tb-focus-head">
+          <strong title={run.modelLabel}>{run.modelLabel}</strong>
+          <StatusMark status={run.status} />
+          <em>
+            {index + 1}/{total}
+          </em>
+        </div>
+        <div className="tb-focus-meta">
+          {run.status === "failed" ? (
+            <span className="is-failed">生成失败</span>
+          ) : (
+            <>
+              <span>{tokens > 0 ? `${formatTokens(tokens)} tokens` : stageLabel(run)}</span>
+              <span>{shortDuration(elapsed(run))}</span>
+              {typeof credits === "number" && (
+                <span className="is-cost">
+                  <CoinIcon />
+                  {credits}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+        {run.status === "completed" ? (
+          renderActions(run, "card")
+        ) : (
+          <p className="tb-focus-hint">{pending ? "生成完成后就能打开、分享" : "这个模型没有生成成功，可以换一个看看"}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** 右侧结果区：1-2 个模型并排，3 个以上舞台 + 胶片条 + 全屏轮播。 */
 export function GenerationResults() {
-  const { runs, activeModelKey, selectModel, isUnseen, renderPreview, elapsed, roundNav } = useWorkspace();
+  const { runs, activeModelKey, selectModel, isUnseen, renderPreview, renderActions, elapsed, roundNav } = useWorkspace();
   const [carousel, setCarousel] = useState(false);
   const many = runs.length >= 3;
   useArrowModelNav(many);
   const activeIndex = Math.max(0, runs.findIndex((run) => run.modelKey === activeModelKey));
   const active = runs[activeIndex] ?? runs[0];
   const done = runs.filter((run) => run.status === "completed").length;
+  const [filmRef, filmEdges] = useFilmScroll(many ? (active?.modelKey ?? "") : "");
+  const variant = VARIANT.id;
 
   useEffect(() => {
     if (!carousel) return;
@@ -397,7 +548,7 @@ export function GenerationResults() {
   return (
     <>
     <PaneResizer />
-    <article className="panel preview-panel workspace-preview vb-results">
+    <article className={`panel preview-panel workspace-preview vb-results tb-variant-${variant.toLowerCase()}`}>
       <div className="panel-heading preview-heading">
         <h2>
           {roundNav && roundNav.items.length > 1 ? "" : "结果预览 · "}
@@ -420,58 +571,91 @@ export function GenerationResults() {
       {many && active && (
         <div className="vb-gallery">
           <div className="vb-stage">
-            <button type="button" className="vb-nav vb-prev" onClick={() => step(-1)} aria-label="上一个模型">‹</button>
+            {variant !== "B" && (
+              <button type="button" className="vb-nav vb-prev" onClick={() => step(-1)} aria-label="上一个模型">‹</button>
+            )}
             <div className="vb-stage-body">
-              <span className="vb-stage-label">
-                <i style={{ background: modelAccent(active.modelKey) }} />
-                {active.modelLabel}
-                <StatusMark status={active.status} />
-                <em>{activeIndex + 1} / {runs.length}</em>
-              </span>
-              {renderPreview(active, { presentation: "stage" })}
-              {(active.status === "thinking" || active.status === "creating") && (
-                <div className="vb-stage-overlay">
-                  <Ring value={estimateProgress(active, elapsed(active))} />
-                  <strong>{liveCount(active)}</strong>
-                  <span>{active.modelLabel} · {stageLabel(active)}</span>
+              {variant === "A" && (
+                <div className="tb-chrome">
+                  <span className="tb-chrome-model" title={active.modelLabel}>
+                    <i style={{ background: modelAccent(active.modelKey) }} />
+                    <strong>{active.modelLabel}</strong>
+                    <StatusMark status={active.status} />
+                    <em>
+                      {activeIndex + 1}/{runs.length}
+                    </em>
+                  </span>
+                  {renderActions(active, "chrome")}
                 </div>
               )}
-            </div>
-            <button type="button" className="vb-nav vb-next" onClick={() => step(1)} aria-label="下一个模型">›</button>
-          </div>
-          <div className="vb-film" role="tablist" aria-label="模型胶片">
-            {runs.map((run) => (
-              <div
-                key={run.taskId || run.modelKey}
-                role="tab"
-                tabIndex={0}
-                aria-selected={run.modelKey === active.modelKey}
-                className={`vb-frame ${run.modelKey === active.modelKey ? "is-active" : ""}`}
-                onClick={() => selectModel(run.modelKey)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    selectModel(run.modelKey);
-                  }
-                }}
-              >
-                <span className={`vb-frame-preview is-${run.status}`}>
-                  {run.status === "completed" ? renderPreview(run, { presentation: "thumb" }) : run.status === "failed" ? (
-                    <span className="vb-frame-pending is-failed">生成失败</span>
-                  ) : (
-                    <span className="vb-frame-pending">
-                      <Ring value={estimateProgress(run, elapsed(run))} />
-                      <b>{liveCount(run)}</b>
-                    </span>
-                  )}
-                  {isUnseen(run.modelKey) && <b className="vb-unseen" aria-label="新完成" />}
-                </span>
-                <span className="vb-frame-meta">
-                  <i style={{ background: modelAccent(run.modelKey) }} />
-                  <span>{run.modelLabel}</span>
-                </span>
+              <div className="vb-stage-view">
+                {variant === "B" && (
+                  <span key={active.modelKey} className="vb-stage-label is-flash" aria-hidden="true">
+                    <i style={{ background: modelAccent(active.modelKey) }} />
+                    {active.modelLabel}
+                    <StatusMark status={active.status} />
+                    <em>{activeIndex + 1} / {runs.length}</em>
+                  </span>
+                )}
+                {renderPreview(active, { presentation: "stage" })}
+                {(active.status === "thinking" || active.status === "creating") && (
+                  <div className="vb-stage-overlay">
+                    <Ring value={estimateProgress(active, elapsed(active))} />
+                    <strong>{liveCount(active)}</strong>
+                    <span>{active.modelLabel} · {stageLabel(active)}</span>
+                  </div>
+                )}
               </div>
-            ))}
+            </div>
+            {variant === "B" ? (
+              <StageRail run={active} index={activeIndex} total={runs.length} onStep={step} />
+            ) : (
+              <button type="button" className="vb-nav vb-next" onClick={() => step(1)} aria-label="下一个模型">›</button>
+            )}
+          </div>
+          <div
+            ref={filmRef}
+            className={`vb-film ${filmEdges.start ? "" : "has-before"} ${filmEdges.end ? "" : "has-after"}`}
+            role="tablist"
+            aria-label="模型胶片"
+          >
+            {runs.map((run, index) => {
+              const isActive = run.modelKey === active.modelKey;
+              return (
+                <div key={run.taskId || run.modelKey} className={`vb-frame-slot ${isActive ? "is-active" : ""}`} role="presentation">
+                  <div
+                    role="tab"
+                    tabIndex={0}
+                    aria-selected={isActive}
+                    className={`vb-frame ${isActive ? "is-active" : ""}`}
+                    onClick={() => selectModel(run.modelKey)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectModel(run.modelKey);
+                      }
+                    }}
+                  >
+                    <span className={`vb-frame-preview is-${run.status}`}>
+                      {run.status === "completed" ? renderPreview(run, { presentation: "thumb" }) : run.status === "failed" ? (
+                        <span className="vb-frame-pending is-failed">生成失败</span>
+                      ) : (
+                        <span className="vb-frame-pending">
+                          <Ring value={estimateProgress(run, elapsed(run))} />
+                          <b>{liveCount(run)}</b>
+                        </span>
+                      )}
+                      {isUnseen(run.modelKey) && <b className="vb-unseen" aria-label="新完成" />}
+                    </span>
+                    <span className="vb-frame-meta">
+                      <i style={{ background: modelAccent(run.modelKey) }} />
+                      <span>{run.modelLabel}</span>
+                    </span>
+                  </div>
+                  {variant === "C" && isActive && <FocusPanel run={run} index={index} total={runs.length} />}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

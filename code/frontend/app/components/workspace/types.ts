@@ -69,4 +69,7 @@ export type RoundNav = {
 
 export type PreviewPresentation = "default" | "stage" | "thumb";
 
+/** 结果操作（打开、复制、分享、放大、继续）的摆放形态：卡片底栏 / 舞台顶栏 / 侧边控制轨 / 胶片焦点卡。 */
+export type ActionLayout = "bar" | "chrome" | "rail" | "card";
+
 export type AppliedSkill = { key: string; name: string } | null;

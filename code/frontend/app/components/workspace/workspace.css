@@ -154,7 +154,7 @@ body.is-resizing-panes iframe {
   min-height: 0;
 }
 
-.vb-stage-body .preview-cell,
+.vb-stage-view .preview-cell,
 .vb-live > .preview-cell {
   flex: 1;
   min-width: 0;
@@ -167,10 +167,7 @@ body.is-resizing-panes iframe {
   min-height: 180px;
 }
 
-.preview-cell.presentation-thumb .link-actions,
-.preview-cell.presentation-thumb .scene-publish-result,
-.preview-cell.presentation-thumb .scene-view-count,
-.preview-cell.presentation-thumb .preview-hover-zoom,
+/* 舞台和缩略图只放页面本身：操作不再浮在页面上，由结果区按方案摆到页面外 */
 .preview-cell.presentation-stage .preview-cell-head {
   display: none;
 }
@@ -179,24 +176,6 @@ body.is-resizing-panes iframe {
   position: relative;
   border: 0;
   background: transparent;
-}
-
-.preview-cell.presentation-stage .link-actions {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  z-index: 2;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-  box-shadow: var(--shadow-md);
-  opacity: 0;
-}
-
-.preview-cell.presentation-stage:hover .link-actions,
-.preview-cell.presentation-stage:focus-within .link-actions {
-  opacity: 1;
 }
 
 .vb-frame .preview-cell iframe {
@@ -1052,12 +1031,17 @@ body.is-resizing-panes iframe {
 }
 
 .vb-stage-body,
+.vb-stage-view,
 .vb-live {
   position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
+}
+
+.vb-stage-body {
+  flex-direction: column;
 }
 
 .vb-nav {
@@ -1100,11 +1084,43 @@ body.is-resizing-panes iframe {
   font-weight: 650;
 }
 
+/* 胶片条：滚轮直接横滑；两端按是否还能滚动渐隐，滚动条压细、悬停才加深 */
 .vb-film {
+  --fade-start: 0px;
+  --fade-end: 0px;
+  position: relative;
   display: flex;
+  flex-shrink: 0;
   gap: 8px;
   overflow-x: auto;
-  padding-bottom: 2px;
+  overscroll-behavior-x: contain;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.16) transparent;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent 100%);
+}
+
+.vb-film.has-before { --fade-start: 36px; }
+.vb-film.has-after { --fade-end: 36px; }
+.vb-film:hover { scrollbar-color: rgba(15, 23, 42, 0.32) transparent; }
+
+.vb-film::-webkit-scrollbar { height: 6px; }
+.vb-film::-webkit-scrollbar-track { background: transparent; }
+
+.vb-film::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.14);
+}
+
+.vb-film:hover::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.3); }
+
+.vb-frame-slot {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  border-radius: 12px;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .vb-frame {
@@ -1187,7 +1203,36 @@ body.is-resizing-panes iframe {
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: 14px;
+  background: #fff;
 }
+
+/* 方案 B：切换模型时名字在页面左上角亮一下再淡出；悬停控制轨顶部的头像时常亮 */
+.vb-stage-label.is-flash {
+  pointer-events: none;
+  animation: vb-label-flash 2.4s ease forwards;
+}
+
+.vb-stage:has(.tb-rail-model:hover) .vb-stage-label.is-flash {
+  animation: none;
+  opacity: 1;
+}
+
+@keyframes vb-label-flash {
+  0% { opacity: 0; transform: translateY(-4px); }
+  8% { opacity: 1; transform: translateY(0); }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* 方案 C：选中的缩略图和右侧焦点卡连成一张卡 */
+.tb-variant-c .vb-frame-slot.is-active {
+  background: linear-gradient(135deg, #f0f4ff 0%, #e6edff 100%);
+  box-shadow: inset 0 0 0 1px var(--color-primary-soft-strong), 0 10px 22px -18px rgba(53, 99, 233, 0.7);
+}
+
+.tb-variant-c .vb-frame.is-active { background: transparent; }
+.tb-variant-c .vb-frame-slot.is-active .vb-frame-meta { display: none; }
+.tb-variant-c .vb-frame-slot.is-active .vb-frame-preview { height: 103px; }
 
 .vb-frame-meta {
   display: flex;
@@ -1261,6 +1306,56 @@ body.is-resizing-panes iframe {
   min-height: 0;
 }
 
+/* 方案对比期间的顶部角标（选定后删除） */
+.variant-tag {
+  position: fixed;
+  top: 2px;
+  left: 50%;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: var(--shadow-md);
+  transform: translateX(-50%);
+}
+
+.variant-links {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--color-border);
+}
+
+.variant-links a {
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--color-text-tertiary);
+  text-decoration: none;
+}
+
+.variant-links a:hover { color: var(--color-primary); }
+
+.variant-links a.is-current {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.variant-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
 @media (max-width: 1100px) {
   .workspace-layout.layout-gallery,
   .workspace-layout.layout-gallery.compare-mode,
@@ -1286,5 +1381,6 @@ body.is-resizing-panes iframe {
   .vb-past-chip,
   .vb-past-chip button i,
   .vb-mini { animation: none; }
+  .vb-stage-label.is-flash { animation: none; opacity: 0; }
   .vp-ring-value { transition: none; }
 }
