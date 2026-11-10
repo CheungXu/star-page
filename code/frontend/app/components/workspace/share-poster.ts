@@ -65,7 +65,7 @@ function star(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) 
   ctx.fill();
 }
 
-export type PosterAlign = "center" | "left";
+export type PosterAlign = "left" | "center" | "right";
 
 export function renderPoster({
   title,
@@ -93,16 +93,16 @@ export function renderPoster({
   glow(ctx, WIDTH * 0.04, HEIGHT * 0.92, 400, "rgba(56, 189, 248, 0.26)");
 
   ctx.textBaseline = "top";
-  const centered = align === "center";
-  const textX = centered ? WIDTH / 2 : MARGIN;
+  const textX = align === "center" ? WIDTH / 2 : align === "right" ? WIDTH - MARGIN : MARGIN;
   const tag = "邀你看看这个页面";
   ctx.fillStyle = "#a5b4fc";
   ctx.font = `500 21px ${FONT}`;
-  const tagStart = centered ? (WIDTH - (ctx.measureText(tag).width + 30)) / 2 : MARGIN;
+  const tagWidth = ctx.measureText(tag).width + 30;
+  const tagStart = align === "center" ? (WIDTH - tagWidth) / 2 : align === "right" ? WIDTH - MARGIN - tagWidth : MARGIN;
   star(ctx, tagStart + 9, 112, 10);
   ctx.fillText(tag, tagStart + 30, 100);
 
-  ctx.textAlign = centered ? "center" : "left";
+  ctx.textAlign = align;
   let y = 152;
   ctx.fillStyle = "#ffffff";
   ctx.font = `600 60px ${FONT}`;
@@ -118,12 +118,15 @@ export function renderPoster({
     y += 38;
   }
 
+  // 二维码卡放在文字下沿与底部落款之间的正中，标题一到三行都不会上空下挤。
   const card = 346;
+  const cardHeight = card + 60;
+  const brandTop = HEIGHT - 78;
   const cardX = (WIDTH - card) / 2;
-  const cardY = Math.max(y + 56, 548);
+  const cardY = Math.round(y + Math.max(44, (brandTop - 28 - y - cardHeight) / 2));
   ctx.fillStyle = "#ffffff";
   ctx.beginPath();
-  ctx.roundRect(cardX, cardY, card, card + 60, 24);
+  ctx.roundRect(cardX, cardY, card, cardHeight, 24);
   ctx.fill();
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(qr, cardX + 26, cardY + 26, card - 52, card - 52);
@@ -135,7 +138,7 @@ export function renderPoster({
 
   ctx.fillStyle = "#c7d2fe";
   ctx.font = `400 22px ${FONT}`;
-  ctx.fillText("星页 StarPage · 一份资料，做成能分享的网页", WIDTH / 2, HEIGHT - 78);
+  ctx.fillText("星页 StarPage · 一份资料，做成能分享的网页", WIDTH / 2, brandTop);
 
   return canvas.toDataURL("image/png");
 }

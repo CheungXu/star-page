@@ -339,11 +339,13 @@ a.tb-address:hover .tb-address-open span {
   padding: 6px;
 }
 
-/* 名字压齐缩略图顶边、按钮压齐缩略图底边，用量行在两者正中 */
+/*
+ * 用量行和按钮按列对齐，合成一张「小表」压在底部（与缩略图底边齐）；
+ * 名字是这张表的标题，在表上方剩下的空间里竖向居中，不贴着卡片上沿。
+ */
 .tb-focus-info {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   width: var(--info-w, 184px);
   min-width: 0;
 }
@@ -352,14 +354,13 @@ a.tb-address:hover .tb-address-open span {
   display: contents;
 }
 
-/* 行高 18px 里字形上沿约低 2px，上提 2px 让字的顶边压齐缩略图顶边 */
 .tb-focus-head {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 18px;
-  margin-top: -2px;
+  min-height: 18px;
 }
 
 .tb-focus-dot {
@@ -389,6 +390,7 @@ a.tb-address:hover .tb-address-open span {
 
 .tb-focus-meta {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -437,7 +439,7 @@ a.tb-address:hover .tb-address-open span {
 }
 
 .tb-focus-hint {
-  margin: 0;
+  margin: 9px 0 0;
   color: var(--color-text-tertiary);
   font-size: 11.5px;
   line-height: 1.45;
@@ -522,8 +524,10 @@ a.tb-address:hover .tb-address-open span {
 
 .tb-card-actions {
   display: grid;
+  flex-shrink: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   height: 32px;
+  margin-top: 9px;
   overflow: hidden;
   border-radius: 9px;
   background: #fff;
@@ -583,8 +587,10 @@ a.tb-address:hover .tb-address-open span {
 /* 「继续改」位置二：按钮行里的主按钮，左边三个图标按钮 */
 .tb-row-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   height: 32px;
+  margin-top: 9px;
 }
 
 .tb-row-tools {

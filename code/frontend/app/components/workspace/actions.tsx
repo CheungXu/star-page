@@ -571,18 +571,18 @@ function SharePopover({
                     </button>
                   )}
                   <span className="share-pop-align" role="radiogroup" aria-label="分享图文字对齐">
-                    {(["center", "left"] as const).map((value) => (
+                    {ALIGN_OPTIONS.map((option) => (
                       <button
-                        key={value}
+                        key={option.value}
                         type="button"
                         role="radio"
-                        aria-checked={meta.align === value}
-                        className={meta.align === value ? "is-on" : ""}
-                        onClick={() => meta.update({ align: value })}
-                        data-tip={value === "center" ? "居中" : "左对齐"}
-                        aria-label={value === "center" ? "居中" : "左对齐"}
+                        aria-checked={meta.align === option.value}
+                        className={meta.align === option.value ? "is-on" : ""}
+                        onClick={() => meta.update({ align: option.value })}
+                        data-tip={option.label}
+                        aria-label={option.label}
                       >
-                        {value === "center" ? <AlignCenterIcon /> : <AlignLeftIcon />}
+                        <option.Icon />
                       </button>
                     ))}
                   </span>
@@ -615,6 +615,10 @@ function SharePopover({
             </label>
 
             <div className="share-pop-actions">
+              <button type="button" className="share-pop-save" onClick={() => downloadDataUrl(posterSrc, "星页分享图.png")} disabled={!posterSrc}>
+                <DownloadIcon />
+                保存图片
+              </button>
               <button
                 type="button"
                 className={`share-pop-copy ${copied ? "is-copied" : ""}`}
@@ -624,10 +628,6 @@ function SharePopover({
               >
                 {copied ? <CheckIcon /> : <LinkIcon />}
                 {copied ? "已复制链接" : data ? "复制链接" : "生成链接中…"}
-              </button>
-              <button type="button" className="share-pop-save" onClick={() => downloadDataUrl(posterSrc, "星页分享图.png")} disabled={!posterSrc}>
-                <DownloadIcon />
-                保存图片
               </button>
               <a
                 className={`share-pop-open ${data ? "" : "is-disabled"}`}
@@ -751,17 +751,30 @@ const DownloadIcon = () => (
   </svg>
 );
 
+const AlignLeftIcon = () => (
+  <svg {...svgProps}>
+    <path d="M4 6h16M4 12h10M4 18h14" />
+  </svg>
+);
+
 const AlignCenterIcon = () => (
   <svg {...svgProps}>
     <path d="M4 6h16M7 12h10M5 18h14" />
   </svg>
 );
 
-const AlignLeftIcon = () => (
+const AlignRightIcon = () => (
   <svg {...svgProps}>
-    <path d="M4 6h16M4 12h10M4 18h14" />
+    <path d="M4 6h16M10 12h10M6 18h14" />
   </svg>
 );
+
+/** 分享图文字对齐：按钮顺序就是方向本身，左对齐在左、居中在中、右对齐在右。 */
+const ALIGN_OPTIONS: { value: PosterAlign; label: string; Icon: () => ReactNode }[] = [
+  { value: "left", label: "左对齐", Icon: AlignLeftIcon },
+  { value: "center", label: "居中", Icon: AlignCenterIcon },
+  { value: "right", label: "右对齐", Icon: AlignRightIcon },
+];
 
 const EyeIcon = () => (
   <svg {...svgProps}>

@@ -54,9 +54,9 @@ export const NAME_ALIGNS: { id: NameAlign; name: string }[] = [
 ];
 
 export function readNameAlign(): NameAlign {
-  if (typeof window === "undefined") return "center";
+  if (typeof window === "undefined") return "left";
   const raw = new URLSearchParams(window.location.search).get("name");
-  return raw === "left" ? "left" : "center";
+  return raw === "center" ? "center" : "left";
 }
 
 function withParam(search: string, key: string, value: string): string {
