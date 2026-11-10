@@ -769,6 +769,7 @@ function PreviewCell({
   actions,
   presentation = "default",
   onFrame,
+  onReady,
 }: {
   run: RunState;
   selectedAsBase: boolean;
@@ -778,6 +779,7 @@ function PreviewCell({
   actions?: ReactNode;
   presentation?: PreviewPresentation;
   onFrame?: (node: HTMLIFrameElement | null) => void;
+  onReady?: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -838,6 +840,7 @@ function PreviewCell({
 
   function handlePreviewLoad() {
     recomputeMetrics();
+    onReady?.();
   }
 
   const shellStyle = {
@@ -2756,13 +2759,17 @@ export default function HomePage() {
     />
   );
 
-  const renderPreview = (run: WorkspaceRun, options?: { presentation?: PreviewPresentation; onFrame?: (node: HTMLIFrameElement | null) => void }) => {
+  const renderPreview = (
+    run: WorkspaceRun,
+    options?: { presentation?: PreviewPresentation; onFrame?: (node: HTMLIFrameElement | null) => void; onReady?: () => void },
+  ) => {
     const presentation = options?.presentation ?? "default";
     return (
       <PreviewCell
         run={run as RunState}
         presentation={presentation}
         onFrame={options?.onFrame}
+        onReady={options?.onReady}
         selectedAsBase={continueBase?.pageId === run.pageId}
         dimmedByBase={runs.length <= 2 && continueBase ? continueBase.pageId !== run.pageId : false}
         sceneFeatures={activeScene?.features ?? []}

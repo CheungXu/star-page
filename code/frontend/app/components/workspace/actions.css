@@ -308,160 +308,63 @@ a.tb-address:hover .tb-address-open span {
   }
 }
 
-/* ---------- 方案 C（C1 / C2 共用）：缩略图上的「继续改」。缩略图只用来认出是哪一版，盖住一小块不影响 ---------- */
-.tb-thumb-cta-slot {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  pointer-events: none;
-}
+/* ---------- 方案 C1：焦点卡。左列模型名、用量和按钮，上下分别与缩略图顶边、底边对齐 ---------- */
+/* 信息列宽度随「继续改」的位置变化：放在右侧竖按钮时收窄，给竖按钮让位 */
+.tb-cont-tab { --info-w: 176px; }
+.tb-cont-row,
+.tb-cont-thumb { --info-w: 188px; }
 
-.tb-thumb-cta-slot:empty {
-  display: none;
-}
-
-.tb-thumb-cta-slot.is-pill {
-  padding-bottom: 7px;
-  background: linear-gradient(to top, rgba(2, 6, 23, 0.6) 0%, rgba(2, 6, 23, 0) 58%);
-}
-
-.tb-thumb-cta-slot.is-corner {
-  justify-content: flex-end;
-  padding: 6px;
-  background: linear-gradient(to top left, rgba(2, 6, 23, 0.45) 0%, rgba(2, 6, 23, 0) 45%);
-}
-
-.tb-thumb-cta {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  border: 0;
-  color: #fff;
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 750;
-  white-space: nowrap;
-  cursor: pointer;
-  pointer-events: auto;
-  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-}
-
-.tb-thumb-cta svg {
-  flex-shrink: 0;
-  font-size: 12px;
-}
-
-.is-pill .tb-thumb-cta {
-  height: 24px;
-  padding: 0 11px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #5b84ff 0%, #3563e9 65%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 14px -6px rgba(53, 99, 233, 0.95);
-}
-
-.is-pill .tb-thumb-cta:hover {
-  transform: translateY(-1px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px -6px rgba(53, 99, 233, 1);
-}
-
-.is-bar .tb-thumb-cta {
-  width: 100%;
-  height: 26px;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(15, 23, 42, 0.58);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-
-.is-bar .tb-thumb-cta:hover {
-  background: rgba(53, 99, 233, 0.92);
-}
-
-.is-corner .tb-thumb-cta {
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 7px;
-  background: #fff;
-  color: var(--color-primary);
-  font-size: 11px;
-  font-weight: 800;
-  box-shadow: 0 4px 10px -4px rgba(2, 6, 23, 0.6);
-}
-
-.is-corner .tb-thumb-cta:hover {
-  background: var(--color-primary);
-  color: #fff;
-}
-
-.is-pill .tb-thumb-cta.is-picked {
-  background: linear-gradient(135deg, #34d399 0%, #16a34a 70%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 14px -6px rgba(22, 163, 74, 0.95);
-}
-
-.is-bar .tb-thumb-cta.is-picked {
-  background: rgba(22, 163, 74, 0.9);
-}
-
-.is-corner .tb-thumb-cta.is-picked {
-  color: var(--color-success);
-}
-
-/* 打开 / 放大 / 分享：C1 摆成一排等宽分段按钮，C2 竖排成菜单 */
-.tb-act {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 750;
-  text-decoration: none;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.tb-act svg {
-  flex-shrink: 0;
-  font-size: 12.5px;
-}
-
-.tb-act.is-share {
-  color: var(--color-primary);
-}
-
-/* ---------- 方案 C1：焦点卡。名字、三项用量（图标 + 数字）、一排等宽按钮，三行左右对齐 ---------- */
 .tb-focus {
-  width: 200px;
+  --focus-w: calc(var(--info-w, 188px) + 14px);
+  width: 0;
   min-width: 0;
   overflow: hidden;
-  animation: tb-focus-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  opacity: 0;
+  transition: width 0.34s var(--c1-ease), opacity 0.16s ease;
 }
 
+.tb-focus:has(.tb-continue-tab) {
+  --focus-w: calc(var(--info-w, 176px) + 72px);
+}
+
+.tb-focus.is-active {
+  width: var(--focus-w);
+  opacity: 1;
+  transition: width 0.34s var(--c1-ease), opacity 0.28s ease 0.1s;
+}
+
+/* 上下内边距 4px，与缩略图外框（.vb-frame 的 4px）一致，内容区正好是缩略图的高度 */
 .tb-focus-inner {
+  display: flex;
+  gap: 8px;
+  width: var(--focus-w);
+  height: 100%;
+  padding: 4px 4px 4px 10px;
+}
+
+.tb-focus-info {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  width: 200px;
-  height: 100%;
-  padding: 7px 10px 4px 8px;
+  width: var(--info-w, 188px);
+  min-width: 0;
 }
 
+.tb-focus-title {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* 行高 18px 里字形上沿约低 2px，上提 2px 让字的顶边压齐缩略图顶边 */
 .tb-focus-head {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
   height: 18px;
+  margin-top: -2px;
 }
 
 .tb-focus-dot {
@@ -477,8 +380,10 @@ a.tb-address:hover .tb-address-open span {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -490,12 +395,13 @@ a.tb-address:hover .tb-address-open span {
 .tb-focus-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
+  height: 15px;
   padding-left: 1px;
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -509,6 +415,8 @@ a.tb-address:hover .tb-address-open span {
 }
 
 .tb-focus-meta .vb-coin {
+  width: 12px;
+  height: 12px;
   margin-right: 0;
   vertical-align: 0;
 }
@@ -522,8 +430,8 @@ a.tb-address:hover .tb-address-open span {
 }
 
 .vb-meta-icon {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
   fill: none;
   stroke: var(--color-text-muted);
@@ -533,18 +441,47 @@ a.tb-address:hover .tb-address-open span {
 }
 
 .tb-focus-hint {
-  margin: 0 0 4px;
+  margin: 0;
   color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* 打开 / 放大 / 分享：三个等宽分段按钮，32px 高 */
+.tb-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tb-act svg {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.tb-act.is-share {
+  color: var(--color-primary);
 }
 
 .tb-card-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  height: 28px;
+  height: 32px;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 9px;
   background: #fff;
   box-shadow: 0 0 0 1px rgba(53, 99, 233, 0.16), 0 2px 6px -4px rgba(53, 99, 233, 0.45);
 }
@@ -559,55 +496,351 @@ a.tb-address:hover .tb-address-open span {
   color: var(--color-primary);
 }
 
-/* ---------- 方案 C2：竖排菜单。不放用量，三行和缩略图等高，像贴在缩略图边上的右键菜单 ---------- */
-.tb-menu {
-  width: 80px;
-  min-width: 0;
-  overflow: hidden;
-  animation: tb-menu-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+/* 「继续改」位置一：焦点卡最右侧的整块竖按钮，和缩略图等高，最好点 */
+.tb-continue-tab {
+  display: flex;
+  flex: 0 0 50px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(160deg, #5b84ff 0%, #3563e9 55%, #2b50d4 100%);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 750;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 10px 20px -12px rgba(53, 99, 233, 0.9);
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.tb-menu-inner {
-  width: 80px;
-  padding: 4px 6px 0 2px;
+.tb-continue-tab svg {
+  font-size: 18px;
 }
 
-.tb-menu-actions {
+.tb-continue-tab:hover {
+  filter: brightness(1.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 12px 24px -10px rgba(53, 99, 233, 0.95);
+}
+
+.tb-continue-tab:active {
+  transform: scale(0.97);
+}
+
+.tb-continue-tab.is-picked {
+  background: linear-gradient(160deg, #34d399 0%, #16a34a 70%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 10px 20px -12px rgba(22, 163, 74, 0.9);
+}
+
+/* 「继续改」位置二：按钮行里的主按钮，左边三个图标按钮 */
+.tb-row-actions {
+  display: flex;
+  gap: 6px;
+  height: 32px;
+}
+
+.tb-row-tools {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.tb-row-ico {
+  position: relative;
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13.5px;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(53, 99, 233, 0.16), 0 2px 6px -4px rgba(53, 99, 233, 0.45);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tb-row-ico:hover,
+.tb-row-ico.is-open {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.tb-row-ico.is-share {
+  color: var(--color-primary);
+}
+
+.tb-row-continue {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #5b84ff 0%, #3563e9 65%);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 750;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 16px -10px rgba(53, 99, 233, 0.95);
+  transition: filter 0.15s ease;
+}
+
+.tb-row-continue svg {
+  font-size: 14px;
+}
+
+.tb-row-continue:hover {
+  filter: brightness(1.08);
+}
+
+.tb-row-continue.is-picked {
+  background: linear-gradient(135deg, #34d399 0%, #16a34a 70%);
+}
+
+/* 「继续改」位置三：缩略图底部 32px 宽条（缩略图只用来认版本，盖住底部一条不影响） */
+.tb-thumb-cta-slot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  animation: tb-cta-in 0.3s var(--c1-ease, ease) 0.12s both;
+}
+
+.tb-thumb-cta {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.66);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.tb-thumb-cta svg {
+  font-size: 14px;
+}
+
+.tb-thumb-cta:hover {
+  background: rgba(53, 99, 233, 0.95);
+}
+
+.tb-thumb-cta.is-picked {
+  background: rgba(22, 163, 74, 0.92);
+}
+
+@keyframes tb-cta-in {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
+/* 图标按钮的提示气泡（比系统 title 出得快，样式统一） */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  z-index: 5;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 3px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+[data-tip]:first-child::after {
+  left: 0;
+  transform: translate(0, 3px);
+}
+
+[data-tip]:first-child:hover::after,
+[data-tip]:first-child:focus-visible::after {
+  transform: translate(0, 0);
+}
+
+/* ---------- 方案 C2：聚光胶片。放大的缩略图底部铺渐暗层，上面是模型名，下面是玻璃按钮和「继续改」 ---------- */
+.tb-spot {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  height: 84px;
-  padding-left: 6px;
-  box-shadow: inset 1px 0 0 rgba(53, 99, 233, 0.16);
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 9px;
+  background: linear-gradient(to top, rgba(2, 6, 23, 0.88) 0%, rgba(2, 6, 23, 0.55) 40%, rgba(2, 6, 23, 0) 74%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
 }
 
-.tb-menu-actions .tb-act {
-  justify-content: flex-start;
+.vb-frame.is-active .tb-spot {
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 0.3s ease 0.16s;
+}
+
+.tb-spot-caption,
+.tb-spot-actions {
+  transform: translateY(8px);
+  transition: transform 0.2s ease;
+}
+
+.vb-frame.is-active .tb-spot-caption,
+.vb-frame.is-active .tb-spot-actions {
+  transform: none;
+  transition: transform 0.46s var(--c2-spring, ease) 0.16s;
+}
+
+.vb-frame.is-active .tb-spot-actions {
+  transition-delay: 0.22s;
+}
+
+.tb-spot-caption {
+  display: flex;
+  align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 8px;
-  border-radius: 7px;
+  min-width: 0;
+  padding-left: 2px;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 750;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
-.tb-menu-actions .tb-act:hover,
-.tb-menu-actions .tb-act.is-open {
-  background: #fff;
-  color: var(--color-primary);
-  box-shadow: 0 0 0 1px rgba(53, 99, 233, 0.16), 0 3px 8px -5px rgba(53, 99, 233, 0.5);
+.tb-spot-caption i {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35);
 }
 
-@keyframes tb-focus-in {
-  from {
-    width: 0;
-    opacity: 0;
-  }
+.tb-spot-caption strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-@keyframes tb-menu-in {
-  from {
-    width: 0;
-    opacity: 0;
-  }
+.tb-spot-caption .vp-mark {
+  flex-shrink: 0;
+  background: rgba(34, 197, 94, 0.28);
+  color: #bbf7d0;
+}
+
+.tb-spot-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tb-spot-tools {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.tb-spot-ico {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+
+.tb-spot-ico:hover,
+.tb-spot-ico.is-open {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.tb-spot-continue {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #5b84ff 0%, #3563e9 65%);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 750;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px -8px rgba(53, 99, 233, 1);
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.tb-spot-continue svg {
+  font-size: 13px;
+}
+
+.tb-spot-continue:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.tb-spot-continue.is-picked {
+  background: linear-gradient(135deg, #34d399 0%, #16a34a 70%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px -8px rgba(22, 163, 74, 1);
 }
 
 /* ---------- 分享浮层：贴着分享按钮出现。上面分享图 + 二维码，中间链接和复制，底部灰条放保存、打开 ---------- */
@@ -1003,8 +1236,15 @@ a.tb-address:hover .tb-address-open span {
   .share-pop,
   .share-pop-shimmer,
   .share-pop-url.is-placeholder,
-  .tb-focus,
-  .tb-menu {
+  .tb-thumb-cta-slot {
     animation: none;
+  }
+
+  .tb-focus,
+  .tb-spot,
+  .tb-spot-caption,
+  .tb-spot-actions,
+  .vb-film-glider {
+    transition: none;
   }
 }

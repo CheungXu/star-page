@@ -141,12 +141,12 @@ export function ResultActions({
         </span>
       </div>
     );
-  } else if (layout === "continue") {
+  } else if (layout === "continue" || layout === "tab") {
     if (!canContinue || !ready) return null;
     body = (
       <button
         type="button"
-        className={`tb-thumb-cta ${selectedAsBase ? "is-picked" : ""}`}
+        className={`${layout === "tab" ? "tb-continue-tab" : "tb-thumb-cta"} ${selectedAsBase ? "is-picked" : ""}`}
         onClick={(event) => {
           event.stopPropagation();
           onContinue();
@@ -155,12 +155,12 @@ export function ResultActions({
         title={selectedAsBase ? "下一轮将基于这个结果修改" : "以此结果继续修改"}
       >
         {selectedAsBase ? <CheckIcon /> : <BranchIcon />}
-        <span>{selectedAsBase ? "已选为基础" : "继续改"}</span>
+        <span>{selectedAsBase ? (layout === "tab" ? "已选" : "已选为基础") : "继续改"}</span>
       </button>
     );
-  } else if (layout === "card" || layout === "menu") {
+  } else if (layout === "card") {
     body = (
-      <div className={layout === "card" ? "tb-card-actions" : "tb-menu-actions"}>
+      <div className="tb-card-actions">
         <a className="tb-act" href={absoluteUrl} target="_blank" rel="noreferrer" title="在新标签页打开">
           <OpenIcon />
           <span>打开</span>
@@ -173,6 +173,56 @@ export function ResultActions({
           <ShareIcon />
           <span>分享</span>
         </button>
+      </div>
+    );
+  } else if (layout === "cardRow" || layout === "spot") {
+    const prefix = layout === "spot" ? "tb-spot" : "tb-row";
+    body = (
+      <div className={`${prefix}-actions`}>
+        <span className={`${prefix}-tools`}>
+          <a className={`${prefix}-ico`} href={absoluteUrl} target="_blank" rel="noreferrer" aria-label="在新标签页打开" data-tip="新标签页打开" onClick={(event) => event.stopPropagation()}>
+            <OpenIcon />
+          </a>
+          <button
+            type="button"
+            className={`${prefix}-ico`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenPreview();
+            }}
+            aria-label="放大预览"
+            data-tip="放大预览"
+          >
+            <ExpandIcon />
+          </button>
+          <button
+            {...shareProps}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleShare();
+            }}
+            className={`${prefix}-ico is-share ${shareOpen ? "is-open" : ""}`}
+            aria-label="分享"
+            data-tip="分享"
+          >
+            <ShareIcon />
+          </button>
+        </span>
+        {canContinue && (
+          <button
+            type="button"
+            className={`${prefix}-continue ${selectedAsBase ? "is-picked" : ""}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onContinue();
+            }}
+            aria-pressed={selectedAsBase}
+            title={selectedAsBase ? "下一轮将基于这个结果修改" : "以此结果继续修改"}
+          >
+            {selectedAsBase ? <CheckIcon /> : <BranchIcon />}
+            {selectedAsBase ? "已选" : "继续改"}
+          </button>
+        )}
       </div>
     );
   } else {

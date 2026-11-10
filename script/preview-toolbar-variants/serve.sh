@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 同一份前端代码起多个 dev 服务，对比「预览工具栏不遮挡页面」的方案（B 已淘汰，C 拆成两版）。
 #   3011 -> 方案 A  浏览器顶栏
-#   3013 -> 方案 C1 胶片联动 · 精修（保留用量信息）
-#   3014 -> 方案 C2 胶片联动 · 极简（竖排菜单）
-# C1 / C2 地址加 &cont=pill|bar|corner 切换缩略图上「继续改」的样式。
+#   3013 -> 方案 C1 胶片联动 · 精修（焦点卡）
+#   3014 -> 方案 C2 聚光胶片
+# C1 地址加 &cont=tab|row|thumb 切换「继续改」的位置。
 # 地址后加 ?demo=9 进入演示（不调后端、不扣积分）；&live=1 让最后一个模型停在生成中。
 # 用法：bash script/preview-toolbar-variants/serve.sh [start [A,C1,C2]|stop|status]
 set -euo pipefail

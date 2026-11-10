@@ -1,10 +1,12 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
   type CSSProperties,
+  type RefObject,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -24,7 +26,7 @@ import {
   sumOutputTokens,
 } from "./progress-utils";
 import type { WorkspaceRun } from "./types";
-import { readContinueStyle, VARIANT } from "./variant";
+import { readContinueStyle, VARIANT, type ContinueStyle } from "./variant";
 
 function liveCount(run: WorkspaceRun): string {
   const tokens = outputTokenCount(run);
@@ -369,8 +371,8 @@ function PastRoundChip() {
   );
 }
 
-/** 胶片条：竖向滚轮直接横向滚动（不用按 Shift），两端渐隐提示还有内容；选中项自动滚进可视区。 */
-function useFilmScroll(activeKey: string) {
+/** 胶片条：竖向滚轮直接横向滚动（不用按 Shift），两端渐隐提示还有内容。 */
+function useFilmScroll() {
   const ref = useRef<HTMLDivElement | null>(null);
   const [edges, setEdges] = useState({ start: true, end: true });
 
@@ -433,80 +435,201 @@ function useFilmScroll(activeKey: string) {
     };
   }, []);
 
-  useEffect(() => {
-    const film = ref.current;
-    if (!film || !activeKey) return;
-    // 方案 C 的焦点卡 / 菜单展开有 0.3 秒动画，等宽度稳定后再算位置。
-    const timer = window.setTimeout(() => {
-      const slot = film.querySelector<HTMLElement>(".vb-frame-slot.is-active");
-      if (!slot) return;
-      const pad = 28;
-      const start = slot.offsetLeft;
-      const end = start + slot.offsetWidth;
-      if (start < film.scrollLeft + pad) film.scrollTo({ left: start - pad, behavior: "smooth" });
-      else if (end > film.scrollLeft + film.clientWidth - pad) film.scrollTo({ left: end - film.clientWidth + pad, behavior: "smooth" });
-    }, VARIANT.filmCard ? 320 : 0);
-    return () => window.clearTimeout(timer);
-  }, [activeKey]);
-
   return [ref, edges] as const;
 }
 
-/** 方案 C1：选中的缩略图向右展开焦点卡。模型名、三项用量（图标代替文字）和一排等宽操作按钮。 */
-function FocusPanel({ run, index, total }: { run: WorkspaceRun; index: number; total: number }) {
+/**
+ * 切换选中项时的胶片动效：C1 的高亮底板跟着选中格滑过去，并把选中格平滑带进可视区。
+ * 选中格自己还在做宽度过渡，所以每帧读它的实时位置缓动追随，过渡结束且稳定后停下。
+ */
+function useFilmMotion(filmRef: RefObject<HTMLDivElement | null>, gliderRef: RefObject<HTMLSpanElement | null>, activeKey: string) {
+  const posRef = useRef({ x: Number.NaN, w: 0 });
+
+  useEffect(() => {
+    const film = filmRef.current;
+    if (!film || !activeKey) return;
+    const pos = posRef.current;
+    let frame = 0;
+    let stable = 0;
+    let userScrolled = false;
+    let startedAt = performance.now();
+    const stopFollow = () => {
+      userScrolled = true;
+    };
+
+    const step = () => {
+      const slot = film.querySelector<HTMLElement>(".vb-frame-slot.is-active");
+      if (!slot) {
+        frame = 0;
+        return;
+      }
+      const tx = slot.offsetLeft;
+      const tw = slot.offsetWidth;
+      if (Number.isNaN(pos.x)) {
+        pos.x = tx;
+        pos.w = tw;
+      } else {
+        pos.x += (tx - pos.x) * 0.24;
+        pos.w += (tw - pos.w) * 0.24;
+      }
+      const settled = Math.abs(tx - pos.x) < 0.5 && Math.abs(tw - pos.w) < 0.5;
+      stable = settled ? stable + 1 : 0;
+      const finished = stable > 8 && performance.now() - startedAt > 480;
+      if (finished) {
+        pos.x = tx;
+        pos.w = tw;
+      }
+      const glider = gliderRef.current;
+      if (glider) {
+        glider.style.transform = `translate3d(${pos.x}px, ${slot.offsetTop}px, 0)`;
+        glider.style.width = `${pos.w}px`;
+        glider.style.height = `${slot.offsetHeight}px`;
+        glider.style.opacity = "1";
+      }
+      if (!userScrolled) {
+        const pad = 28;
+        const left = film.scrollLeft;
+        const max = film.scrollWidth - film.clientWidth;
+        let want = left;
+        if (tx < left + pad) want = tx - pad;
+        else if (tx + tw > left + film.clientWidth - pad) want = tx + tw - film.clientWidth + pad;
+        want = Math.max(0, Math.min(max, want));
+        const diff = want - left;
+        if (Math.abs(diff) >= 1) film.scrollLeft = left + Math.sign(diff) * Math.max(1, Math.abs(diff) * 0.22);
+      }
+      frame = finished ? 0 : requestAnimationFrame(step);
+    };
+    const kick = () => {
+      startedAt = performance.now();
+      stable = 0;
+      if (!frame) frame = requestAnimationFrame(step);
+    };
+
+    film.addEventListener("wheel", stopFollow, { passive: true });
+    film.addEventListener("pointerdown", stopFollow, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(kick);
+    observer?.observe(film);
+    kick();
+    return () => {
+      film.removeEventListener("wheel", stopFollow);
+      film.removeEventListener("pointerdown", stopFollow);
+      observer?.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [filmRef, gliderRef, activeKey]);
+}
+
+type StageLayer = { key: string; run: WorkspaceRun; ready: boolean };
+
+/** 舞台换模型时新旧页面交叉淡化：新页面加载好再淡入，旧页面在下面垫着，淡入完成后移除。 */
+function StageSwap({ active }: { active: WorkspaceRun }) {
+  const { renderPreview } = useWorkspace();
+  const [layers, setLayers] = useState<StageLayer[]>(() => [{ key: active.modelKey, run: active, ready: true }]);
+  const top = layers[layers.length - 1];
+  if (top.key !== active.modelKey) {
+    const under = layers.filter((layer) => layer.ready && layer.key !== active.modelKey).slice(-1);
+    setLayers([...under, { key: active.modelKey, run: active, ready: active.status !== "completed" }]);
+  }
+
+  const markReady = useCallback((key: string) => {
+    setLayers((current) => current.map((layer) => (layer.key === key && !layer.ready ? { ...layer, ready: true } : layer)));
+  }, []);
+
+  // 新页面迟迟没加载完也不卡住：最多等 1.2 秒就淡入。
+  useEffect(() => {
+    if (top.ready) return;
+    const timer = window.setTimeout(() => markReady(top.key), 1200);
+    return () => window.clearTimeout(timer);
+  }, [top.key, top.ready, markReady]);
+
+  useEffect(() => {
+    if (!top.ready || layers.length < 2) return;
+    const timer = window.setTimeout(() => setLayers((current) => current.slice(-1)), 380);
+    return () => window.clearTimeout(timer);
+  }, [top.ready, layers.length]);
+
+  return (
+    <>
+      {layers.map((layer) => {
+        const isTop = layer.key === top.key;
+        return (
+          <div key={layer.key} className={`vb-stage-layer ${isTop ? "is-top" : "is-under"} ${layer.ready ? "is-ready" : ""}`}>
+            {renderPreview(isTop ? active : layer.run, { presentation: "stage", onReady: isTop ? () => markReady(layer.key) : undefined })}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * 方案 C1：选中的缩略图向右展开焦点卡（每格常驻，靠宽度过渡展开 / 收起）。
+ * 左列是模型名、三项用量和按钮，「继续改」按 continueStyle 放在右侧竖按钮、按钮行或缩略图上。
+ */
+function FocusPanel({ run, active, continueStyle }: { run: WorkspaceRun; active: boolean; continueStyle: ContinueStyle }) {
   const { elapsed, renderActions } = useWorkspace();
   const tokens = outputTokenCount(run);
   const credits = run.usageSummary?.creditsCharged;
   const duration = elapsed(run);
+  const completed = run.status === "completed";
   const pending = run.status === "thinking" || run.status === "creating";
   return (
-    <div className="tb-focus" style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
+    <div className={`tb-focus ${active ? "is-active" : ""}`} inert={!active} style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
       <div className="tb-focus-inner">
-        <div className="tb-focus-head">
-          <i className="tb-focus-dot" aria-hidden="true" />
-          <strong title={`${run.modelLabel} · 第 ${index + 1} 个，共 ${total} 个`}>{run.modelLabel}</strong>
-          <StatusMark status={run.status} />
-        </div>
-        <div className="tb-focus-meta">
-          {run.status === "failed" ? (
-            <span className="is-failed">生成失败</span>
-          ) : (
-            <>
-              <span title={`输出 ${tokens} tokens`}>
-                <TokenIcon />
-                {tokens > 0 ? formatTokens(tokens) : "—"}
-              </span>
-              <span title="生成用时">
-                <ClockIcon />
-                {shortDuration(duration)}
-              </span>
-              {typeof credits === "number" && (
-                <span className="is-cost" title={`消耗 ${credits} 积分`}>
-                  <CoinIcon />
-                  {credits}
-                </span>
+        <div className="tb-focus-info">
+          <div className="tb-focus-title">
+            <div className="tb-focus-head">
+              <i className="tb-focus-dot" aria-hidden="true" />
+              <strong title={run.modelLabel}>{run.modelLabel}</strong>
+              {!completed && <StatusMark status={run.status} />}
+            </div>
+            <div className="tb-focus-meta">
+              {run.status === "failed" ? (
+                <span className="is-failed">生成失败</span>
+              ) : (
+                <>
+                  <span title={`输出 ${tokens} tokens`}>
+                    <TokenIcon />
+                    {tokens > 0 ? formatTokens(tokens) : "—"}
+                  </span>
+                  <span title="生成用时">
+                    <ClockIcon />
+                    {shortDuration(duration)}
+                  </span>
+                  {typeof credits === "number" && (
+                    <span className="is-cost" title={`消耗 ${credits} 积分`}>
+                      <CoinIcon />
+                      {credits}
+                    </span>
+                  )}
+                </>
               )}
-            </>
+            </div>
+          </div>
+          {completed ? (
+            renderActions(run, continueStyle === "row" ? "cardRow" : "card")
+          ) : (
+            <p className="tb-focus-hint">{pending ? "生成完成后就能打开、分享" : "这个模型没有生成成功，可以换一个看看"}</p>
           )}
         </div>
-        {run.status === "completed" ? (
-          renderActions(run, "card")
-        ) : (
-          <p className="tb-focus-hint">{pending ? "生成完成后就能打开、分享" : "这个模型没有生成成功，可以换一个看看"}</p>
-        )}
+        {completed && continueStyle === "tab" && renderActions(run, "tab")}
       </div>
     </div>
   );
 }
 
-/** 方案 C2：不展示用量，选中的缩略图右侧只贴一列竖排菜单，三行正好和缩略图等高。 */
-function MenuPanel({ run }: { run: WorkspaceRun }) {
+/** 方案 C2：聚光胶片。选中的缩略图放大浮起，模型名和操作压在缩略图底部的渐暗层上。 */
+function SpotOverlay({ run, active }: { run: WorkspaceRun; active: boolean }) {
   const { renderActions } = useWorkspace();
-  if (run.status !== "completed") return null;
   return (
-    <div className="tb-menu">
-      <div className="tb-menu-inner">{renderActions(run, "menu")}</div>
-    </div>
+    <span className="tb-spot" inert={!active} style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
+      <span className="tb-spot-caption">
+        <i aria-hidden="true" />
+        <strong>{run.modelLabel}</strong>
+        <StatusMark status={run.status} />
+      </span>
+      {run.status === "completed" && renderActions(run, "spot")}
+    </span>
   );
 }
 
@@ -532,7 +655,9 @@ export function GenerationResults() {
   const activeIndex = Math.max(0, runs.findIndex((run) => run.modelKey === activeModelKey));
   const active = runs[activeIndex] ?? runs[0];
   const done = runs.filter((run) => run.status === "completed").length;
-  const [filmRef, filmEdges] = useFilmScroll(many ? (active?.modelKey ?? "") : "");
+  const [filmRef, filmEdges] = useFilmScroll();
+  const gliderRef = useRef<HTMLSpanElement | null>(null);
+  useFilmMotion(filmRef, gliderRef, many ? (active?.modelKey ?? "") : "");
   const [continueStyle] = useState(readContinueStyle);
   const variant = VARIANT.id;
 
@@ -555,7 +680,7 @@ export function GenerationResults() {
   return (
     <>
     <PaneResizer />
-    <article className={`panel preview-panel workspace-preview vb-results tb-variant-${variant.toLowerCase()} ${VARIANT.filmCard ? "tb-variant-c" : ""}`}>
+    <article className={`panel preview-panel workspace-preview vb-results tb-variant-${variant.toLowerCase()} tb-cont-${continueStyle}`}>
       <div className="panel-heading preview-heading">
         <h2>
           {roundNav && roundNav.items.length > 1 ? "" : "结果预览 · "}
@@ -596,7 +721,7 @@ export function GenerationResults() {
                 </div>
               )}
               <div className="vb-stage-view">
-                {renderPreview(active, { presentation: "stage" })}
+                <StageSwap active={active} />
                 {(active.status === "thinking" || active.status === "creating") && (
                   <div className="vb-stage-overlay">
                     <Ring value={estimateProgress(active, elapsed(active))} />
@@ -614,7 +739,8 @@ export function GenerationResults() {
             role="tablist"
             aria-label="模型胶片"
           >
-            {runs.map((run, index) => {
+            {variant === "C1" && <span ref={gliderRef} className="vb-film-glider" aria-hidden="true" />}
+            {runs.map((run) => {
               const isActive = run.modelKey === active.modelKey;
               return (
                 <div key={run.taskId || run.modelKey} className={`vb-frame-slot ${isActive ? "is-active" : ""}`} role="presentation">
@@ -642,17 +768,17 @@ export function GenerationResults() {
                         </span>
                       )}
                       {isUnseen(run.modelKey) && <b className="vb-unseen" aria-label="新完成" />}
-                      {VARIANT.filmCard && isActive && (
-                        <span className={`tb-thumb-cta-slot is-${continueStyle}`}>{renderActions(run, "continue")}</span>
+                      {variant === "C1" && continueStyle === "thumb" && isActive && (
+                        <span className="tb-thumb-cta-slot">{renderActions(run, "continue")}</span>
                       )}
+                      {variant === "C2" && <SpotOverlay run={run} active={isActive} />}
                     </span>
                     <span className="vb-frame-meta">
                       <i style={{ background: modelAccent(run.modelKey) }} />
                       <span>{run.modelLabel}</span>
                     </span>
                   </div>
-                  {variant === "C1" && isActive && <FocusPanel run={run} index={index} total={runs.length} />}
-                  {variant === "C2" && isActive && <MenuPanel run={run} />}
+                  {variant === "C1" && <FocusPanel run={run} active={isActive} continueStyle={continueStyle} />}
                 </div>
               );
             })}

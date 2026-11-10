@@ -154,7 +154,7 @@ bash script/preview-toolbar-variants/serve.sh start
 node script/preview-toolbar-variants/shots.mjs /tmp/preview-toolbar-shots 1600x900
 ```
 
-地址加 `?demo=9` 进演示模式（9 个模型的真实页面存在 `code/frontend/public/demo-pages/`，不调后端）；C1、C2 再加 `&cont=pill|bar|corner` 切换缩略图上「继续改」的样式。
+地址加 `?demo=9` 进演示模式（9 个模型的真实页面存在 `code/frontend/public/demo-pages/`，不调后端）；C1 再加 `&cont=tab|row|thumb` 切换「继续改」的位置。
 headless Chromium 渲染 9 个 WebGL 页面很慢，单次截图可能要几十秒，偶发超时重跑即可。选定方案后删除本目录。
 
 ## 小红书公开热词

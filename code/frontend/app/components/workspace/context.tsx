@@ -8,6 +8,8 @@ export type RenderPreview = (
   options?: {
     presentation?: PreviewPresentation;
     onFrame?: (node: HTMLIFrameElement | null) => void;
+    /** 页面 iframe 加载完成（用于舞台切换时等新页面画好再淡入）。 */
+    onReady?: () => void;
   },
 ) => ReactNode;
 
