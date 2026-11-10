@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, Response
@@ -15,7 +16,16 @@ from app.models.entities import Conversation, Page, PagePublication, PageVersion
 from app.services.analytics import record_page_view
 from app.services.analytics.tracking import is_preview_bot, record_analytics_event
 from app.services.page_delivery import build_remix_url, build_report_url, render_blocked_page, render_page_html
-from app.services.publications import external_view_count, publication_url, publish_page
+from app.services.publications import (
+    CUSTOM_SUBTITLE_MAX,
+    CUSTOM_TITLE_MAX,
+    default_subtitle,
+    external_view_count,
+    is_card_customized,
+    publication_url,
+    publish_page,
+    update_share_card,
+)
 from app.services.scenes.catalog import get_scene
 from app.services.storage.factory import create_storage_provider
 
@@ -35,6 +45,40 @@ class PublishResponse(BaseModel):
     og_image_url: str
     republished: bool
     external_view_count: int
+    # 分享卡片当前生效的标题 / 副标题 / 对齐，以及恢复默认时用的默认值。
+    title: str
+    subtitle: str
+    align: Literal["left", "center", "right"]
+    default_title: str
+    default_subtitle: str
+    customized: bool
+
+
+class ShareCardUpdate(BaseModel):
+    """只修改请求里带上的字段；title / subtitle 传 null 或空串表示恢复默认。"""
+
+    title: str | None = Field(default=None, max_length=CUSTOM_TITLE_MAX * 2)
+    subtitle: str | None = Field(default=None, max_length=CUSTOM_SUBTITLE_MAX * 2)
+    align: Literal["left", "center", "right"] | None = None
+
+
+def _publish_response(publication: PagePublication, *, republished: bool, views: int, default_title: str) -> PublishResponse:
+    base = publication_url(publication.slug)
+    return PublishResponse(
+        slug=publication.slug,
+        url=base,
+        qr_url=f"{base}/qr.png",
+        poster_url=f"{base}/poster.png",
+        og_image_url=f"{base}/og.png",
+        republished=republished,
+        external_view_count=views,
+        title=publication.title,
+        subtitle=publication.og_description or default_subtitle(publication.scene_key),
+        align=publication.card_align if publication.card_align in ("left", "center", "right") else "center",
+        default_title=default_title,
+        default_subtitle=default_subtitle(publication.scene_key),
+        customized=is_card_customized(publication),
+    )
 
 
 @router.post("/api/publications", response_model=PublishResponse)
@@ -50,35 +94,48 @@ async def create_publication(payload: PublishRequest, request: Request, response
         if page is None or page.deleted_at is not None or page.owner_user_id != user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="页面不存在")
         try:
-            publication, republished = await publish_page(session, page=page, preferred_slug=payload.slug)
-            await session.refresh(publication)
+            result = await publish_page(session, page=page, preferred_slug=payload.slug)
+            await session.refresh(result.publication)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        publication = result.publication
         views = await external_view_count(session, publication.conversation_id)
         slug = publication.slug
         scene_key = publication.scene_key
         owner_id = publication.owner_user_id
+        response = _publish_response(publication, republished=result.republished, views=views, default_title=result.default_title)
 
     await record_analytics_event(
         event_name="scene_publish",
         user_id=owner_id,
         anon_device_id=None,
         client_session_id=None,
-        props={"scene_key": scene_key, "slug": slug, "republished": republished},
+        props={"scene_key": scene_key, "slug": slug, "republished": result.republished},
         ip=get_client_ip(request),
         referer=request.headers.get("referer"),
         user_agent=request.headers.get("user-agent"),
     )
-    base = publication_url(slug)
-    return PublishResponse(
-        slug=slug,
-        url=base,
-        qr_url=f"{base}/qr.png",
-        poster_url=f"{base}/poster.png",
-        og_image_url=f"{base}/og.png",
-        republished=republished,
-        external_view_count=views,
-    )
+    return response
+
+
+@router.patch("/api/publications/{slug}", response_model=PublishResponse)
+async def update_publication_card(slug: str, payload: ShareCardUpdate, request: Request, response_obj: Response) -> PublishResponse:
+    """分享浮层里改写标题 / 副标题 / 对齐：保存后重画朋友圈海报和链接卡片，/u/{slug} 的标题与描述随之更新。"""
+    async with AsyncSessionLocal() as session:
+        user = await resolve_actor(session, request, response_obj)
+        if user.is_anonymous:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "need_login", "message": "登录后才能修改分享卡片", "need_login": True},
+            )
+        publication = await session.scalar(select(PagePublication).where(PagePublication.slug == slug))
+        if publication is None or publication.owner_user_id != user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分享链接不存在")
+        changes = {key: getattr(payload, key) for key in payload.model_fields_set}
+        default_title = await update_share_card(session, publication, changes)
+        await session.refresh(publication)
+        views = await external_view_count(session, publication.conversation_id)
+        return _publish_response(publication, republished=False, views=views, default_title=default_title)
 
 
 @router.get("/u/{slug}")
@@ -111,6 +168,7 @@ async def serve_publication(
         storage_key = version.storage_key
         title = publication.title
         description = publication.og_description or title
+        custom_title = bool(publication.custom_title)
         page_id = page.id
         conversation_id = page.conversation_id
         owner_user_id = page.owner_user_id
@@ -146,6 +204,7 @@ async def serve_publication(
         remix_url=build_remix_url(scene.key if scene else None, slug),
         poster_url=f"{url}/poster.png",
         report_url=build_report_url(str(page_id), slug),
+        force_title=custom_title,
     )
 
 

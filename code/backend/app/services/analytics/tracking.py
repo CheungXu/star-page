@@ -33,7 +33,9 @@ ALLOWED_EVENTS: frozenset[str] = frozenset(
         "login_success",      # 前端侧登录成功（便于同一会话漏斗串联）
         "recharge_view",      # 充值页/弹窗曝光
         "recharge_click",     # 点击某充值套餐
-        "page_share_click",   # 点击分享生成页（传播意图）
+        "page_share_click",   # 点击分享生成页（传播意图），props 带 ux_variant 便于 AB 对比
+        "share_copy_link",    # 分享浮层里复制固定链接
+        "share_save_poster",  # 分享浮层里保存分享图（发朋友圈）
         "scene_landing_view", # 场景落地页访问（带来源 utm）
         "scene_remix_click",  # 场景页点击「做同款」
         "scene_publish",      # 发布固定链接（后端也会直接写入）

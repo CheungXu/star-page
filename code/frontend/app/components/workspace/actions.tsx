@@ -2,12 +2,13 @@
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { track } from "../../lib/analytics";
 import { apiFetch } from "../../lib/api";
 import { copyTextToClipboard, toAbsoluteUrl } from "../../lib/links";
-import { isDemoRun, publishDemo, type SharePublication } from "./demo";
-import { DEFAULT_SUBTITLE, downloadDataUrl, fetchPageTitle, loadImage, renderPoster, type PosterAlign } from "./share-poster";
+import { downloadDataUrl, loadImage, renderPoster, type PosterAlign } from "./share-poster";
 import { modelAccent } from "./progress-utils";
 import type { ActionLayout, WorkspaceRun } from "./types";
+import { UX_VARIANT } from "./variant";
 import "./actions.css";
 
 export type ResultActionsProps = {
@@ -24,9 +25,23 @@ export type ResultActionsProps = {
   onNotice: (message: string) => void;
 };
 
+/** POST /api/publications 与 PATCH /api/publications/{slug} 的返回。 */
+export type SharePublication = {
+  slug: string;
+  url: string;
+  qrUrl: string;
+  republished: boolean;
+  externalViews: number;
+  title: string;
+  subtitle: string;
+  align: PosterAlign;
+  defaultTitle: string;
+  defaultSubtitle: string;
+};
+
 type ShareState = { kind: "loading" } | { kind: "ready"; data: SharePublication } | { kind: "error" };
 
-/** 单个结果的四个操作：新标签页打开、放大预览、分享、继续改。按 layout 摆成卡片底栏、舞台顶栏或胶片焦点卡。 */
+/** 单个结果的四个操作：新标签页打开、放大预览、分享、继续改。按 layout 摆成卡片底栏、舞台顶栏、胶片焦点卡或聚光胶片。 */
 export function ResultActions({
   run,
   layout,
@@ -41,7 +56,6 @@ export function ResultActions({
 }: ResultActionsProps) {
   const absoluteUrl = useMemo(() => toAbsoluteUrl(run.pageUrl), [run.pageUrl]);
   const ready = run.status === "completed" && Boolean(absoluteUrl);
-  const demo = isDemoRun(run);
   const [share, setShare] = useState<ShareState | null>(null);
   const [shareAnchor, setShareAnchor] = useState<HTMLButtonElement | null>(null);
   const shareSeqRef = useRef(0);
@@ -50,7 +64,7 @@ export function ResultActions({
     const seq = ++shareSeqRef.current;
     setShare({ kind: "loading" });
     try {
-      const data = demo ? await publishDemo(run) : await publishPage(run.pageId);
+      const data = await publishPage(run.pageId);
       if (seq !== shareSeqRef.current) return;
       if (data === "need_login") {
         setShare(null);
@@ -69,7 +83,8 @@ export function ResultActions({
       return;
     }
     if (!ready) return;
-    if (!demo && shareGate()) return;
+    if (shareGate()) return;
+    track("page_share_click", { ux_variant: UX_VARIANT, layout, model_key: run.modelKey });
     void publish();
   }
 
@@ -142,12 +157,12 @@ export function ResultActions({
         </span>
       </div>
     );
-  } else if (layout === "continue" || layout === "tab") {
+  } else if (layout === "continue") {
     if (!canContinue || !ready) return null;
     body = (
       <button
         type="button"
-        className={`${layout === "tab" ? "tb-continue-tab" : "tb-thumb-cta"} ${selectedAsBase ? "is-picked" : ""}`}
+        className={`tb-thumb-cta ${selectedAsBase ? "is-picked" : ""}`}
         onClick={(event) => {
           event.stopPropagation();
           onContinue();
@@ -156,7 +171,7 @@ export function ResultActions({
         title={selectedAsBase ? "下一轮将基于这个结果修改" : "以此结果继续修改"}
       >
         {selectedAsBase ? <CheckIcon /> : <BranchIcon />}
-        <span>{selectedAsBase ? (layout === "tab" ? "已选" : "已选为基础") : "继续改"}</span>
+        <span>{selectedAsBase ? "已选为基础" : "继续改"}</span>
       </button>
     );
   } else if (layout === "card") {
@@ -176,17 +191,16 @@ export function ResultActions({
         </button>
       </div>
     );
-  } else if (layout === "cardRow" || layout === "spot") {
-    const prefix = layout === "spot" ? "tb-spot" : "tb-row";
+  } else if (layout === "spot") {
     body = (
-      <div className={`${prefix}-actions`}>
-        <span className={`${prefix}-tools`}>
-          <a className={`${prefix}-ico`} href={absoluteUrl} target="_blank" rel="noreferrer" aria-label="在新标签页打开" data-tip="新标签页打开" onClick={(event) => event.stopPropagation()}>
+      <div className="tb-spot-actions">
+        <span className="tb-spot-tools">
+          <a className="tb-spot-ico" href={absoluteUrl} target="_blank" rel="noreferrer" aria-label="在新标签页打开" data-tip="新标签页打开" onClick={(event) => event.stopPropagation()}>
             <OpenIcon />
           </a>
           <button
             type="button"
-            className={`${prefix}-ico`}
+            className="tb-spot-ico"
             onClick={(event) => {
               event.stopPropagation();
               onOpenPreview();
@@ -202,7 +216,7 @@ export function ResultActions({
               event.stopPropagation();
               toggleShare();
             }}
-            className={`${prefix}-ico is-share ${shareOpen ? "is-open" : ""}`}
+            className={`tb-spot-ico is-share ${shareOpen ? "is-open" : ""}`}
             aria-label="分享"
             data-tip="分享"
           >
@@ -212,7 +226,7 @@ export function ResultActions({
         {canContinue && (
           <button
             type="button"
-            className={`${prefix}-continue ${selectedAsBase ? "is-picked" : ""}`}
+            className={`tb-spot-continue ${selectedAsBase ? "is-picked" : ""}`}
             onClick={(event) => {
               event.stopPropagation();
               onContinue();
@@ -272,6 +286,34 @@ export function ResultActions({
   );
 }
 
+type PublicationResponse = {
+  slug: string;
+  url: string;
+  qr_url: string;
+  republished?: boolean;
+  external_view_count?: number;
+  title: string;
+  subtitle: string;
+  align: PosterAlign;
+  default_title: string;
+  default_subtitle: string;
+};
+
+function toSharePublication(data: PublicationResponse): SharePublication {
+  return {
+    slug: data.slug,
+    url: data.url,
+    qrUrl: toAbsoluteUrl(data.qr_url),
+    republished: Boolean(data.republished),
+    externalViews: data.external_view_count ?? 0,
+    title: data.title,
+    subtitle: data.subtitle,
+    align: data.align,
+    defaultTitle: data.default_title,
+    defaultSubtitle: data.default_subtitle,
+  };
+}
+
 async function publishPage(pageId: string): Promise<SharePublication | "need_login"> {
   const response = await apiFetch("/api/publications", {
     method: "POST",
@@ -280,20 +322,7 @@ async function publishPage(pageId: string): Promise<SharePublication | "need_log
   });
   if (response.status === 401) return "need_login";
   if (!response.ok) throw new Error("发布失败");
-  const data = (await response.json()) as {
-    url: string;
-    qr_url: string;
-    republished?: boolean;
-    external_view_count?: number;
-  };
-  const version = Date.now();
-  return {
-    url: data.url,
-    openUrl: data.url,
-    qrUrl: `${toAbsoluteUrl(data.qr_url)}?v=${version}`,
-    republished: Boolean(data.republished),
-    externalViews: data.external_view_count ?? 0,
-  };
+  return toSharePublication((await response.json()) as PublicationResponse);
 }
 
 function splitAddress(url: string): { host: string; path: string } {
@@ -302,18 +331,6 @@ function splitAddress(url: string): { host: string; path: string } {
     return { host: parsed.host, path: `${parsed.pathname}${parsed.search}` };
   } catch {
     return { host: url, path: "" };
-  }
-}
-
-/** 把固定链接拆成「域名与前缀」和「末段」，末段加粗，一眼看出这是哪条链接。 */
-function splitShareLink(url: string): { prefix: string; slug: string } {
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split("/").filter(Boolean);
-    const slug = segments.pop() ?? "";
-    return { prefix: `${parsed.host}/${segments.length ? `${segments.join("/")}/` : ""}`, slug };
-  } catch {
-    return { prefix: "", slug: url };
   }
 }
 
@@ -359,66 +376,79 @@ function usePopoverPosition(anchor: HTMLElement, popover: HTMLElement | null) {
   return position;
 }
 
-const SHARE_META_PREFIX = "star-page-share-meta:";
 const TITLE_MAX = 28;
 const SUBTITLE_MAX = 36;
+const SAVE_DELAY = 700;
 
-type ShareMetaDraft = { title?: string; subtitle?: string; align?: PosterAlign };
+type ShareCardFields = { title: string; subtitle: string; align: PosterAlign };
+type ShareCardChanges = { title?: string | null; subtitle?: string | null; align?: PosterAlign };
 
-function readShareMeta(pageId: string): ShareMetaDraft {
-  try {
-    const raw = localStorage.getItem(SHARE_META_PREFIX + pageId);
-    return raw ? (JSON.parse(raw) as ShareMetaDraft) : {};
-  } catch {
-    return {};
+/**
+ * 分享卡片的标题 / 副标题 / 对齐：初始值来自发布接口；改动先在本地重画分享图，
+ * 停手 0.7 秒后保存到服务器（微信里的链接卡片、公开页的朋友圈海报随之更新），关闭浮层时把没存的补存。
+ */
+function useShareCard(data: SharePublication | null, onNotice: (message: string) => void) {
+  const [fields, setFields] = useState<ShareCardFields | null>(null);
+  const [source, setSource] = useState<SharePublication | null>(null);
+  const pendingRef = useRef<ShareCardChanges>({});
+  const timerRef = useRef<number | null>(null);
+  const slugRef = useRef("");
+  const noticeRef = useRef(onNotice);
+
+  if (data && data !== source) {
+    setSource(data);
+    setFields({ title: data.title, subtitle: data.subtitle, align: data.align });
   }
-}
-
-/** 分享图的标题 / 副标题：默认取生成页自己的 <title>，用户改过的按页面记在本机。 */
-function useShareMeta(run: WorkspaceRun) {
-  const [defaultTitle, setDefaultTitle] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ShareMetaDraft>(() => readShareMeta(run.pageId));
 
   useEffect(() => {
-    let cancelled = false;
-    void fetchPageTitle(toAbsoluteUrl(run.pageUrl)).then((title) => {
-      if (!cancelled) setDefaultTitle(title || "我用星页做了一个页面");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [run.pageUrl]);
+    noticeRef.current = onNotice;
+    slugRef.current = data?.slug ?? "";
+  });
 
-  function update(patch: ShareMetaDraft) {
-    setDraft((current) => {
-      const next = { ...current, ...patch };
-      try {
-        localStorage.setItem(SHARE_META_PREFIX + run.pageId, JSON.stringify(next));
-      } catch {
-        // 本机存储不可用时只在本次生效
-      }
-      return next;
-    });
-  }
-
-  function reset() {
-    setDraft({});
+  async function save(keepalive = false) {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    const changes = pendingRef.current;
+    const slug = slugRef.current;
+    if (!slug || Object.keys(changes).length === 0) return;
+    pendingRef.current = {};
     try {
-      localStorage.removeItem(SHARE_META_PREFIX + run.pageId);
+      const response = await apiFetch(`/api/publications/${encodeURIComponent(slug)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(changes),
+        keepalive,
+      });
+      if (!response.ok) throw new Error(String(response.status));
     } catch {
-      // 忽略
+      noticeRef.current("分享卡片没保存上，链接里显示的还是原来的标题，请稍后再改一次");
     }
   }
 
-  return {
-    ready: defaultTitle !== null,
-    title: draft.title ?? defaultTitle ?? "",
-    subtitle: draft.subtitle ?? DEFAULT_SUBTITLE,
-    align: draft.align ?? "center",
-    customized: draft.title !== undefined || draft.subtitle !== undefined || draft.align !== undefined,
-    update,
-    reset,
-  };
+  const saveRef = useRef(save);
+  useEffect(() => {
+    saveRef.current = save;
+  });
+  useEffect(() => () => void saveRef.current(true), []);
+
+  function update(patch: Partial<ShareCardFields>) {
+    setFields((current) => (current ? { ...current, ...patch } : current));
+    pendingRef.current = { ...pendingRef.current, ...patch };
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => void saveRef.current(), SAVE_DELAY);
+  }
+
+  function reset() {
+    if (!data) return;
+    setFields({ title: data.defaultTitle, subtitle: data.defaultSubtitle, align: "center" });
+    pendingRef.current = { title: null, subtitle: null, align: "center" };
+    void save();
+  }
+
+  const customized = Boolean(
+    data && fields && (fields.title !== data.defaultTitle || fields.subtitle !== data.defaultSubtitle || fields.align !== "center"),
+  );
+  return { fields, customized, update, reset, flush: () => void save() };
 }
 
 /** 标题 / 副标题一改就重绘分享图（稍作防抖，连续输入时不每个字都重画）。 */
@@ -474,8 +504,13 @@ function SharePopover({
   const closeRef = useRef(onClose);
   const position = usePopoverPosition(anchor, popover);
   const data = state.kind === "ready" ? state.data : null;
-  const meta = useShareMeta(run);
-  const posterSrc = usePosterImage(data?.qrUrl, meta.title, meta.subtitle, meta.align, meta.ready);
+  const card = useShareCard(data, onNotice);
+  const fields = card.fields;
+  const title = fields?.title ?? "";
+  const subtitle = fields?.subtitle ?? "";
+  const align = fields?.align ?? "center";
+  // 输入框清空时分享图先用默认值画，保存后服务器也会恢复默认，两边一致。
+  const posterSrc = usePosterImage(data?.qrUrl, title.trim() || data?.defaultTitle || "", subtitle.trim() || data?.defaultSubtitle || "", align, Boolean(fields));
   const titleId = useId();
 
   useEffect(() => {
@@ -510,6 +545,8 @@ function SharePopover({
 
   async function copy() {
     if (!data) return;
+    card.flush();
+    track("share_copy_link", { ux_variant: UX_VARIANT, model_key: run.modelKey });
     try {
       await copyTextToClipboard(data.url);
       setCopied(true);
@@ -517,6 +554,13 @@ function SharePopover({
     } catch {
       onNotice("复制失败，请稍后再试");
     }
+  }
+
+  function savePoster() {
+    if (!posterSrc) return;
+    card.flush();
+    track("share_save_poster", { ux_variant: UX_VARIANT, model_key: run.modelKey, align });
+    downloadDataUrl(posterSrc, "星页分享图.png");
   }
 
   const placement = position?.placement ?? "bottom";
@@ -549,7 +593,7 @@ function SharePopover({
       ) : (
         <div className="share-pop-grid">
           <figure className={`share-pop-poster ${posterSrc ? "is-loaded" : ""}`}>
-            {posterSrc && <img src={posterSrc} alt={`${meta.title} 的分享图`} />}
+            {posterSrc && <img src={posterSrc} alt={`${title || data?.defaultTitle || ""} 的分享图`} />}
             {!posterSrc && <span className="share-pop-shimmer" aria-hidden="true" />}
           </figure>
           <div className="share-pop-side">
@@ -565,8 +609,8 @@ function SharePopover({
               <span className="share-pop-label">
                 <label htmlFor={titleId}>标题</label>
                 <span className="share-pop-label-tools">
-                  {meta.customized && (
-                    <button type="button" className="share-pop-reset" onClick={meta.reset}>
+                  {card.customized && (
+                    <button type="button" className="share-pop-reset" onClick={card.reset}>
                       恢复默认
                     </button>
                   )}
@@ -576,9 +620,10 @@ function SharePopover({
                         key={option.value}
                         type="button"
                         role="radio"
-                        aria-checked={meta.align === option.value}
-                        className={meta.align === option.value ? "is-on" : ""}
-                        onClick={() => meta.update({ align: option.value })}
+                        aria-checked={align === option.value}
+                        className={align === option.value ? "is-on" : ""}
+                        onClick={() => card.update({ align: option.value })}
+                        disabled={!fields}
                         data-tip={option.label}
                         aria-label={option.label}
                       >
@@ -591,31 +636,31 @@ function SharePopover({
               <span className="share-pop-input">
                 <input
                   id={titleId}
-                  value={meta.title}
+                  value={title}
                   maxLength={TITLE_MAX}
-                  placeholder={meta.ready ? "给分享图起个标题" : "正在读取页面标题…"}
-                  disabled={!meta.ready}
-                  onChange={(event) => meta.update({ title: event.target.value })}
+                  placeholder={fields ? data?.defaultTitle || "给分享图起个标题" : "正在生成分享链接…"}
+                  disabled={!fields}
+                  onChange={(event) => card.update({ title: event.target.value })}
                 />
-                <em>{meta.title.length}/{TITLE_MAX}</em>
+                <em>{title.length}/{TITLE_MAX}</em>
               </span>
             </div>
             <label className="share-pop-field">
               <span className="share-pop-label">副标题</span>
               <span className="share-pop-input">
                 <input
-                  value={meta.subtitle}
+                  value={subtitle}
                   maxLength={SUBTITLE_MAX}
-                  placeholder="一句话介绍这个页面"
-                  disabled={!meta.ready}
-                  onChange={(event) => meta.update({ subtitle: event.target.value })}
+                  placeholder={data?.defaultSubtitle || "一句话介绍这个页面"}
+                  disabled={!fields}
+                  onChange={(event) => card.update({ subtitle: event.target.value })}
                 />
-                <em>{meta.subtitle.length}/{SUBTITLE_MAX}</em>
+                <em>{subtitle.length}/{SUBTITLE_MAX}</em>
               </span>
             </label>
 
             <div className="share-pop-actions">
-              <button type="button" className="share-pop-save" onClick={() => downloadDataUrl(posterSrc, "星页分享图.png")} disabled={!posterSrc}>
+              <button type="button" className="share-pop-save" onClick={savePoster} disabled={!posterSrc}>
                 <DownloadIcon />
                 保存图片
               </button>
@@ -631,7 +676,7 @@ function SharePopover({
               </button>
               <a
                 className={`share-pop-open ${data ? "" : "is-disabled"}`}
-                href={data?.openUrl}
+                href={data?.url}
                 target="_blank"
                 rel="noreferrer"
                 aria-label="打开链接"
@@ -653,7 +698,7 @@ function SharePopover({
                 </span>
               )}
               {printable && data && (
-                <button type="button" className="share-pop-print" onClick={() => onPrint(data.openUrl)}>
+                <button type="button" className="share-pop-print" onClick={() => onPrint(data.url)}>
                   <PrintIcon />
                   存为 PDF
                 </button>

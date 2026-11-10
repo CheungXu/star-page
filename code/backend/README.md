@@ -64,7 +64,9 @@ journalctl -u star-page-backend.service -f
 - `GET /api/pages/{page_id}`：获取页面元数据。
 - `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。是否失效只看节点自己的 `deleted_at`：删会话会级联软删节点（404），被分叉会话继承的历史节点除外。返回前会补上 Open Graph 标题和描述；`?print=1` 会在加载后调起打印。
 - `GET /api/scenes`、`GET /api/scenes/{key}`：场景目录与案例。生成请求可带 `scene_key`，新建会话时按 `config/scenes.json` 强制技能。
-- `POST /api/publications`、`GET /u/{slug}`：把某个已完成节点发布成固定链接。重新发布只切换版本。同路径下有 `og.png`、`poster.png`、`qr.png`。
+- `POST /api/publications`、`GET /u/{slug}`：把某个已完成节点发布成固定链接。重新发布只切换版本。同路径下有 `og.png`、`poster.png`、`qr.png`。返回里除链接外还带分享卡片的生效值 `title` / `subtitle` / `align` 与默认值 `default_title`（生成页 `<title>`）/ `default_subtitle`（场景标语或「由星页 StarPage 生成」）。
+- `PATCH /api/publications/{slug}`（仅本人）：改写分享卡片的 `title` / `subtitle` / `align`（`left` / `center` / `right`），只改请求里带上的字段，传 `null` 或空串恢复默认；保存后重画 `poster.png` 与 `og.png`。用户改写的值存在 `page_publications.custom_title` / `custom_subtitle` / `card_align`（迁移 `020_share_card_custom.sql`），重新发布另一个版本时保留；`title` / `og_description` 存生效值。自定义了标题时，`/u/{slug}` 连页面 `<title>` 一起替换（微信等只读 `<title>` 的地方也显示用户写的标题）。
+- 朋友圈海报（`app/services/share_card.py`）与前端 `share-poster.ts` 同一版式（前端 720×1080，后端 1080×1620）：标题用 Noto Sans CJK SC 粗体，副标题 / 标签随对齐方式左中右排，二维码卡放在文字下沿与底部落款正中。测试：`tests/test_share_card.py`（纯逻辑）、`tests/test_share_card_db.py`（需 `TEST_DATABASE_URL` 与 `OBJECT_STORAGE_PROVIDER=local`）。
 - `GET /assets/{id}`：用户上传的头像、二维码等图片，供生成页引用。
 - `GET /api/pages/{page_id}/stats`：作者查看该会话的外部访问次数。
 - `GET /api/admin/scenes/funnel`、`POST /api/admin/scenes/showcases`：分场景漏斗，以及把公开页标成案例。

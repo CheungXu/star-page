@@ -89,6 +89,7 @@ def render_page_html(
     remix_url: str | None = None,
     poster_url: str | None = None,
     report_url: str | None = None,
+    force_title: bool = False,
 ) -> HTMLResponse:
     content = inject_share_meta(
         html,
@@ -100,6 +101,7 @@ def render_page_html(
         remix_url=remix_url,
         poster_url=poster_url,
         report_url=report_url,
+        force_title=force_title,
     )
     return HTMLResponse(
         content=content,

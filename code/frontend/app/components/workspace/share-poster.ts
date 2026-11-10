@@ -1,14 +1,13 @@
 /**
  * 浏览器端绘制分享图：版式与后端 share_card._render_poster 一致（深色渐变、大标题、白底二维码卡、品牌落款），
- * 标题和副标题由用户在分享浮层里改写，改完即时重绘；保存图片直接导出这张画布。
+ * 用户在分享浮层里改写标题 / 副标题 / 对齐时即时重绘；保存图片直接导出这张画布。
+ * 改动同时保存到服务器，后端按同一版式重画公开页「发朋友圈」的海报，两处是同一张图。
  */
 
 const FONT = `"PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", "Hiragino Sans GB", sans-serif`;
 const WIDTH = 720;
 const HEIGHT = 1080;
 const MARGIN = 64;
-
-export const DEFAULT_SUBTITLE = "由星页 StarPage 生成";
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -141,19 +140,6 @@ export function renderPoster({
   ctx.fillText("星页 StarPage · 一份资料，做成能分享的网页", WIDTH / 2, brandTop);
 
   return canvas.toDataURL("image/png");
-}
-
-/** 读生成页自己的 <title> 作为默认标题（同源请求，不跨域）。 */
-export async function fetchPageTitle(url: string): Promise<string> {
-  if (!url) return "";
-  try {
-    const response = await fetch(url, { credentials: "same-origin" });
-    if (!response.ok) return "";
-    const html = await response.text();
-    return new DOMParser().parseFromString(html, "text/html").title.replace(/\s+/g, " ").trim();
-  } catch {
-    return "";
-  }
 }
 
 export function downloadDataUrl(dataUrl: string, filename: string) {

@@ -139,23 +139,9 @@ pkill -f preview-transition/serve.py
 git 分支 `full-animation-mode`。决策见 `wiki/frontend-home-workspace-transition.md` 与
 `doc/20260529/frontend-transition-animation-plan.md`。原型三套实现保留作选型留档。
 
-## 预览工具栏方案对比：`preview-toolbar-variants/`
+## 预览工具栏方案对比（已归档）
 
-同一份前端代码起多个 `next dev`，对比「结果预览工具栏不遮挡页面」的方案（真实 React 组件，不是静态稿；B 已淘汰，C 拆成 C1、C2）。
-`NEXT_PUBLIC_UX_VARIANT` 决定端口展示哪套，`NEXT_DIST_DIR` 让各进程写各自的构建目录。
-
-| 文件 | 用途 |
-|---|---|
-| `serve.sh` | `start [A,C1,C2] / stop / status`：3011 方案 A、3013 方案 C1、3014 方案 C2，`start C1` 只重启指定方案；日志在 `/tmp/preview-toolbar-{a,c1,c2}.log` |
-| `shots.mjs` | Playwright 自查：截舞台和 A 的地址栏悬停态，打开分享浮层并点复制，实测滚轮横滑胶片条。`ONLY=a,c2` 只跑部分方案，`STAGE_ONLY=1` 只截舞台 |
-
-```bash
-bash script/preview-toolbar-variants/serve.sh start
-node script/preview-toolbar-variants/shots.mjs /tmp/preview-toolbar-shots 1600x900
-```
-
-地址加 `?demo=9` 进演示模式（9 个模型的真实页面存在 `code/frontend/public/demo-pages/`，不调后端）；C1 再加 `&cont=tab|row|thumb` 切换「继续改」的位置。
-headless Chromium 渲染 9 个 WebGL 页面很慢，单次截图可能要几十秒，偶发超时重跑即可。选定方案后删除本目录。
+结果预览工具栏与分享改版时用的多端口对比脚本 `preview-toolbar-variants/`（`serve.sh` 起 3011 / 3013 / 3014，`shots.mjs` Playwright 自查）已随方案选定从主线删除，完整保留在 git 标签 `alt/preview-toolbar-v1`。需要重新并排对比时按 `alternatives/preview-toolbar/README.md` 的「怎么复现」操作。
 
 ## 小红书公开热词
 

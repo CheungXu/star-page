@@ -546,6 +546,10 @@ class PagePublication(Base, TimestampMixin):
     og_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     og_image_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     poster_image_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # 用户在分享浮层里改写的标题 / 副标题；为空表示用默认值。title / og_description 存的是生效值。
+    custom_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    custom_subtitle: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    card_align: Mapped[str] = mapped_column(String(16), nullable=False, default="center", server_default="center")
 
 
 class SceneShowcase(Base):

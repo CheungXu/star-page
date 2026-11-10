@@ -67,11 +67,13 @@ def inject_share_meta(
     remix_url: str | None = None,
     poster_url: str | None = None,
     report_url: str | None = None,
+    force_title: bool = False,
 ) -> str:
     """在已有 HTML 的 head 里写入 og 标签。print_after_load 为真时，加载后调起打印。
 
     remix_url 有值时在页面右下角挂「用星页做同款」浮标；poster_url 有值时手机上多一个「发朋友圈」；
-    report_url 有值时浮标旁多一个「举报」。
+    report_url 有值时浮标旁多一个「举报」。force_title 为真时（用户自定义了分享标题）连页面 <title> 一起换掉，
+    微信等只读 <title> 的地方显示的也是用户写的标题。
     """
     soup = BeautifulSoup(html, "html.parser")
     head = soup.head
@@ -102,7 +104,7 @@ def inject_share_meta(
         title_tag.string = title
         if soup.title is None:
             head.append(title_tag)
-    elif title and soup.title.string.strip() in {"", "生成页面"}:
+    elif title and (force_title or soup.title.string.strip() in {"", "生成页面"}):
         soup.title.string = title
 
     body = soup.body

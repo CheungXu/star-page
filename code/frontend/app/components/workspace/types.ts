@@ -71,11 +71,10 @@ export type PreviewPresentation = "default" | "stage" | "thumb";
 
 /**
  * 结果操作（新标签页打开、放大预览、分享、继续改）的摆放形态：
- * - bar / chrome：卡片底栏、舞台顶栏；
- * - card：焦点卡里三个等宽按钮（不含继续改）；cardRow：三个图标按钮 + 继续改主按钮；
- * - continue / tab：只渲染「继续改」，分别是缩略图底部宽条、焦点卡右侧竖按钮；
- * - spot：聚光胶片里压在放大缩略图上的玻璃按钮组 + 继续改。
+ * - bar：1-2 个模型时卡片底栏；
+ * - card / continue：方案 C1 焦点卡里三个等宽按钮、缩略图底部的「继续改」宽条（线上方案）；
+ * - chrome：方案 A 舞台顶栏；spot：方案 C2 聚光胶片（AB 测试备选）。
  */
-export type ActionLayout = "bar" | "chrome" | "card" | "cardRow" | "continue" | "tab" | "spot";
+export type ActionLayout = "bar" | "chrome" | "card" | "continue" | "spot";
 
 export type AppliedSkill = { key: string; name: string } | null;

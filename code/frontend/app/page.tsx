@@ -17,10 +17,8 @@ import "./components/workspace/workspace.css";
 import { ResultActions } from "./components/workspace/actions";
 import { RoundSource } from "./components/workspace/bits";
 import { WorkspaceProvider } from "./components/workspace/context";
-import { isDemoRun, readDemo } from "./components/workspace/demo";
 import { GenerationProgress, GenerationResults } from "./components/workspace/panels";
 import type { ActionLayout, PreviewPresentation, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
-import { VariantBadge } from "./components/workspace/variant";
 
 type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
 
@@ -789,7 +787,7 @@ function PreviewCell({
     scale: 0.5,
   });
   const [externalViews, setExternalViews] = useState<number | null>(null);
-  const showViews = presentation === "default" && sceneFeatures.includes("view_count") && !isDemoRun(run);
+  const showViews = presentation === "default" && sceneFeatures.includes("view_count");
 
   const absoluteUrl = useMemo(() => toAbsoluteUrl(run.pageUrl), [run.pageUrl]);
 
@@ -1305,24 +1303,6 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // 演示模式（?demo=9）：直接还原一次 9 模型会话，不调后端，用于方案对比。
-  useEffect(() => {
-    const demo = readDemo();
-    if (!demo) return;
-    const timer = window.setTimeout(() => {
-      setPhase("active");
-      setSubmittedPrompt(demo.prompt);
-      setSubmittedFileNames([]);
-      setConversationId("");
-      setBatchId("");
-      setRoundIndex(0);
-      setPastRounds([]);
-      setCurrentBasedOn(null);
-      setRuns(demo.runs as RunState[]);
-    }, 0);
-    return () => window.clearTimeout(timer);
   }, []);
 
   const playTransition = (mutate: () => void) => {
@@ -2942,7 +2922,6 @@ export default function HomePage() {
           </WorkspaceProvider>
         </main>
       )}
-      <VariantBadge />
       {notice && <div className="app-toast" role="status">{notice}</div>}
       {fullscreenPreviewRun && <FullscreenPreviewModal run={fullscreenPreviewRun} onClose={() => setFullscreenRun(null)} />}
       {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
