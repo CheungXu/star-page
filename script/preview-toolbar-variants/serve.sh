@@ -32,7 +32,7 @@ start() {
 }
 
 status() {
-  ss -ltnp | awk 'NR==1 || /:301[123]\b/'
+  ss -ltnp | awk 'NR==1 || /:301[123] /'
 }
 
 case "${1:-start}" in
