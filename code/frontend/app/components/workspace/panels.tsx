@@ -26,7 +26,7 @@ import {
   sumOutputTokens,
 } from "./progress-utils";
 import type { WorkspaceRun } from "./types";
-import { readContinueStyle, readMetaAlign, VARIANT, type ContinueStyle, type MetaAlign } from "./variant";
+import { readContinueStyle, readMetaAlign, VARIANT, type ContinueStyle } from "./variant";
 
 function liveCount(run: WorkspaceRun): string {
   const tokens = outputTokenCount(run);
@@ -198,12 +198,6 @@ const SHORT_STAGE: Record<string, string> = {
   发布中: "发布",
   准备中: "准备",
 };
-
-function minuteDuration(ms: number | null): string {
-  if (ms === null) return "—";
-  const total = Math.max(0, Math.round(ms / 1000));
-  return total < 60 ? `${total}秒` : `${Math.round(total / 60)}分`;
-}
 
 function shortDuration(ms: number | null): string {
   if (ms === null) return "—";
@@ -572,65 +566,53 @@ function StageSwap({ active }: { active: WorkspaceRun }) {
 
 /**
  * 方案 C1：选中的缩略图向右展开焦点卡（每格常驻，靠宽度过渡展开 / 收起）。
- * 左列是模型名、三项用量和按钮，「继续改」按 continueStyle 放在右侧竖按钮、按钮行或缩略图上。
+ * 模型名留在缩略图下方不动；右侧是一块「用量 + 操作」面板，两排共用同一组竖分隔线，按列对齐。
+ * 「继续改」按 continueStyle 放在右侧竖按钮、按钮行或缩略图上。
  */
-function FocusPanel({
-  run,
-  active,
-  continueStyle,
-  metaAlign,
-}: {
-  run: WorkspaceRun;
-  active: boolean;
-  continueStyle: ContinueStyle;
-  metaAlign: MetaAlign;
-}) {
+function FocusPanel({ run, active, continueStyle }: { run: WorkspaceRun; active: boolean; continueStyle: ContinueStyle }) {
   const { elapsed, renderActions } = useWorkspace();
   const tokens = outputTokenCount(run);
   const credits = run.usageSummary?.creditsCharged;
   const duration = elapsed(run);
   const completed = run.status === "completed";
   const pending = run.status === "thinking" || run.status === "creating";
-  const grid = completed && continueStyle !== "row";
-  // 左对齐时每列只剩按钮宽度减去左缩进，「15分47」放不下，改为按分钟显示，悬停看精确值。
-  const durationText = grid && metaAlign === "left" ? minuteDuration(duration) : shortDuration(duration);
+  const stats =
+    run.status === "failed" ? (
+      <span className="is-failed">生成失败</span>
+    ) : (
+      <>
+        <span title={`输出 ${tokens} tokens`}>
+          <TokenIcon />
+          <b>{tokens > 0 ? formatTokens(tokens) : "—"}</b>
+        </span>
+        <span title={`生成用时 ${formatDuration(duration ?? 0)}`}>
+          <ClockIcon />
+          <b>{shortDuration(duration)}</b>
+        </span>
+        <span className="is-cost" title={typeof credits === "number" ? `消耗 ${credits} 积分` : "积分完成后结算"}>
+          <CoinIcon />
+          <b>{typeof credits === "number" ? credits : "—"}</b>
+        </span>
+      </>
+    );
   return (
     <div className={`tb-focus ${active ? "is-active" : ""}`} inert={!active} style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
       <div className="tb-focus-inner">
         <div className="tb-focus-info">
-          <div className="tb-focus-title">
-            <div className="tb-focus-head">
-              <i className="tb-focus-dot" aria-hidden="true" />
-              <strong title={run.modelLabel}>{run.modelLabel}</strong>
-              {!completed && <StatusMark status={run.status} />}
+          {completed && continueStyle !== "row" ? (
+            <div className="tb-dash">
+              <div className="tb-focus-meta is-grid">{stats}</div>
+              {renderActions(run, "card")}
             </div>
-            <div className={`tb-focus-meta ${grid ? "is-grid" : ""}`}>
-              {run.status === "failed" ? (
-                <span className="is-failed">生成失败</span>
-              ) : (
-                <>
-                  <span title={`输出 ${tokens} tokens`}>
-                    <TokenIcon />
-                    {tokens > 0 ? formatTokens(tokens) : "—"}
-                  </span>
-                  <span title={`生成用时 ${formatDuration(duration ?? 0)}`}>
-                    <ClockIcon />
-                    {durationText}
-                  </span>
-                  {typeof credits === "number" && (
-                    <span className="is-cost" title={`消耗 ${credits} 积分`}>
-                      <CoinIcon />
-                      {credits}
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-          {completed ? (
-            renderActions(run, continueStyle === "row" ? "cardRow" : "card")
           ) : (
-            <p className="tb-focus-hint">{pending ? "生成完成后就能打开、分享" : "这个模型没有生成成功，可以换一个看看"}</p>
+            <>
+              <div className="tb-focus-meta">{stats}</div>
+              {completed ? (
+                renderActions(run, "cardRow")
+              ) : (
+                <p className="tb-focus-hint">{pending ? "生成完成后就能打开、分享" : "这个模型没有生成成功，可以换一个看看"}</p>
+              )}
+            </>
           )}
         </div>
         {completed && continueStyle === "tab" && renderActions(run, "tab")}
@@ -800,7 +782,7 @@ export function GenerationResults() {
                       <span>{run.modelLabel}</span>
                     </span>
                   </div>
-                  {variant === "C1" && <FocusPanel run={run} active={isActive} continueStyle={continueStyle} metaAlign={metaAlign} />}
+                  {variant === "C1" && <FocusPanel run={run} active={isActive} continueStyle={continueStyle} />}
                 </div>
               );
             })}

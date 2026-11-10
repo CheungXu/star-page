@@ -1,9 +1,6 @@
 /* 结果操作的三种摆放（卡片底栏 / 舞台顶栏 / 胶片焦点卡）与贴着分享按钮弹出的分享浮层。 */
 
-.tb-btn,
-.share-pop-copy,
-.share-pop-action,
-.share-pop-error button {
+.tb-btn {
   font: inherit;
   cursor: pointer;
 }
@@ -342,52 +339,13 @@ a.tb-address:hover .tb-address-open span {
   padding: 6px;
 }
 
-/* 名字压齐缩略图顶边、按钮压齐缩略图底边，用量行在两者正中 */
+/* 面板上沿对齐缩略图顶边，下沿对齐名字行底边，整列高度与左边「缩略图 + 名字」一致 */
 .tb-focus-info {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   width: var(--info-w, 184px);
   min-width: 0;
-}
-
-.tb-focus-title {
-  display: contents;
-}
-
-/* 行高 18px 里字形上沿约低 2px，上提 2px 让字的顶边压齐缩略图顶边 */
-.tb-focus-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  height: 18px;
-  margin-top: -2px;
-}
-
-.tb-focus-dot {
-  width: 7px;
-  height: 7px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.tb-focus-head strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: 13.5px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tb-focus-head .vp-mark {
-  flex-shrink: 0;
 }
 
 .tb-focus-meta {
@@ -410,6 +368,10 @@ a.tb-address:hover .tb-address-open span {
   flex-shrink: 0;
   align-items: center;
   gap: 4px;
+}
+
+.tb-focus-meta b {
+  font-weight: inherit;
 }
 
 .tb-focus-meta .vb-coin {
@@ -477,6 +439,69 @@ a.tb-address:hover .tb-address-open span {
 .tb-meta-left .tb-card-actions .tb-act {
   justify-content: flex-start;
   padding-left: var(--col-pad);
+}
+
+/* 用量 + 操作面板：上排三格用量（图标在上、数字在下），下排三个按钮，竖分隔线上下贯通 */
+.tb-dash {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(53, 99, 233, 0.16), 0 4px 12px -8px rgba(53, 99, 233, 0.45);
+}
+
+.tb-dash .tb-focus-meta.is-grid {
+  flex: 1;
+  height: auto;
+  background: linear-gradient(180deg, #f8faff 0%, #f0f4ff 100%);
+  box-shadow: inset 0 -1px 0 rgba(53, 99, 233, 0.12);
+}
+
+.tb-dash .tb-focus-meta.is-grid > span {
+  flex-direction: column;
+  justify-content: center;
+  justify-self: stretch;
+  align-self: stretch;
+  gap: 6px;
+}
+
+.tb-dash .tb-focus-meta.is-grid > span + span,
+.tb-dash .tb-card-actions .tb-act + .tb-act {
+  box-shadow: inset 1px 0 0 rgba(53, 99, 233, 0.12);
+}
+
+.tb-meta-center .tb-dash .tb-focus-meta.is-grid > span {
+  align-items: center;
+}
+
+.tb-meta-left .tb-dash .tb-focus-meta.is-grid > span {
+  align-items: flex-start;
+}
+
+.tb-dash .tb-focus-meta b {
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 16px;
+}
+
+.tb-dash .tb-focus-meta .is-cost b {
+  color: #b45309;
+}
+
+.tb-dash .vb-meta-icon,
+.tb-dash .tb-focus-meta .vb-coin {
+  width: 13px;
+  height: 13px;
+}
+
+.tb-dash .tb-card-actions {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* 打开 / 放大 / 分享：三个等宽分段按钮，32px 高 */
@@ -658,7 +683,7 @@ a.tb-address:hover .tb-address-open span {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 32px;
+  height: 30px;
   border: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(15, 23, 42, 0.66);
@@ -875,11 +900,11 @@ a.tb-address:hover .tb-address-open span {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px -8px rgba(22, 163, 74, 1);
 }
 
-/* ---------- 分享浮层：贴着分享按钮出现。上面分享图 + 二维码，中间链接和复制，底部灰条放保存、打开 ---------- */
+/* ---------- 分享浮层：贴着分享按钮出现。左边分享图铺满整列；右边改标题 / 副标题，复制链接、保存图片 ---------- */
 .share-pop {
   position: fixed;
   z-index: 95;
-  width: min(420px, calc(100vw - 24px));
+  width: min(504px, calc(100vw - 24px));
   border-radius: 18px;
   background: #fff;
   box-shadow:
@@ -898,6 +923,7 @@ a.tb-address:hover .tb-address-open span {
 .share-pop-arrow {
   position: absolute;
   left: var(--arrow-x);
+  z-index: 1;
   width: 14px;
   height: 14px;
   margin-left: -7px;
@@ -913,73 +939,61 @@ a.tb-address:hover .tb-address-open span {
 
 .share-pop.is-top .share-pop-arrow {
   bottom: -6px;
-  background: #f6f7f9;
   box-shadow: 1px 1px 0 rgba(15, 23, 42, 0.07);
 }
 
-.share-pop-body {
-  position: relative;
-  padding: 16px 16px 12px;
-}
+/* 箭头落在分享图那一列时，换成分享图边缘的深色，看起来是从图上伸出来的 */
+.share-pop.is-arrow-dark.is-bottom .share-pop-arrow { background: #141b31; box-shadow: none; }
+.share-pop.is-arrow-dark.is-top .share-pop-arrow { background: #2f2c7c; box-shadow: none; }
 
-.share-pop-main {
+.share-pop-grid {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 216px minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 18px;
 }
 
 .share-pop-poster {
   position: relative;
-  display: block;
-  width: 112px;
+  margin: 0;
   overflow: hidden;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #1f2937 0%, #312e81 100%);
-  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08), 0 12px 22px -14px rgba(30, 27, 75, 0.8);
-  cursor: zoom-in;
-  transition: transform 0.2s ease;
+  background: linear-gradient(180deg, #111827 0%, #312e81 100%);
 }
 
-.share-pop-poster:hover {
-  transform: translateY(-2px) rotate(-1deg);
-}
-
-.share-pop-poster img,
-.share-pop-qr-box img {
+.share-pop-poster img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.share-pop-poster img {
-  opacity: 0;
-  transition: opacity 0.3s ease;
+.share-pop-poster.is-loaded img {
+  animation: share-poster-in 0.28s ease both;
 }
 
-.share-pop-poster.is-loaded img {
-  opacity: 1;
+.share-pop-poster::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.12);
+  pointer-events: none;
 }
 
 .share-pop-shimmer {
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 25%, rgba(255, 255, 255, 0.16) 45%, rgba(255, 255, 255, 0.04) 65%);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 25%, rgba(255, 255, 255, 0.14) 45%, rgba(255, 255, 255, 0.04) 65%);
   background-size: 300% 100%;
   animation: share-shimmer 1.3s ease infinite;
-}
-
-.share-pop-qr-box .share-pop-shimmer {
-  background: linear-gradient(90deg, #f1f3f6 25%, #e5e9ef 45%, #f1f3f6 65%);
-  background-size: 300% 100%;
 }
 
 .share-pop-side {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
+  padding: 16px 16px 14px 18px;
 }
 
 .share-pop-head strong {
@@ -1011,123 +1025,137 @@ a.tb-address:hover .tb-address-open span {
   background: var(--accent);
 }
 
-.share-pop-qr {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.share-pop-qr-box {
-  position: relative;
-  flex-shrink: 0;
-  width: 104px;
-  height: 104px;
-  overflow: hidden;
-  padding: 5px;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 0 0 1px var(--color-border-strong), 0 6px 14px -10px rgba(15, 23, 42, 0.35);
-}
-
-.share-pop-qr-box img {
-  image-rendering: pixelated;
-}
-
-.share-pop-qr-text {
+.share-pop-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  padding-bottom: 4px;
+  gap: 5px;
 }
 
-.share-pop-qr-text b {
-  color: var(--color-text-primary);
-  font-size: 12.5px;
-  font-weight: 750;
-}
-
-.share-pop-qr-text small {
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.share-pop-link {
+.share-pop-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 42px;
-  margin-top: 14px;
-  padding: 0 5px 0 12px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 12px;
-  background: #f7f8fb;
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-}
-
-.share-pop-link.is-copied {
-  border-color: rgba(22, 163, 74, 0.45);
-  background: #f1fbf4;
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
-}
-
-.share-pop-link-icon {
-  flex-shrink: 0;
-  color: var(--color-primary);
-  font-size: 15px;
-}
-
-.share-pop-link.is-copied .share-pop-link-icon {
-  color: var(--color-success);
-}
-
-.share-pop-url {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-muted);
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  user-select: all;
-}
-
-.share-pop-url b {
-  color: var(--color-text-primary);
+  justify-content: space-between;
+  min-height: 16px;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
   font-weight: 700;
 }
 
-.share-pop-url.is-placeholder {
-  font-family: inherit;
-  user-select: none;
-  animation: share-pulse 1.3s ease-in-out infinite;
+.share-pop-reset {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
 }
 
-.share-pop-copy {
+.share-pop-reset:hover {
+  text-decoration: underline;
+}
+
+.share-pop-input {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  background: #f8fafc;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.share-pop-input:hover {
+  border-color: rgba(53, 99, 233, 0.3);
+}
+
+.share-pop-input:focus-within {
+  border-color: var(--color-primary);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(53, 99, 233, 0.14);
+}
+
+.share-pop-input input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 11px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+
+.share-pop-input input::placeholder {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.share-pop-input em {
+  flex-shrink: 0;
+  padding: 0 10px 0 6px;
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.share-pop-input:focus-within em {
+  opacity: 1;
+}
+
+.share-pop-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.share-pop-copy,
+.share-pop-save,
+.share-pop-open {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 5px;
-  height: 32px;
-  padding: 0 13px;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
   border: 0;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #4f7bff 0%, #3563e9 55%, #2849c8 100%);
-  color: #fff;
-  font-size: 12.5px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
   font-weight: 750;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 6px 14px -8px rgba(53, 99, 233, 0.9);
-  transition: transform 0.15s ease, background 0.2s ease;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, filter 0.15s ease;
 }
 
-.share-pop-copy svg {
-  font-size: 13px;
+.share-pop-copy svg,
+.share-pop-save svg,
+.share-pop-open svg {
+  font-size: 15px;
+}
+
+.share-pop-copy {
+  flex: 1;
+  min-width: 0;
+  background: linear-gradient(135deg, #4f7bff 0%, #3563e9 55%, #2849c8 100%);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 16px -10px rgba(53, 99, 233, 0.95);
 }
 
 .share-pop-copy:hover:not(:disabled) {
-  transform: translateY(-1px);
+  filter: brightness(1.07);
+}
+
+.share-pop-copy.is-copied {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 16px -10px rgba(22, 163, 74, 0.95);
 }
 
 .share-pop-copy:disabled {
@@ -1136,15 +1164,50 @@ a.tb-address:hover .tb-address-open span {
   cursor: default;
 }
 
-.share-pop-link.is-copied .share-pop-copy {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 6px 14px -8px rgba(22, 163, 74, 0.9);
+.share-pop-save {
+  padding: 0 13px;
+  background: #fff;
+  color: var(--color-text-primary);
+  box-shadow: 0 0 0 1px var(--color-border-strong), 0 2px 6px -4px rgba(15, 23, 42, 0.3);
+}
+
+.share-pop-save svg {
+  color: #6d28d9;
+}
+
+.share-pop-save:hover:not(:disabled) {
+  background: var(--color-surface-soft);
+}
+
+.share-pop-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.share-pop-open {
+  width: 38px;
+  background: #fff;
+  color: var(--color-text-secondary);
+  box-shadow: 0 0 0 1px var(--color-border-strong), 0 2px 6px -4px rgba(15, 23, 42, 0.3);
+}
+
+.share-pop-open:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.share-pop-open.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .share-pop-note {
-  margin: 8px 2px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
   color: var(--color-text-tertiary);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1152,77 +1215,31 @@ a.tb-address:hover .tb-address-open span {
   color: #b45309;
 }
 
-.share-pop-band {
-  display: flex;
-  align-items: flex-start;
-  gap: 18px;
-  padding: 12px 16px 13px;
-  border-top: 1px solid var(--color-border);
-  border-radius: 0 0 18px 18px;
-  background: #f6f7f9;
+.share-pop-views,
+.share-pop-print {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-weight: 650;
 }
 
-.share-pop-action {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+.share-pop-print {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 11.5px;
-  font-weight: 650;
-  text-decoration: none;
-}
-
-.share-pop-action-icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  color: #fff;
-  font-size: 16px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.share-pop-action.is-poster .share-pop-action-icon { background: linear-gradient(135deg, #a78bfa 0%, #6366f1 100%); }
-.share-pop-action.is-link .share-pop-action-icon { background: linear-gradient(135deg, #38bdf8 0%, #3563e9 100%); }
-.share-pop-action.is-print .share-pop-action-icon { background: linear-gradient(135deg, #34d399 0%, #0d9488 100%); }
-
-.share-pop-action:hover .share-pop-action-icon {
-  transform: translateY(-2px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 14px -8px rgba(15, 23, 42, 0.5);
-}
-
-.share-pop-action:hover {
-  color: var(--color-text-primary);
-}
-
-.share-pop-action.is-disabled,
-.share-pop-action:disabled {
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.share-pop-views {
-  display: inline-flex;
-  align-self: center;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-  color: var(--color-text-tertiary);
-  font-size: 11.5px;
-  font-weight: 600;
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .share-pop-error {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 18px 16px 14px;
+  padding: 18px 16px 16px;
 }
 
 .share-pop-error strong {
@@ -1244,8 +1261,28 @@ a.tb-address:hover .tb-address-open span {
   border-radius: 9px;
   background: var(--color-danger);
   color: #fff;
+  font: inherit;
   font-size: 12.5px;
   font-weight: 700;
+  cursor: pointer;
+}
+
+@keyframes share-poster-in {
+  from { opacity: 0; }
+}
+
+@media (max-width: 560px) {
+  .share-pop-grid {
+    grid-template-columns: 136px minmax(0, 1fr);
+  }
+
+  .share-pop-poster {
+    align-self: start;
+  }
+
+  .share-pop-side {
+    padding: 14px 14px 12px;
+  }
 }
 
 @keyframes share-pop-in {
@@ -1256,10 +1293,6 @@ a.tb-address:hover .tb-address-open span {
   from { opacity: 0; transform: translateY(6px) scale(0.97); }
 }
 
-@keyframes share-pulse {
-  50% { opacity: 0.45; }
-}
-
 @keyframes share-shimmer {
   to { background-position: -150% 0; }
 }
@@ -1267,7 +1300,7 @@ a.tb-address:hover .tb-address-open span {
 @media (prefers-reduced-motion: reduce) {
   .share-pop,
   .share-pop-shimmer,
-  .share-pop-url.is-placeholder,
+  .share-pop-poster.is-loaded img,
   .tb-thumb-cta-slot {
     animation: none;
   }

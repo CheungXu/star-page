@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { apiFetch } from "../../lib/api";
 import { copyTextToClipboard, toAbsoluteUrl } from "../../lib/links";
 import { isDemoRun, publishDemo, type SharePublication } from "./demo";
+import { DEFAULT_SUBTITLE, downloadDataUrl, fetchPageTitle, loadImage, renderPoster } from "./share-poster";
 import { modelAccent } from "./progress-utils";
 import type { ActionLayout, WorkspaceRun } from "./types";
 import "./actions.css";
@@ -281,7 +282,6 @@ async function publishPage(pageId: string): Promise<SharePublication | "need_log
   if (!response.ok) throw new Error("发布失败");
   const data = (await response.json()) as {
     url: string;
-    poster_url: string;
     qr_url: string;
     republished?: boolean;
     external_view_count?: number;
@@ -290,7 +290,6 @@ async function publishPage(pageId: string): Promise<SharePublication | "need_log
   return {
     url: data.url,
     openUrl: data.url,
-    posterUrl: `${toAbsoluteUrl(data.poster_url)}?v=${version}`,
     qrUrl: `${toAbsoluteUrl(data.qr_url)}?v=${version}`,
     republished: Boolean(data.republished),
     externalViews: data.external_view_count ?? 0,
@@ -360,6 +359,96 @@ function usePopoverPosition(anchor: HTMLElement, popover: HTMLElement | null) {
   return position;
 }
 
+const SHARE_META_PREFIX = "star-page-share-meta:";
+const TITLE_MAX = 28;
+const SUBTITLE_MAX = 36;
+
+type ShareMetaDraft = { title?: string; subtitle?: string };
+
+function readShareMeta(pageId: string): ShareMetaDraft {
+  try {
+    const raw = localStorage.getItem(SHARE_META_PREFIX + pageId);
+    return raw ? (JSON.parse(raw) as ShareMetaDraft) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** 分享图的标题 / 副标题：默认取生成页自己的 <title>，用户改过的按页面记在本机。 */
+function useShareMeta(run: WorkspaceRun) {
+  const [defaultTitle, setDefaultTitle] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ShareMetaDraft>(() => readShareMeta(run.pageId));
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPageTitle(toAbsoluteUrl(run.pageUrl)).then((title) => {
+      if (!cancelled) setDefaultTitle(title || "我用星页做了一个页面");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [run.pageUrl]);
+
+  function update(patch: ShareMetaDraft) {
+    setDraft((current) => {
+      const next = { ...current, ...patch };
+      try {
+        localStorage.setItem(SHARE_META_PREFIX + run.pageId, JSON.stringify(next));
+      } catch {
+        // 本机存储不可用时只在本次生效
+      }
+      return next;
+    });
+  }
+
+  function reset() {
+    setDraft({});
+    try {
+      localStorage.removeItem(SHARE_META_PREFIX + run.pageId);
+    } catch {
+      // 忽略
+    }
+  }
+
+  return {
+    ready: defaultTitle !== null,
+    title: draft.title ?? defaultTitle ?? "",
+    subtitle: draft.subtitle ?? DEFAULT_SUBTITLE,
+    customized: draft.title !== undefined || draft.subtitle !== undefined,
+    update,
+    reset,
+  };
+}
+
+/** 标题 / 副标题一改就重绘分享图（稍作防抖，连续输入时不每个字都重画）。 */
+function usePosterImage(qrUrl: string | undefined, title: string, subtitle: string, enabled: boolean) {
+  const [qr, setQr] = useState<HTMLImageElement | null>(null);
+  const [src, setSrc] = useState("");
+
+  useEffect(() => {
+    if (!qrUrl) return;
+    let cancelled = false;
+    void loadImage(qrUrl)
+      .then((image) => {
+        if (!cancelled) setQr(image);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [qrUrl]);
+
+  useEffect(() => {
+    if (!qr || !enabled) return;
+    const timer = window.setTimeout(() => setSrc(renderPoster({ title, subtitle, qr })), 90);
+    return () => window.clearTimeout(timer);
+  }, [qr, title, subtitle, enabled]);
+
+  return src;
+}
+
+const POSTER_WIDTH = 216;
+
 function SharePopover({
   run,
   anchor,
@@ -381,11 +470,11 @@ function SharePopover({
 }) {
   const [popover, setPopover] = useState<HTMLDivElement | null>(null);
   const [copied, setCopied] = useState(false);
-  const [posterReady, setPosterReady] = useState(false);
   const closeRef = useRef(onClose);
   const position = usePopoverPosition(anchor, popover);
   const data = state.kind === "ready" ? state.data : null;
-  const link = data ? splitShareLink(data.url) : null;
+  const meta = useShareMeta(run);
+  const posterSrc = usePosterImage(data?.qrUrl, meta.title, meta.subtitle, meta.ready);
 
   useEffect(() => {
     closeRef.current = onClose;
@@ -424,11 +513,12 @@ function SharePopover({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      onNotice("复制失败，请选中链接手动复制");
+      onNotice("复制失败，请稍后再试");
     }
   }
 
-  const showPoster = Boolean(data && posterReady);
+  const placement = position?.placement ?? "bottom";
+  const arrowOnPoster = (position?.arrow ?? POSTER_WIDTH + 1) < POSTER_WIDTH;
   const style = {
     top: position?.top ?? 0,
     left: position?.left ?? 0,
@@ -440,7 +530,7 @@ function SharePopover({
   return createPortal(
     <div
       ref={setPopover}
-      className={`share-pop is-${position?.placement ?? "bottom"} ${data ? "is-ready" : ""}`}
+      className={`share-pop is-${placement} ${data ? "is-ready" : ""} ${arrowOnPoster ? "is-arrow-dark" : ""}`}
       role="dialog"
       aria-label={`分享 ${run.modelLabel} 的版本`}
       style={style}
@@ -455,111 +545,102 @@ function SharePopover({
           </button>
         </div>
       ) : (
-        <div className="share-pop-body">
-          <div className="share-pop-main">
-            <a
-              className={`share-pop-poster ${showPoster ? "is-loaded" : ""}`}
-              href={data?.posterUrl}
-              target="_blank"
-              rel="noreferrer"
-              title="查看大图"
-              onClick={(event) => {
-                if (!data) event.preventDefault();
-              }}
-            >
-              {data && <img src={data.posterUrl} alt={`${run.modelLabel} 版本的分享图`} onLoad={() => setPosterReady(true)} />}
-              {!showPoster && <span className="share-pop-shimmer" aria-hidden="true" />}
-            </a>
-            <div className="share-pop-side">
-              <div className="share-pop-head">
-                <strong>分享这个版本</strong>
-                <span className="share-pop-model">
-                  <i aria-hidden="true" />
-                  {run.modelLabel}
-                </span>
-              </div>
-              <div className="share-pop-qr">
-                <span className="share-pop-qr-box">
-                  {data ? <img src={data.qrUrl} alt="分享链接二维码" /> : <span className="share-pop-shimmer" aria-hidden="true" />}
-                </span>
-                <span className="share-pop-qr-text">
-                  <b>微信扫一扫</b>
-                  <small>手机上打开，或转发给朋友</small>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className={`share-pop-link ${copied ? "is-copied" : ""} ${data ? "" : "is-loading"}`}>
-            <LinkIcon />
-            {link && data ? (
-              <span className="share-pop-url" title={data.url}>
-                {link.prefix}
-                <b>{link.slug}</b>
+        <div className="share-pop-grid">
+          <figure className={`share-pop-poster ${posterSrc ? "is-loaded" : ""}`}>
+            {posterSrc && <img src={posterSrc} alt={`${meta.title} 的分享图`} />}
+            {!posterSrc && <span className="share-pop-shimmer" aria-hidden="true" />}
+          </figure>
+          <div className="share-pop-side">
+            <header className="share-pop-head">
+              <strong>分享这个版本</strong>
+              <span className="share-pop-model">
+                <i aria-hidden="true" />
+                {run.modelLabel}
               </span>
-            ) : (
-              <span className="share-pop-url is-placeholder">正在生成分享链接…</span>
-            )}
-            <button type="button" className="share-pop-copy" onClick={() => void copy()} disabled={!data}>
-              {copied ? (
-                <>
-                  <CheckIcon />
-                  已复制
-                </>
-              ) : (
-                "复制链接"
+            </header>
+
+            <label className="share-pop-field">
+              <span className="share-pop-label">
+                标题
+                {meta.customized && (
+                  <button type="button" className="share-pop-reset" onClick={meta.reset}>
+                    恢复默认
+                  </button>
+                )}
+              </span>
+              <span className="share-pop-input">
+                <input
+                  value={meta.title}
+                  maxLength={TITLE_MAX}
+                  placeholder={meta.ready ? "给分享图起个标题" : "正在读取页面标题…"}
+                  disabled={!meta.ready}
+                  onChange={(event) => meta.update({ title: event.target.value })}
+                />
+                <em>{meta.title.length}/{TITLE_MAX}</em>
+              </span>
+            </label>
+            <label className="share-pop-field">
+              <span className="share-pop-label">副标题</span>
+              <span className="share-pop-input">
+                <input
+                  value={meta.subtitle}
+                  maxLength={SUBTITLE_MAX}
+                  placeholder="一句话介绍这个页面"
+                  disabled={!meta.ready}
+                  onChange={(event) => meta.update({ subtitle: event.target.value })}
+                />
+                <em>{meta.subtitle.length}/{SUBTITLE_MAX}</em>
+              </span>
+            </label>
+
+            <div className="share-pop-actions">
+              <button
+                type="button"
+                className={`share-pop-copy ${copied ? "is-copied" : ""}`}
+                onClick={() => void copy()}
+                disabled={!data}
+                title={data?.url}
+              >
+                {copied ? <CheckIcon /> : <LinkIcon />}
+                {copied ? "已复制链接" : data ? "复制链接" : "生成链接中…"}
+              </button>
+              <button type="button" className="share-pop-save" onClick={() => downloadDataUrl(posterSrc, "星页分享图.png")} disabled={!posterSrc}>
+                <DownloadIcon />
+                保存图片
+              </button>
+              <a
+                className={`share-pop-open ${data ? "" : "is-disabled"}`}
+                href={data?.openUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="打开链接"
+                data-tip="打开链接"
+                onClick={(event) => {
+                  if (!data) event.preventDefault();
+                }}
+              >
+                <OpenIcon />
+              </a>
+            </div>
+
+            <p className={`share-pop-note ${data?.republished ? "is-updated" : ""}`}>
+              {data?.republished ? `链接没变，内容已换成「${run.modelLabel}」这一版` : "同一个会话共用这条链接，分享哪个版本，朋友打开的就是哪个版本"}
+              {data && data.externalViews > 0 && (
+                <span className="share-pop-views">
+                  <EyeIcon />
+                  别人打开过 {data.externalViews} 次
+                </span>
               )}
-            </button>
+              {printable && data && (
+                <button type="button" className="share-pop-print" onClick={() => onPrint(data.openUrl)}>
+                  <PrintIcon />
+                  存为 PDF
+                </button>
+              )}
+            </p>
           </div>
-          <p className={`share-pop-note ${data?.republished ? "is-updated" : ""}`}>
-            {data?.republished ? `链接没变，内容已换成「${run.modelLabel}」这一版` : "同一个会话共用这条链接，分享哪个版本，朋友打开的就是哪个版本"}
-          </p>
         </div>
       )}
-
-      <div className="share-pop-band">
-        <a
-          className={`share-pop-action is-poster ${data ? "" : "is-disabled"}`}
-          href={data?.posterUrl}
-          download={data ? "星页分享图.png" : undefined}
-          onClick={(event) => {
-            if (!data) event.preventDefault();
-          }}
-        >
-          <span className="share-pop-action-icon">
-            <DownloadIcon />
-          </span>
-          保存分享图
-        </a>
-        <a
-          className={`share-pop-action is-link ${data ? "" : "is-disabled"}`}
-          href={data?.openUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => {
-            if (!data) event.preventDefault();
-          }}
-        >
-          <span className="share-pop-action-icon">
-            <OpenIcon />
-          </span>
-          打开链接
-        </a>
-        {printable && (
-          <button type="button" className="share-pop-action is-print" onClick={() => data && onPrint(data.openUrl)} disabled={!data}>
-            <span className="share-pop-action-icon">
-              <PrintIcon />
-            </span>
-            存为 PDF
-          </button>
-        )}
-        {data && data.externalViews > 0 && (
-          <span className="share-pop-views">
-            <EyeIcon />
-            别人打开过 {data.externalViews} 次
-          </span>
-        )}
-      </div>
     </div>,
     document.body,
   );
