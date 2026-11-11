@@ -62,6 +62,8 @@ Environment=FRONTEND_ORIGIN=https://stars-page.com
 
 - 给这类服务显式设较短的 `TimeoutStopSec`（本项目后端设为 `10s`），让停止在合理时间内强制收尾。
 - 日志里出现 `State 'stop-sigterm' timed out. Killing.` 属预期，不是故障。
+- 强杀的前提是长任务不依赖进程退出时的收尾：进程内后台任务在退出时不改状态，留给下次启动扫尾重跑或标失败（见 `sse-background-job-streaming.md`）。
+- Python 里用 `print` 写的运维日志，进程 stdout 不是终端时会被块缓冲，重启前的几行可能晚出现甚至丢失；关键日志加 `flush=True`。
 
 ## 常用命令
 

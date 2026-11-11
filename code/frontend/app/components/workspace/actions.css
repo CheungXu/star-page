@@ -414,6 +414,10 @@ a.tb-address:hover .tb-address-open span {
   color: var(--color-danger);
 }
 
+.tb-focus-meta .is-stopped {
+  color: var(--color-text-muted);
+}
+
 .vb-meta-icon {
   width: 12px;
   height: 12px;

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,10 +20,26 @@ from app.api.routes_publications import router as publications_router
 from app.api.routes_reports import router as reports_router
 from app.api.routes_scenes import router as scenes_router
 from app.core.config import get_settings
+from app.services.generation_runner import generation_runner
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # 启动扫尾：上一个进程留下的 pending/running 任务，近期中断的从头重跑一次，其余标失败。
+    # 依赖单 worker；共用线上库的预览实例要设 GENERATION_STARTUP_SWEEP=false。
+    if settings.generation_startup_sweep:
+        try:
+            await generation_runner.startup_sweep()
+        except Exception as exc:  # noqa: BLE001 - 扫尾失败不阻止服务启动
+            print(f"[generation] 启动扫尾失败：{exc!r}", flush=True)
+    yield
+    # 退出时只取消协程、不改状态，留给下次启动扫尾。
+    await generation_runner.shutdown()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

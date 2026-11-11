@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { isEndedStatus } from "./progress-utils";
 import type { ActionLayout, AppliedSkill, PreviewPresentation, RoundNav, WorkspaceRun } from "./types";
 
 export type RenderPreview = (
@@ -61,7 +62,7 @@ function useRunTimings(runs: WorkspaceRun[]) {
             next[key] = { startedAt: timestamp };
             changed = true;
           }
-          if (next[key] && !next[key].endedAt && (run.status === "completed" || run.status === "failed")) {
+          if (next[key] && !next[key].endedAt && isEndedStatus(run.status)) {
             next[key] = { ...next[key], endedAt: timestamp };
             changed = true;
           }

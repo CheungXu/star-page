@@ -4,8 +4,8 @@
 
 ## 文件
 
-- `star-page.conf`：主站点（HTTP 跳转、HTTPS、`www` 归一、HSTS）
-- `star-page-locations.conf`：共享反向代理规则（`/` → 3000，`/api/`、`/p/` → 8000）
+- `star-page.conf`：主站点（HTTP 跳转、HTTPS、`www` 归一、HSTS）。两个 443 server 开了 HTTP/2（nginx 1.24 写法 `listen 443 ssl http2`），多模型生成和预览同时开很多请求时，不再受 HTTP/1.1 同源 6 条连接的限制。80 端口（IP 直连）仍是 HTTP/1.1。
+- `star-page-locations.conf`：共享反向代理规则（`/` → 3000，`/api/`、`/p/` → 8000）。`/api/` 关了 `proxy_buffering`、读超时 420 秒，生成事件流靠后端每 15 秒的心跳保持连接。
 
 ## 服务器侧配套
 

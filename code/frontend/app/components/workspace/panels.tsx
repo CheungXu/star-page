@@ -18,6 +18,7 @@ import {
   formatClock,
   formatDuration,
   formatTokens,
+  isEndedStatus,
   modelAccent,
   modelGlyph,
   outputTokenCount,
@@ -67,13 +68,16 @@ export function GenerationProgress({ history }: { history?: PastRoundProps } = {
   const { runs, elapsed, isGenerating, activeModelKey, selectModel, roundNav } = useWorkspace();
   const [open, setOpen] = useState(false);
   const done = runs.filter((run) => run.status === "completed").length;
+  const stopped = runs.filter((run) => run.status === "cancelled").length;
   const clock = batchElapsed(runs, elapsed);
   const tokens = sumOutputTokens(runs);
   const clockText = clock === null ? "" : isGenerating ? formatClock(clock) : formatDuration(clock);
   const credits = sumCredits(runs);
-  const settled = runs.every((run) => run.status === "completed" || run.status === "failed");
+  const settled = runs.every((run) => isEndedStatus(run.status));
   const insights = batchInsights(runs, elapsed);
-  const title = isGenerating ? `${runs.length} 个模型生成中` : `${done}/${runs.length} 已完成`;
+  const title = isGenerating
+    ? `${runs.length} 个模型生成中`
+    : `${done}/${runs.length} 已完成${stopped > 0 ? ` · ${stopped} 已停止` : ""}`;
   const sub = isGenerating ? (
     `已写 ${formatTokens(tokens)} tokens`
   ) : (
@@ -197,6 +201,7 @@ const SHORT_STAGE: Record<string, string> = {
   编写页面: "编写",
   发布中: "发布",
   准备中: "准备",
+  已停止: "已停止",
 };
 
 function shortDuration(ms: number | null): string {
@@ -237,6 +242,7 @@ function ModelAvatar({ run }: { run: WorkspaceRun }) {
       {modelGlyph(run.modelLabel)}
       {run.status === "completed" && <i className="vb-avatar-badge">✓</i>}
       {run.status === "failed" && <i className="vb-avatar-badge">!</i>}
+      {run.status === "cancelled" && <i className="vb-avatar-badge" aria-label="已停止" />}
     </span>
   );
 }
@@ -587,6 +593,8 @@ function FocusPanel({ run, active }: { run: WorkspaceRun; active: boolean }) {
           <div className={`tb-focus-meta ${completed ? "is-grid" : ""}`}>
             {run.status === "failed" ? (
               <span className="is-failed">生成失败</span>
+            ) : run.status === "cancelled" ? (
+              <span className="is-stopped">已停止</span>
             ) : (
               <>
                 <span title={`输出 ${tokens} tokens`}>
@@ -609,7 +617,13 @@ function FocusPanel({ run, active }: { run: WorkspaceRun; active: boolean }) {
           {completed ? (
             renderActions(run, "card")
           ) : (
-            <p className="tb-focus-hint">{pending ? "生成完成后就能打开、分享" : "这个模型没有生成成功，可以换一个看看"}</p>
+            <p className="tb-focus-hint">
+              {pending
+                ? "生成完成后就能打开、分享"
+                : run.status === "cancelled"
+                  ? "这个模型已停止生成，不扣积分"
+                  : "这个模型没有生成成功，可以换一个看看"}
+            </p>
           )}
         </div>
       </div>
@@ -759,6 +773,8 @@ export function GenerationResults() {
                     <span className={`vb-frame-preview is-${run.status}`}>
                       {run.status === "completed" ? renderPreview(run, { presentation: "thumb" }) : run.status === "failed" ? (
                         <span className="vb-frame-pending is-failed">生成失败</span>
+                      ) : run.status === "cancelled" ? (
+                        <span className="vb-frame-pending is-stopped">已停止</span>
                       ) : (
                         <span className="vb-frame-pending">
                           <Ring value={estimateProgress(run, elapsed(run))} />

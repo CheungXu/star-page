@@ -3,6 +3,9 @@
 前端按会话详情里的任务状态和页面地址展示。补跑仍写回原来的任务和页面，
 用户重新打开这条历史就能看到结果，不需要再提交一次。
 
+后端有了后台执行器和启动扫尾之后，优先用 requeue_stuck_generations.py 加一次后端重启，
+由后端自己重跑。本脚本在脚本进程里直接调用模型，只在后端没法接手时用，且不要对后端正在跑的任务用。
+
 用法（在仓库根目录）：
 
     code/backend/.venv/bin/python script/resume_stuck_generations.py --batch-id <uuid>
@@ -98,7 +101,7 @@ async def _run_once(task_id: uuid.UUID, model_key: str) -> str:
             return task.status
 
         final_status = "running"
-        async for event in service._run_task(task):
+        async for event in service.run_task(task):
             if event.event not in {"status", "failed", "completed"}:
                 continue
             text = event.data.get("text") or event.data.get("message") or event.data.get("url") or ""

@@ -25,6 +25,7 @@ export function Ring({ value, label }: { value: number; label?: string }) {
 export function StatusMark({ status }: { status: WorkspaceRun["status"] }) {
   if (status === "completed") return <span className="vp-mark is-done">✓</span>;
   if (status === "failed") return <span className="vp-mark is-fail">!</span>;
+  if (status === "cancelled") return <span className="vp-mark is-stop" title="已停止" />;
   return <span className="vp-mark is-run" />;
 }
 

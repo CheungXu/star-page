@@ -20,7 +20,7 @@
 - `generated-page-js-sandbox-and-security.md`：LLM 生成页放开 CSS/JS 时的"隔离优先"安全原则——不清洗用户 JS 而用浏览器原生沙箱隔离；两道独立的墙（`sandbox` 不透明 origin 防偷主站凭证、`connect-src 'none'`/`form-action 'none'` 防钓鱼/信标）、sandbox 管不到 fetch 的关键认知、无需新域名的响应头落地方式、清洗定位转变、默认禁网 + 未来 opt-in 与独立内容域名的演进。
 - `koc-distribution-and-anti-ban-sop.md`：通告平台 KOC 派单冷启动与防封引流方法论——物料有限时先「少量垂直中号一人一套」测款再放量；渠道梯队（螃蟹/红通告等通告小程序、数据商、蒲公英、避开野生兼职与已下架代发 App）；合规与 UTM 前置、30 秒筛号、防查重交付纪律、正文去公关化与置顶评论引导、双端对账结算。
 - `llm-provider-abstraction.md`：LLM Provider 抽象原则，按 OpenAI / Anthropic 协议族接入不同模型供应商，并统一处理重试和空输出；含"多模型目录 + 仅密钥 env + 参数三层覆盖（defaults/params/extra_body）+ 密钥缺失自动不可选"的配置规划、火山方舟 doubao 接入，以及**百炼托管第三方模型的 model ID 约定**和**模型换代检查清单**（先区分「未开通」与「ID 不存在」，空间授权成功不等于商品已开通，裸名和日期快照单价不同就是两个商品，思考模型探活要留足输出额度，高峰/低峰只按高峰入账，槽位 key 与展示名可以分开，现网用公网模型列表核对）。
-- `multi-model-generation-tree.md`：多模型并行生成与生成树结构（会话=树上的一条线、批次=一轮、Node=Page 可独立分享），含"从更早一轮继续 = 自动分叉成新会话（继承不复制、指针指向真正主人、删除按引用保留、并行续写只看最近一轮以支持每轮自由换模型）"、"合并另起新会话避免 DAG"、N 路 SSE 并行进度展示与批次状态聚合、多轮回看与三种来源标识（新建/基于/各自续改）、节点 `duration_ms` 持久化、恢复时不自动预填待续改基点、选基点不清空已写好的修改说明。
+- `multi-model-generation-tree.md`：多模型并行生成与生成树结构（会话=树上的一条线、批次=一轮、Node=Page 可独立分享），含"从更早一轮继续 = 自动分叉成新会话（继承不复制、指针指向真正主人、删除按引用保留、并行续写只看最近一轮以支持每轮自由换模型）"、"合并另起新会话避免 DAG"、生成交给后台执行而不挂在浏览器连接上、一轮一条可续传事件流、显式停止与重启自愈、批次状态聚合、多轮回看与三种来源标识（新建/基于/各自续改）、节点 `duration_ms` 持久化、恢复时不自动预填待续改基点、选基点不清空已写好的修改说明。
 - `product-ops-metrics-and-north-star.md`：产品运营指标体系与北极星方法论（创作/分享/按次消耗类产品通用）——北极星用「价值闭环复合指标」而非 DAU/注册数、11 个指标域分层、明细+聚合两层数据架构与读取分流、埋点采集(白名单+限频+sendBeacon 静默+IP 仅哈希)，以及「注册用户须与匿名分开、区间 UV/distinct 不可逐日相加、聚合总量行与维度行分存、cohort 未到期 period 留空、活跃口径去重、成功率分母口径统一」等坑。
 - `multi-model-preview-comparison.md`：多模型结果预览对比设计——复用固定视口缩放、1-2 个并排、3 个以上大舞台加缩略条、左侧进度与右侧联动、各单元独立信息与动作、先完成先展示；大舞台不放浮层的三种操作位置（顶栏 / 胶片焦点卡 / 聚光胶片）、焦点卡按列对齐与标题竖向居中的排版细节、胶片条滚轮横滑、展开收起同时过渡、滑动高亮底板、大预览点击即淡入不等 iframe 加载。
 - `share-card-customization.md`：可改标题的分享卡片——一个「分享」按钮完成发布、贴按钮弹出的浮层（分享图整列、链接只留复制按钮、按钮与对齐开关的顺序）、用户改写值与生效值分存且重新发布保留、PATCH 只改出现字段、防抖保存与关闭时 keepalive 补存、前端 canvas 与后端 Pillow 同版式（Noto CJK 要用简体字形索引）、自定义标题时连 `<title>` 一起替换、分享埋点带 AB 分组。
@@ -28,9 +28,10 @@
 - `png-logo-transparent-and-trim.md`：白底 PNG logo 透明化 + 自动裁剪流程，覆盖 GIMP color-to-alpha 算法、近白色伪影清理、按 alpha bbox 裁剪，配套 CSS `drop-shadow` 最佳实践。本仓库另有"轻量阈值法"版本适用于干净白底无伪影的源图，记录在 `script/README.md`。
 - `real-screenshot-promo-assets-and-html-video.md`：用真实界面做宣传素材。AI 封面后必须跟真实截图；记录了无头浏览器截图的坑（emoji 字体、屏幕外 iframe、坐标换算），用 hyperframes 把截图做成配音讲解视频的规范要点，中文 TTS 读网址的问题，以及低配服务器上的渲染耗时。
 - `scene-positioning-framework.md`：生成类产品的场景化增长与落地框架——配置驱动解耦场景、拒绝生硬表单向导的“Prompt 阈值预填 + 素材槽位分解”交互范式、所见即所得真实案例渲染与主体点击直达、节点链接 vs 固定发布链接双层架构、Shadow DOM 隔离的自传播浮标与微信长图海报服务端生成，以及场景端到端闭环度量。
+- `sse-background-job-streaming.md`：长任务后台执行 + SSE 可续传进度——执行与观看分离（执行不能挂在请求上）、原子认领 / 并发上限 / 兜底写终态 / 开跑前取消不走 finally / 两段式停止 / 退出不改状态 + 启动扫尾；事件流每任务一个游标（全局自增序号不等于提交顺序）、终态与收尾事件同事务、续传先补已结束集合、碎片合并与唤醒先取 waiter；EventSource 遇非 200 永久关闭需手动退避重连、中间层 gzip 攒住实时事件（`no-transform`）、开发代理测不出断线、HTTP/2 与 6 连接限制、uvicorn 优雅退出等 SSE；附验证清单。
 - `skill-discovery-and-injection.md`：技能（Skill）发现与注入的通用做法——技能目录(SKILL.md=元数据+正文) + 选择器(关键词/轻量 LLM 路由/Agentic 工具发现三范式) + 注入(包装成 system 叠加)；含默认开启+自动选+手动覆盖、路由兜底不可阻断、batch 级一次定调、持久化多轮延用、渐进式披露省成本、选择器做接口平滑演进(B→C)、技能目录不在构建上下文的部署陷阱。
 - `site-icp-filing-footer.md`：网站 ICP 备案号首页页脚展示——合规要点、fixed vs 静态沉底取舍、SPA idle/工作区分离策略与视觉克制原则。
-- `systemd-nextjs-fastapi-deployment.md`：Next.js + FastAPI 早期 MVP 使用 systemd 常驻运行的部署要点；含 standalone 静态资源教训、"代码更新需重启（无 `--reload`）"、SSE 长连接导致停止卡 90s 应设 `TimeoutStopSec`。
+- `systemd-nextjs-fastapi-deployment.md`：Next.js + FastAPI 早期 MVP 使用 systemd 常驻运行的部署要点；含 standalone 静态资源教训、"代码更新需重启（无 `--reload`）"、SSE 长连接导致停止卡 90s 应设 `TimeoutStopSec`（强杀安全的前提是后台任务退出不改状态、靠启动扫尾）、`print` 日志在非终端下被缓冲需 `flush=True`。
 - `training-consent-discount-and-page-moderation.md`：AIGC 产品的训练授权、授权优惠与公开页举报通用做法——「用户当前开关 × 单条数据快照」双重判定、把生成产出拆成「内容许可 / 当场提取的匿名结构样本 / 去标识化原文」三层以兼顾撤回权与防薅羊毛、新用户/老用户/匿名访客三套同意路径（首页页脚只同意协议，训练授权不写在页脚）、用户侧只展示积分与优惠而隐藏真实金额成本、CSP 禁网公开页经主站 `/report` 举报与 451 下架，以及同机 worktree 预览的库与端口隔离要点。
 - `uploaded-document-ingestion-for-generation.md`：上传资料辅助页面生成时的文件抽取、长文本压缩、LLM 重试、调试记录和节点可视化原则。
 - `user-scoped-history-persistence.md`：用户维度历史记录持久化原则，说明跨设备历史应落数据库，浏览器本地只保存设备内临时会话状态。

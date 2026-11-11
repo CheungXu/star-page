@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_billing_config, get_model_registry, get_settings
@@ -46,6 +46,13 @@ from app.services.storage.factory import create_storage_provider
 from app.services.training_samples import store_training_sample
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+# 每个任务以且仅以其中一种事件收尾，并和终态写在同一个事务里，事件流据此判断任务结束。
+TERMINAL_EVENT_TYPES = {"completed", "failed", "cancelled"}
+CANCELLED_USER_MESSAGE = "已停止生成"
+
+
+class GenerationCancelled(Exception):
+    """用户主动停止。在两个模型 chunk 之间检查到停止请求时抛出，走正常收尾写成 cancelled。"""
 
 
 class _BatchCompressionGate:
@@ -109,9 +116,15 @@ class BatchCreation:
 
 
 class GenerationService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, cancel_check: Callable[[], bool] | None = None) -> None:
         self.session = session
         self.settings = get_settings()
+        # 后台执行器传入：返回 True 表示用户已请求停止这个任务。
+        self._cancel_check = cancel_check
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancel_check is not None and self._cancel_check():
+            raise GenerationCancelled()
 
     def _resolve_model_keys(
         self, selected_model_keys: list[str] | None, allowed_keys: set[str] | None = None
@@ -483,32 +496,38 @@ class GenerationService:
                     return None
         return None
 
-    async def run_or_replay(self, task_id: uuid.UUID, user: User) -> AsyncIterator[SseEvent]:
-        task = await self.session.get(GenerationTask, task_id)
-        if task is None:
-            yield SseEvent("failed", {"type": "failed", "message": "生成任务不存在"})
-            return
-        if task.requested_by_user_id != user.id:
-            yield SseEvent("failed", {"type": "failed", "message": "无权访问该生成任务"})
-            return
+    async def claim_task(self, task_id: uuid.UUID) -> GenerationTask | None:
+        """原子地把 pending 任务改成 running。返回 None 表示已被别人抢走或不再是 pending。"""
+        result = await self.session.execute(
+            update(GenerationTask)
+            .where(GenerationTask.id == task_id, GenerationTask.status == "pending")
+            .values(status="running", started_at=func.now())
+            .returning(GenerationTask.id)
+        )
+        claimed = result.scalar_one_or_none()
+        await self.session.commit()
+        if claimed is None:
+            return None
+        return await self.session.get(GenerationTask, task_id, populate_existing=True)
 
-        if task.status == "pending":
-            async for event in self._run_task(task):
-                yield event
-            return
-
-        async for event in self._stream_existing_events_until_done(task):
-            yield event
-
-    async def _run_task(self, task: GenerationTask) -> AsyncIterator[SseEvent]:
+    async def run_task(self, task: GenerationTask) -> AsyncIterator[SseEvent]:
+        """跑完一个已认领的任务，逐条产出已写入数据库的事件。由后台执行器驱动，不依赖任何浏览器连接。"""
         page = await self.session.get(Page, task.page_id)
         if page is None:
-            yield SseEvent("failed", {"type": "failed", "message": "页面记录不存在"})
+            task.status = "failed"
+            task.error_message = "页面记录不存在"
+            task.finished_at = datetime.now(UTC)
+            failed = self._stage_event(
+                task.id, "failed", {"type": "failed", "message": "页面记录不存在", "model_key": task.model_key}
+            )
+            await self.session.commit()
+            await self.recompute_batch_status(task.batch_id)
+            yield failed
             return
 
-        task.status = "running"
-        task.started_at = datetime.now(UTC)
-        await self.session.commit()
+        if task.started_at is None:
+            task.started_at = datetime.now(UTC)
+            await self.session.commit()
 
         needs_compression = _needs_document_compression(task)
         if task.input_file_names:
@@ -556,6 +575,7 @@ class GenerationService:
         tailwind_retry_used = False
 
         try:
+            self._raise_if_cancelled()
             if needs_compression:
                 await self._ensure_batch_document_compressed(task)
                 if not task.compression_prompt:
@@ -583,6 +603,7 @@ class GenerationService:
             page.skill_key = skill_selection.key
             router_usage = skill_selection.usage
             await self.session.commit()
+            self._raise_if_cancelled()
 
             if skill_selection.key:
                 skill = get_skill_registry().get(skill_selection.key)
@@ -613,8 +634,11 @@ class GenerationService:
             llm_attempts = max(1, self.settings.llm_retry_attempts)
             llm_attempt = 1
             while True:
+                stream = llm_client.stream_text(messages)
                 try:
-                    async for chunk in llm_client.stream_text(messages):
+                    async for chunk in stream:
+                        # 停止请求在两个 chunk 之间生效；finally 里关掉流，模型连接随之断开。
+                        self._raise_if_cancelled()
                         model_provider = chunk.provider or model_provider
                         model_name = chunk.model or model_name
 
@@ -730,7 +754,10 @@ class GenerationService:
                         {"type": "status", "text": f"模型未返回正文，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
                     )
                     await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
+                    self._raise_if_cancelled()
                     llm_attempt += 1
+                except GenerationCancelled:
+                    raise
                 except Exception:
                     if answer_started or llm_attempt >= llm_attempts:
                         raise
@@ -746,8 +773,12 @@ class GenerationService:
                         {"type": "status", "text": f"模型调用失败，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
                     )
                     await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
+                    self._raise_if_cancelled()
                     llm_attempt += 1
+                finally:
+                    await stream.aclose()
 
+            # 模型已完整输出后不再响应停止：页面马上就能用，丢掉反而浪费这次调用。
             if not answer_parts:
                 raise ValueError("模型未返回 HTML 正文")
 
@@ -819,9 +850,7 @@ class GenerationService:
             if task.training_consent == CONSENT_GRANTED:
                 await self._store_training_sample(task, safe_html)
 
-            await self.session.commit()
-            await self._recompute_batch_status(task.batch_id)
-            yield await self._record_event(
+            deploy_done = self._stage_event(
                 task.id,
                 "progress",
                 {
@@ -846,16 +875,28 @@ class GenerationService:
                 "credits_charged": settle.credits_charged if settle else 0,
                 "discount_credits": settle.discount_credits if settle else 0,
             }
-            yield await self._record_event(task.id, "completed", completed_payload)
+            # 终态、版本、结算和收尾事件同一个事务提交：事件流看到终态时一定也能读到 completed。
+            completed = self._stage_event(task.id, "completed", completed_payload)
+            await self.session.commit()
+            await self.recompute_batch_status(task.batch_id)
+            yield deploy_done
+            yield completed
 
-        except asyncio.CancelledError:
+        except GenerationCancelled:
+            if answer_parts and not task.model_output_text:
+                task.model_output_text = "".join(answer_parts)
             task.status = "cancelled"
-            task.error_message = "客户端连接断开，生成已取消"
+            task.error_message = "用户停止了生成"
             task.finished_at = datetime.now(UTC)
             page.status = "failed"
+            cancelled = self._stage_event(
+                task.id,
+                "cancelled",
+                {"type": "cancelled", "message": CANCELLED_USER_MESSAGE, "model_key": task.model_key},
+            )
             await self.session.commit()
-            await self._recompute_batch_status(task.batch_id)
-            raise
+            await self.recompute_batch_status(task.batch_id)
+            yield cancelled
         except Exception as exc:
             if answer_parts and not task.model_output_text:
                 task.model_output_text = "".join(answer_parts)
@@ -864,13 +905,14 @@ class GenerationService:
             task.error_message = str(exc)[:2000]
             task.finished_at = datetime.now(UTC)
             page.status = "failed"
-            await self.session.commit()
-            await self._recompute_batch_status(task.batch_id)
-            yield await self._record_event(
+            failed = self._stage_event(
                 task.id,
                 "failed",
                 {"type": "failed", "message": user_message, "model_key": task.model_key},
             )
+            await self.session.commit()
+            await self.recompute_batch_status(task.batch_id)
+            yield failed
 
     async def _ensure_batch_document_compressed(self, task: GenerationTask) -> None:
         """超长资料在生成流里压缩。同一 batch 只压一次，结果写回该批全部分支。"""
@@ -1016,7 +1058,7 @@ class GenerationService:
         await self.session.flush()
         return version
 
-    async def _recompute_batch_status(self, batch_id: uuid.UUID | None) -> None:
+    async def recompute_batch_status(self, batch_id: uuid.UUID | None) -> None:
         """按兄弟 run 的状态聚合批次状态：全成功=succeeded，部分成功=partial，全取消=cancelled，否则 failed；未完成=running。"""
         if batch_id is None:
             return
@@ -1057,34 +1099,31 @@ class GenerationService:
         await self.session.commit()
 
     async def _record_event(self, task_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> SseEvent:
-        event = GenerationEvent(task_id=task_id, event_type=event_type, payload=payload)
-        self.session.add(event)
+        event = self._stage_event(task_id, event_type, payload)
         await self.session.commit()
+        return event
+
+    def _stage_event(self, task_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> SseEvent:
+        """只加入会话不提交，用来和状态变更放进同一个事务。"""
+        self.session.add(GenerationEvent(task_id=task_id, event_type=event_type, payload=payload))
         return SseEvent(event_type, payload)
 
-    async def _stream_existing_events_until_done(self, task: GenerationTask) -> AsyncIterator[SseEvent]:
-        last_sequence = 0
-
-        while True:
-            result = await self.session.execute(
-                select(GenerationEvent)
-                .where(GenerationEvent.task_id == task.id, GenerationEvent.sequence > last_sequence)
-                .order_by(GenerationEvent.sequence.asc())
-            )
-            events = result.scalars().all()
-
-            for event in events:
-                last_sequence = event.sequence
-                # 实际金额只留在版本和流水里，回放给用户的事件里去掉。
-                payload = dict(event.payload)
-                payload.pop("cost", None)
-                yield SseEvent(event.event_type, payload)
-
-            await self.session.refresh(task)
-            if task.status in TERMINAL_STATUSES and not events:
-                break
-
-            await asyncio.sleep(1)
+    async def finish_unfinished_task(self, task_id: uuid.UUID, *, status: str, message: str, user_message: str) -> bool:
+        """把仍未结束的任务直接写成终态（硬取消、执行器兜底、启动扫尾用）。已结束的不动，返回是否改了。"""
+        task = await self.session.get(GenerationTask, task_id, populate_existing=True)
+        if task is None or task.status in TERMINAL_STATUSES:
+            return False
+        task.status = status
+        task.error_message = message
+        task.finished_at = datetime.now(UTC)
+        page = await self.session.get(Page, task.page_id)
+        if page is not None and page.status == "generating":
+            page.status = "failed"
+        event_type = "cancelled" if status == "cancelled" else "failed"
+        self._stage_event(task.id, event_type, {"type": event_type, "message": user_message, "model_key": task.model_key})
+        await self.session.commit()
+        await self.recompute_batch_status(task.batch_id)
+        return True
 
 
 def _build_page_title(prompt: str) -> str:

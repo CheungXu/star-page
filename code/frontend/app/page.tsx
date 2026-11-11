@@ -20,7 +20,7 @@ import { WorkspaceProvider } from "./components/workspace/context";
 import { GenerationProgress, GenerationResults } from "./components/workspace/panels";
 import type { ActionLayout, PreviewPresentation, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
 
-type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
+type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed" | "cancelled";
 
 type ModelInfo = {
   key: string;
@@ -90,6 +90,8 @@ type ApiUsagePayload = {
 
 type SsePayload = {
   type: string;
+  /** 批次事件流里每条事件属于哪个模型 run。 */
+  task_id?: string;
   text?: string;
   page_id?: string;
   url?: string;
@@ -304,6 +306,8 @@ const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
 const SELECTED_MODELS_KEY = "star-page-selected-models";
 const ANON_MAX_MODELS = 2;
+// 事件流被彻底关闭后的手动重连次数上限（退避 1s 起、最长 30s，合计约 2 分钟），用完后以服务端状态为准。
+const MAX_STREAM_RECONNECTS = 8;
 const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const SCENE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -379,6 +383,13 @@ const SpinnerIcon = () => (
   <svg className="spinner-icon" width="1em" height="1em" viewBox="0 0 24 24" fill="none" aria-hidden="true">
     <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
     <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+  </svg>
+);
+
+/* 停止：生成中发送按钮变成停止，圆角方块是通用的停止符号 */
+const StopIcon = () => (
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <rect x="7" y="7" width="10" height="10" rx="2" />
   </svg>
 );
 
@@ -851,13 +862,15 @@ function PreviewCell({
     transform: `scale(${metrics.scale})`,
   };
 
-  const statusLabel = run.status === "failed" ? "生成失败" : run.status === "creating" ? "创建中" : "思考中";
+  const statusLabel =
+    run.status === "failed" ? "生成失败" : run.status === "cancelled" ? "已停止" : run.status === "creating" ? "创建中" : "思考中";
+  const ended = run.status === "failed" || run.status === "cancelled";
 
   return (
     <article className={`preview-cell presentation-${presentation} ${selectedAsBase ? "is-continue-base" : ""} ${dimmedByBase ? "is-dimmed-by-base" : ""}`}>
       <header className="preview-cell-head">
         <span
-          className={`dot ${run.status === "completed" ? "ready" : run.status === "failed" ? "failed" : "loading"}`}
+          className={`dot ${run.status === "completed" ? "ready" : run.status === "failed" ? "failed" : run.status === "cancelled" ? "stopped" : "loading"}`}
           aria-hidden="true"
         />
         <strong className="preview-cell-model" title={run.modelLabel}>{run.modelLabel}</strong>
@@ -885,9 +898,9 @@ function PreviewCell({
             <p className="scene-view-count">{externalViews === 0 ? "还没有别人打开" : `别人打开 ${externalViews} 次`}</p>
           )}
         </>
-      ) : run.status === "failed" ? (
-        <div className="preview-cell-error">
-          <p>{run.errorMessage || "页面生成失败，请稍后重试。"}</p>
+      ) : ended ? (
+        <div className={`preview-cell-error ${run.status === "cancelled" ? "is-stopped" : ""}`}>
+          <p>{run.errorMessage || (run.status === "cancelled" ? "已停止生成" : "页面生成失败，请稍后重试。")}</p>
         </div>
       ) : (
         <div className="preview-empty">
@@ -1218,6 +1231,10 @@ export default function HomePage() {
 
   const eventSourcesRef = useRef<EventSource[]>([]);
   const runStartedAtRef = useRef<Record<string, number>>({});
+  const [isStopping, setIsStopping] = useState(false);
+  // 事件流断开后的手动重连：closeAllSources 会让 token 失效并清掉计时器。
+  const streamTokenRef = useRef(0);
+  const reconnectTimersRef = useRef<number[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragCounterRef = useRef(0);
@@ -1466,6 +1483,10 @@ export default function HomePage() {
   function closeAllSources() {
     eventSourcesRef.current.forEach((source) => source.close());
     eventSourcesRef.current = [];
+    // 离开当前视图：作废还没触发的重连，旧会话的事件流不再接回来。
+    streamTokenRef.current += 1;
+    reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    reconnectTimersRef.current = [];
   }
 
   useEffect(() => {
@@ -1697,7 +1718,7 @@ export default function HomePage() {
       void loadHistory();
       void refreshAccount();
 
-      nextRuns.forEach((run) => connectRun(run.taskId));
+      connectBatch(data.batch_id, data.conversation_id);
     } catch (error) {
       const message = error instanceof Error ? error.message : "创建生成任务失败";
       setRuns((current) =>
@@ -1706,26 +1727,47 @@ export default function HomePage() {
     }
   }
 
-  function connectRun(taskId: string) {
-    const source = new EventSource(`/api/generations/${taskId}/events`, { withCredentials: true });
+  /**
+   * 订阅一轮生成：一条连接带这一轮所有模型的事件（payload.task_id 区分模型）。
+   * 生成在后端跑，关掉连接只是不再看；断线时浏览器自动重连，并用 Last-Event-ID 从断点续传。
+   */
+  function connectBatch(targetBatchId: string, targetConversationId: string, failures = 0, after = "") {
+    if (!targetBatchId) return;
+    const token = streamTokenRef.current;
+    const query = after ? `?after=${encodeURIComponent(after)}` : "";
+    const source = new EventSource(`/api/generations/batches/${targetBatchId}/events${query}`, { withCredentials: true });
     eventSourcesRef.current.push(source);
-
-    const patch = (updater: (run: RunState) => RunState) => {
-      setRuns((current) => current.map((run) => (run.taskId === taskId ? updater(run) : run)));
+    // 最后收到的续传游标；手动重连时带上，从断点接着发。
+    let lastEventId = after;
+    let consecutiveFailures = failures;
+    let finished = false;
+    source.onopen = () => {
+      consecutiveFailures = 0;
     };
+
     // 只有本次会话里发起的任务知道起点；从历史恢复后重连的任务交给工作区自己计时。
     const finishedDuration = (run: RunState) => {
-      const startedAt = runStartedAtRef.current[taskId];
+      const startedAt = runStartedAtRef.current[run.taskId];
       return run.durationMs ?? (startedAt ? Date.now() - startedAt : undefined);
     };
+    const on = (type: string, handle: (payload: SsePayload, patch: (updater: (run: RunState) => RunState) => void) => void) => {
+      source.addEventListener(type, (event) => {
+        const message = event as MessageEvent<string>;
+        if (message.lastEventId) lastEventId = message.lastEventId;
+        const payload = parsePayload(event);
+        const taskId = payload.task_id;
+        handle(payload, (updater) => {
+          if (!taskId) return;
+          setRuns((current) => current.map((run) => (run.taskId === taskId ? updater(run) : run)));
+        });
+      });
+    };
 
-    source.addEventListener("status", (event) => {
-      const payload = parsePayload(event);
+    on("status", (payload, patch) => {
       if (payload.text) patch((run) => ({ ...run, statusText: payload.text ?? run.statusText }));
     });
 
-    source.addEventListener("skill_selected", (event) => {
-      const payload = parsePayload(event);
+    on("skill_selected", (payload) => {
       if (payload.skill_key) {
         setAppliedSkill({
           key: payload.skill_key,
@@ -1734,24 +1776,22 @@ export default function HomePage() {
       }
     });
 
-    source.addEventListener("reasoning_delta", (event) => {
-      const payload = parsePayload(event);
-      if (payload.text) {
-        patch((run) => ({
-          ...run,
-          status: "thinking",
-          reasoning: run.reasoning + payload.text,
-          progressSteps: updateProgressSteps(run.progressSteps, {
-            type: "progress",
-            step: "model_thinking",
-            status: "running",
-            text: "模型正在展开思考",
-          }),
-        }));
-      }
+    on("reasoning_delta", (payload, patch) => {
+      if (!payload.text) return;
+      patch((run) => ({
+        ...run,
+        status: "thinking",
+        reasoning: run.reasoning + payload.text,
+        progressSteps: updateProgressSteps(run.progressSteps, {
+          type: "progress",
+          step: "model_thinking",
+          status: "running",
+          text: "模型正在展开思考",
+        }),
+      }));
     });
 
-    source.addEventListener("answer_started", () => {
+    on("answer_started", (_payload, patch) => {
       patch((run) => ({
         ...run,
         status: "creating",
@@ -1765,8 +1805,7 @@ export default function HomePage() {
       }));
     });
 
-    source.addEventListener("progress", (event) => {
-      const payload = parsePayload(event);
+    on("progress", (payload, patch) => {
       if (!payload.step || !payload.status) return;
       patch((run) => {
         const nextRun = { ...run, progressSteps: updateProgressSteps(run.progressSteps, payload) };
@@ -1775,8 +1814,7 @@ export default function HomePage() {
       });
     });
 
-    source.addEventListener("completed", (event) => {
-      const payload = parsePayload(event);
+    on("completed", (payload, patch) => {
       patch((run) => ({
         ...run,
         status: "completed",
@@ -1792,11 +1830,9 @@ export default function HomePage() {
       }));
       void loadHistory();
       void refreshAccount();
-      source.close();
     });
 
-    source.addEventListener("failed", (event) => {
-      const payload = parsePayload(event);
+    on("failed", (payload, patch) => {
       patch((run) => ({
         ...run,
         status: "failed",
@@ -1805,18 +1841,112 @@ export default function HomePage() {
         durationMs: finishedDuration(run),
         progressSteps: run.progressSteps.map((step) => (step.status === "running" ? { ...step, status: "failed" } : step)),
       }));
-      void loadHistory();
-      source.close();
     });
 
-    source.onerror = () => {
-      patch((run) =>
-        run.status === "completed"
-          ? run
-          : { ...run, status: "failed", statusText: "连接中断", errorMessage: "生成连接中断，请刷新后重试。" },
-      );
+    on("cancelled", (payload, patch) => {
+      patch((run) => ({
+        ...run,
+        status: "cancelled",
+        statusText: "已停止",
+        errorMessage: payload.message ?? "已停止生成",
+        durationMs: finishedDuration(run),
+        progressSteps: run.progressSteps.map((step) => (step.status === "running" ? { ...step, status: "pending" } : step)),
+      }));
+    });
+
+    // 后端重启后自动从头重跑：清掉这个模型之前的思考和进度。
+    on("restarted", (payload, patch) => {
+      patch((run) => ({
+        ...run,
+        status: "thinking",
+        reasoning: "",
+        statusText: payload.message ?? "服务重启，已自动重新生成",
+        errorMessage: "",
+        usageSummary: undefined,
+        durationMs: undefined,
+        progressSteps: createInitialProgressSteps(run.progressSteps.some((step) => step.id === "upload_file")),
+      }));
+    });
+
+    on("batch_done", () => {
+      finished = true;
       source.close();
+      eventSourcesRef.current = eventSourcesRef.current.filter((item) => item !== source);
+      void loadHistory();
+      void refreshAccount();
+    });
+
+    const markReconnecting = () =>
+      setRuns((current) =>
+        current.map((run) =>
+          run.status === "thinking" || run.status === "creating" ? { ...run, statusText: "连接中断，正在重连…" } : run,
+        ),
+      );
+
+    source.onerror = () => {
+      if (source.readyState !== EventSource.CLOSED) {
+        // 浏览器在自动重连（会带 Last-Event-ID），生成在后端照常进行。
+        markReconnecting();
+        return;
+      }
+      // 收到非 200（例如后端重启时代理返回 502）后浏览器不再自动重连，这里按退避自己重连。
+      eventSourcesRef.current = eventSourcesRef.current.filter((item) => item !== source);
+      if (finished || token !== streamTokenRef.current) return;
+      if (consecutiveFailures >= MAX_STREAM_RECONNECTS) {
+        void syncRunsFromServer(targetConversationId, targetBatchId);
+        return;
+      }
+      markReconnecting();
+      const delay = Math.min(30000, 1000 * 2 ** consecutiveFailures);
+      const timer = window.setTimeout(() => {
+        reconnectTimersRef.current = reconnectTimersRef.current.filter((item) => item !== timer);
+        if (token !== streamTokenRef.current) return;
+        connectBatch(targetBatchId, targetConversationId, consecutiveFailures + 1, lastEventId);
+      }, delay);
+      reconnectTimersRef.current.push(timer);
     };
+  }
+
+  /** 事件流断开后，按会话详情把这一轮各模型的状态对齐到服务端。仍在生成的只提示刷新，不判失败。 */
+  async function syncRunsFromServer(targetConversationId: string, targetBatchId: string) {
+    if (!targetConversationId) return;
+    try {
+      const response = await apiFetch(`/api/conversations/${targetConversationId}`);
+      if (!response.ok) return;
+      const detail = (await response.json()) as ConversationDetailResponse;
+      const batch = (detail.batches ?? []).find((item) => item.batch_id === targetBatchId);
+      if (!batch) return;
+      const fresh = new Map(buildRunsFromBatch(batch).map((run) => [run.taskId, run]));
+      setRuns((current) =>
+        current.map((run) => {
+          const latest = fresh.get(run.taskId);
+          if (!latest) return run;
+          if (latest.status === "thinking" || latest.status === "creating") {
+            return { ...run, statusText: "连接已断开，刷新页面可继续查看进度" };
+          }
+          return { ...latest, reasoning: run.reasoning };
+        }),
+      );
+    } catch {
+      // 拉取失败时保持当前显示。
+    }
+  }
+
+  /** 停止这一轮还没完成的模型。已完成的保留并照常计费，被停的不扣积分。 */
+  async function stopGeneration() {
+    if (!batchId || isStopping) return;
+    setIsStopping(true);
+    setRuns((current) =>
+      current.map((run) => (run.status === "thinking" || run.status === "creating" ? { ...run, statusText: "正在停止…" } : run)),
+    );
+    try {
+      const response = await apiFetch(`/api/generations/batches/${batchId}/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error(await readErrorMessage(response, "停止失败，请稍后重试"));
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "停止失败，请稍后重试");
+    } finally {
+      setIsStopping(false);
+    }
   }
 
   function startNewChat() {
@@ -1876,11 +2006,10 @@ export default function HomePage() {
       const session = buildSessionFromDetail(detail);
       writeCurrentSession(session);
       playTransition(() => applyStoredSession(session));
-      session.runs.forEach((run) => {
-        if ((run.status === "thinking" || run.status === "creating") && run.taskId) {
-          connectRun(run.taskId);
-        }
-      });
+      // 最新一轮还有模型在生成：接上这一轮的事件流，从头回放再跟进实时进度。
+      if (session.runs.some((run) => (run.status === "thinking" || run.status === "creating") && run.taskId)) {
+        connectBatch(session.batchId, detail.id);
+      }
     } catch {
       // 恢复失败时保持当前视图。
     }
@@ -2433,6 +2562,12 @@ export default function HomePage() {
 
   function renderPromptForm(compact = false) {
     const submitBlocked = isGenerating || Boolean(fileError) || selectedModelKeys.length === 0;
+    // 批次已经建好、有模型还在生成时，发送按钮变成「停止生成」；提交请求还没返回时仍显示转圈。
+    const canStop =
+      compact &&
+      isGenerating &&
+      Boolean(batchId) &&
+      runs.some((run) => Boolean(run.taskId) && (run.status === "thinking" || run.status === "creating"));
     const submitDisabled = submitBlocked || !canSubmit;
     const isEmptySubmit = !compact && !canSubmit && !isGenerating && !submitBlocked;
     const promptWrapClassName = compact
@@ -2609,6 +2744,18 @@ export default function HomePage() {
               )}
               {renderModelPicker(compact)}
             </div>
+            {canStop ? (
+              <button
+                className={`composer-send is-stop ${compact ? "is-secondary" : ""}`}
+                type="button"
+                onClick={() => void stopGeneration()}
+                disabled={isStopping}
+                aria-label="停止生成"
+                title="停止生成：已完成的保留，没完成的不扣积分"
+              >
+                {isStopping ? <SpinnerIcon /> : <StopIcon />}
+              </button>
+            ) : (
             <button
               className={`composer-send ${compact ? "is-secondary" : ""} ${isGenerating ? "is-loading" : ""} ${isEmptySubmit ? "is-empty" : ""}`}
               type={isEmptySubmit ? "button" : "submit"}
@@ -2632,6 +2779,7 @@ export default function HomePage() {
                 <ArrowUpIcon />
               )}
             </button>
+            )}
           </div>
         </form>
         {!compact && scenes.length > 0 && (
@@ -3071,14 +3219,17 @@ function mapForkSource(source: ForkSourceResponse): ForkSource {
 
 function mapBatchStatus(status?: string | null): GenerationStatus {
   if (status === "succeeded" || status === "partial") return "completed";
-  if (status === "failed" || status === "cancelled") return "failed";
+  if (status === "cancelled") return "cancelled";
+  if (status === "failed") return "failed";
   if (status === "running" || status === "pending") return "thinking";
   return "idle";
 }
 
 function mapNodeStatus(pageStatus: string, generationStatus?: string | null): GenerationStatus {
   if (pageStatus === "ready" || generationStatus === "succeeded") return "completed";
-  if (pageStatus === "failed" || generationStatus === "failed" || generationStatus === "cancelled") return "failed";
+  // 被停的页面在库里也记成 failed，先看任务状态才能区分「已停止」和「失败」。
+  if (generationStatus === "cancelled") return "cancelled";
+  if (pageStatus === "failed" || generationStatus === "failed") return "failed";
   if (pageStatus === "generating" || generationStatus === "pending" || generationStatus === "running") return "thinking";
   return "idle";
 }
@@ -3137,7 +3288,7 @@ function buildRunsFromBatch(batch: ConversationBatchResponse): RunState[] {
       reasoning: "",
       statusText: getStoredStatusText(status),
       pageUrl: node.page_url,
-      errorMessage: status === "failed" ? "页面生成失败，请重新创建。" : "",
+      errorMessage: status === "failed" ? "页面生成失败，请重新创建。" : status === "cancelled" ? "已停止生成" : "",
       progressSteps: createInitialProgressSteps(hasFile).map((step) => ({
         ...step,
         status: status === "completed" ? "completed" : step.status,
@@ -3159,6 +3310,7 @@ function buildRunsFromBatch(batch: ConversationBatchResponse): RunState[] {
 function getStoredStatusText(status: GenerationStatus): string {
   if (status === "completed") return "页面已创建完成";
   if (status === "failed") return "生成失败";
+  if (status === "cancelled") return "已停止";
   if (status === "thinking" || status === "creating") return "正在恢复生成进度...";
   return "描述你想创建的页面";
 }

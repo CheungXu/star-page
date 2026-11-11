@@ -22,6 +22,19 @@
   color: var(--color-danger);
 }
 
+/* 已停止：用户主动停的，不是出错，用中性灰的小方块（停止符号）。 */
+.vp-mark.is-stop {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.vp-mark.is-stop::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 1.5px;
+  background: var(--color-text-muted);
+}
+
 .vp-mark.is-run {
   border: 2px solid var(--color-primary-soft-strong);
   border-top-color: var(--color-primary);
@@ -702,6 +715,13 @@ body.is-resizing-panes iframe {
 
 .vb-avatar.is-failed .vb-avatar-badge { background: var(--color-danger); }
 
+.vb-avatar.is-cancelled {
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--color-text-muted);
+}
+
+.vb-avatar.is-cancelled .vb-avatar-badge { background: var(--color-text-muted); }
+
 .vb-mini-row.is-active .vb-avatar-badge { border-color: var(--color-primary-soft); }
 
 /* 至少两个模型完成后，给用时最短、积分最少的打标，替代"完成"二字 */
@@ -925,6 +945,8 @@ body.is-resizing-panes iframe {
 }
 
 .vb-mini-row.is-failed .vb-mini-stage { color: var(--color-danger); }
+.vb-mini-row.is-cancelled .vb-pip span { background: rgba(15, 23, 42, 0.18); }
+.vb-mini-row.is-cancelled .vb-mini-stage { color: var(--color-text-muted); }
 
 /* 回看模式胶囊：深色底让"现在不是最新"一眼可辨，右半是回到最新的按钮 */
 .vb-past-chip {
@@ -1175,6 +1197,7 @@ body.is-resizing-panes iframe {
 }
 
 .vb-frame-pending.is-failed { color: var(--color-danger); background: rgba(254, 242, 242, 0.9); }
+.vb-frame-pending.is-stopped { color: var(--color-text-muted); background: rgba(241, 245, 249, 0.92); }
 .vb-frame-pending .vp-ring { width: 30px; height: 30px; }
 .vb-frame-preview .vb-unseen { top: 6px; right: 6px; }
 

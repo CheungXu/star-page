@@ -54,7 +54,9 @@ journalctl -u star-page-backend.service -f
 - `POST /api/auth/logout`：注销当前 Session。
 - `POST /api/auth/password`：登录后设置或更新密码。
 - `POST /api/generations`：创建页面生成任务。带 `conversation_id` + `base_page_id` 续写时，基点在最后一轮就留在本会话；基点在更早的轮次则**自动分叉出一条新会话**（见下方「会话分叉」），响应里的 `conversation_id` 是新会话，`forked_from` 给出来源会话与轮次。
-- `GET /api/generations/{task_id}/events`：通过 SSE 推送思考过程和完成状态。
+- `GET /api/generations/batches/{batch_id}/events`：一轮一条 SSE 连接，带这一轮所有模型的事件（payload 里有 `task_id`），全部收尾后发 `batch_done`。断线时浏览器带 `Last-Event-ID` 续传，也可以用 `?after=` 显式指定。只读，连接断开不影响生成（见下方「后台生成」）。
+- `POST /api/generations/batches/{batch_id}/cancel`：停止这一轮还没完成的模型，返回 `stopping` 个数。已完成的照常结算，被停的写成 `cancelled`、不扣积分。
+- `GET /api/generations/{task_id}/events`：单个任务的只读事件流，旧前端兼容用。
 - `GET /api/conversations`：查询当前登录用户的会话历史列表，支持 `favorite_only=true` 和 `q=关键词`。分叉会话带 `forked_from`（来源会话 id、标题、第几轮、来源是否还在）。
 - `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树和多轮回看。`batches` 含从来源会话继承来的轮次（`inherited=true`，排在前面）。每个批次带 `kind` / `base_page_id`，每个节点带用量 `usage`、扣费 `billing` 和生成用时 `duration_ms`（任务 `finished_at - started_at`，未结束为空）。
 - `PATCH /api/conversations/{conversation_id}`：更新会话收藏状态。
@@ -143,7 +145,7 @@ journalctl -u star-page-backend.service -f
 - `models`：勾选的并行模型 key（可重复字段或单个 JSON 数组字符串）。
 - `files`：当前最多允许 3 个文件，单文件和单次总大小均不超过 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`pdf`、`txt`、`md`、`html`。后端会抽取为 Markdown/文本并合并到 LLM 上下文；PDF 仅保证可复制文本内容的抽取，扫描版图片 PDF 或加密 PDF 可能解析失败。
 
-如果抽取文本超过 5000 字符，`POST /api/generations` 只保存原文并立即返回任务。压缩发生在 SSE 生成流里：同一批次只调用一次，优先用 `qwen-plus`（通义 Flash）且关闭思考，多段同时压缩，整次总超时 120 秒。压缩结果写回该批次的全部分支后再进入页面生成；原来 prompt 里的图片地址会保留。短文本仍在创建时直接拼进 prompt。匿名用户若压缩失败，这次免费次数会退回。
+如果抽取文本超过 5000 字符，`POST /api/generations` 只保存原文并立即返回任务。压缩发生在后台生成流程里：同一批次只调用一次，优先用 `qwen-plus`（通义 Flash）且关闭思考，多段同时压缩，整次总超时 120 秒。压缩结果写回该批次的全部分支后再进入页面生成；原来 prompt 里的图片地址会保留。短文本仍在创建时直接拼进 prompt。匿名用户若压缩失败，这次免费次数会退回。
 
 Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client_max_body_size 60m`，用于覆盖 50MB 单次上传和 multipart 开销。
 
@@ -159,16 +161,34 @@ Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client
 
 LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY_INITIAL_DELAY_MS`、`LLM_RETRY_MAX_DELAY_MS`。底层客户端会重试可恢复的网络、超时、限流和 5xx 错误；资料压缩会对“调用成功但正文为空”的情况重试；页面生成会在正式 HTML 输出开始前失败或空输出时重试。页面生成后、上传前还会检测 Tailwind 运行时依赖，首次命中时追加修正提示并自动重试一次。
 
+## 后台生成
+
+模型调用由进程内的后台执行器跑完，和浏览器的事件流连接无关。用户新建对话、切到别的历史、刷新或关掉页面，生成都会继续，回来时从数据库回放进度再跟进实时事件。
+
+- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后立即 `start`，每个任务一个 `asyncio.Task`、各自一个数据库会话。`GENERATION_MAX_CONCURRENCY`（默认 24）限制同时调用模型的任务数，超出的保持 `pending` 排队。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
+- **停止**：先协作式中止，在两个模型 chunk 之间检查，写成 `cancelled`；3 秒内模型没吐下一个 chunk 就直接取消协程，再由兜底写库。模型已经完整输出后不再响应停止，页面照常发布。
+- **终态与收尾事件同事务**：`completed` / `failed` / `cancelled` 事件和任务终态在同一个事务里提交。事件流据此判断「任务结束」，不会出现状态已结束却漏掉 `completed` 的情况。
+- **事件流**（`app/services/generation_events.py`）：只读数据库，每个任务各有一个游标。原因是 `sequence` 全局递增，多个任务并发写入时提交顺序和 `sequence` 顺序不一致，用一个全局游标会永久漏掉晚提交的小号事件。续传 id 是按任务 id 排序后各任务游标用点连接的字符串。回放时把同一任务连续的 `reasoning_delta` 合成一条；执行器每写一条事件就唤醒订阅者，唤醒后等 0.2 秒合批再读库；空闲时每 15 秒发一行 `: ping`，避开 nginx 420 秒读超时。响应头带 `Cache-Control: no-cache, no-transform`，防止中间层压缩把实时事件攒住。
+- **启动扫尾**（lifespan，受 `GENERATION_STARTUP_SWEEP` 控制，默认开）：处理上一个进程留下的 `pending` / `running` 任务。最近活动时间（最后一条事件、`started_at`、`created_at` 取最晚）在 `GENERATION_RESUME_WINDOW_MINUTES`（默认 120）内的：没开始过的直接排队；中途被打断且 `retry_count < 1` 的清掉旧事件、写一条 `restarted`、从头重跑一次；其余标 `failed`（「服务重启中断」，不扣积分）。进程退出时不改任务状态，全部留给下次启动处理。
+- **单 worker 约束**：任务登记表在内存里，后端必须只跑一个 uvicorn worker。以后要多 worker 或多机，需要给任务加 owner 与心跳字段，再改扫尾逻辑。
+- **预览实例注意**：在 worktree 里起后端预览时，如果连的是线上库，必须设 `GENERATION_STARTUP_SWEEP=false`，否则一启动就会去重跑或标记线上的任务。最好连独立测试库。
+- **补救卡住的任务**：`script/requeue_stuck_generations.py --batch <id>` 给指定批次没完成的任务刷新最近活动时间，随后在窗口内重启后端，由扫尾重跑（见 `script/README.md`）。
+- **重启耗时**：有 SSE 连接时 uvicorn 会等连接关闭，systemd 到 `TimeoutStopSec=10s` 才强杀。强杀不影响正确性，被打断的任务由下次启动扫尾处理。
+- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。
+
 ## 生成过程事件
 
-`GET /api/generations/{task_id}/events` 使用 SSE 推送以下事件：
+批次事件流和单任务事件流使用同一组 SSE 事件，批次流的每条 payload 带 `task_id`：
 
 - `status`：普通状态文案。
-- `reasoning_delta`：模型流式返回的 `reasoning_content`。
+- `reasoning_delta`：模型流式返回的 `reasoning_content`（回放时同一任务连续的几段会合成一条）。
 - `answer_started`：模型进入正式 HTML 输出阶段，前端开始展示“页面创建中”。
 - `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。`model_output` 完成时携带真实 `input_tokens`/`output_tokens`。
 - `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；携带 `usage` 与 `billing`（扣掉的积分和授权优惠）。
 - `failed`：生成失败。
+- `cancelled`：用户停止了这个模型。
+- `restarted`：后端重启后这个任务被自动从头重跑，前端应清空它之前的思考和进度。
+- `batch_done`：仅批次流，这一轮所有模型都已收尾。
 
 `model_thinking` 节点承载模型 reasoning 内容，前端默认展开且支持收起。`model_output` 生成中优先展示估算 output tokens；完成后展示 API 返回的真实输入/输出 token，并在进度区下方显示消耗的积分与优惠。实际金额成本（按 `llm.models.json` 的 `pricing` 自算）只写入 `page_versions` 与 `credit_transactions` 供后台查看，不再下发给用户。
 

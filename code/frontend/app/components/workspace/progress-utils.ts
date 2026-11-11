@@ -59,6 +59,7 @@ export function outputTokenCount(run: WorkspaceRun): number {
 export function stageLabel(run: WorkspaceRun): string {
   if (run.status === "completed") return "完成";
   if (run.status === "failed") return "失败";
+  if (run.status === "cancelled") return "已停止";
   const running = run.progressSteps.find((step) => step.status === "running");
   switch (running?.id) {
     case "upload_file":
@@ -108,7 +109,7 @@ export function estimateProgress(run: WorkspaceRun, elapsedMs: number | null): n
   }
   if (output?.status === "completed") value = Math.max(value, 90);
   if (deploy?.status === "running") value = 94;
-  if (run.status === "failed") return Math.min(value, 92);
+  if (run.status === "failed" || run.status === "cancelled") return Math.min(value, 92);
   return Math.max(2, Math.min(99, value));
 }
 
@@ -147,5 +148,10 @@ export function sumOutputTokens(runs: WorkspaceRun[]): number {
 }
 
 export function isSettled(run: WorkspaceRun): boolean {
-  return run.status === "completed" || run.status === "failed";
+  return isEndedStatus(run.status);
+}
+
+/** 已经结束：成功、失败或被用户停止。 */
+export function isEndedStatus(status: WorkspaceRun["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }

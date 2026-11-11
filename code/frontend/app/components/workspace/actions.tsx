@@ -135,7 +135,9 @@ export function ResultActions({
           <span className="tb-address is-disabled">
             <LockIcon />
             <span className="tb-address-text">
-              <b>{run.status === "failed" ? "这个版本没有生成成功" : "页面生成中…"}</b>
+              <b>
+                {run.status === "failed" ? "这个版本没有生成成功" : run.status === "cancelled" ? "这个版本已停止生成" : "页面生成中…"}
+              </b>
             </span>
           </span>
         )}

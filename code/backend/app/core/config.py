@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     llm_retry_initial_delay_ms: int = Field(default=800, alias="LLM_RETRY_INITIAL_DELAY_MS")
     llm_retry_max_delay_ms: int = Field(default=5000, alias="LLM_RETRY_MAX_DELAY_MS")
 
+    # 后台生成：模型调用由进程内常驻任务跑完，与浏览器的事件流连接无关。
+    # 同时调用模型的任务上限，超出的保持 pending 排队。
+    generation_max_concurrency: int = Field(default=24, alias="GENERATION_MAX_CONCURRENCY")
+    # 启动扫尾：把上次进程留下的 pending/running 任务收尾。共用线上库的非生产实例必须关掉。
+    generation_startup_sweep: bool = Field(default=True, alias="GENERATION_STARTUP_SWEEP")
+    # 最近活动在这个窗口内、且还没自动重跑过的中断任务从头重跑一次，其余标失败。
+    generation_resume_window_minutes: int = Field(default=120, alias="GENERATION_RESUME_WINDOW_MINUTES")
+
     object_storage_provider: str = Field(default="aliyun", alias="OBJECT_STORAGE_PROVIDER")
     object_storage_bucket: str = Field(default="", alias="OBJECT_STORAGE_BUCKET")
     object_storage_region: str = Field(default="", alias="OBJECT_STORAGE_REGION")

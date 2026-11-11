@@ -221,9 +221,21 @@ python ../../script/promo-capture/compose_xhs_images.py
 - 屏幕外的 iframe 不跑入场动画，整页截图需先把视口拉到整页高度，脚本已处理。
 - 截图里的坐标按 CSS 像素算，不要按缩小后的预览图量。
 
-## 补跑卡住的生成
+## 重跑卡住的生成（推荐）
 
-`resume_stuck_generations.py` 把某个批次里仍是 `running`、还没写完页面的任务用原生成流程再跑一遍。结果写回原来的任务和页面，前端重新打开这条历史就能看到，不用用户再提交。
+后端启动时会扫尾：最近活动在 120 分钟内、还没自动重跑过的中断任务从头重跑一次，其余标失败（见 `code/backend/README.md` 的「后台生成」）。`requeue_stuck_generations.py` 用来把更早卡住的批次交给下一次启动扫尾：给指定批次里没完成的任务各写一条 `requeued` 事件，把最近活动刷成现在。
+
+```bash
+code/backend/.venv/bin/python script/requeue_stuck_generations.py --batch f8433bce --batch c3522807 --dry-run   # 先预演
+code/backend/.venv/bin/python script/requeue_stuck_generations.py --batch f8433bce --batch c3522807
+systemctl restart star-page-backend.service   # 必须在 120 分钟内
+```
+
+批次 id 可写前 8 位。已经自动重跑过一次的 `running` 任务会被提示，扫尾仍会把它标失败。重跑会再消耗一次模型 token。
+
+## 在脚本进程里补跑（备用）
+
+`resume_stuck_generations.py` 在脚本进程里直接调用模型，把某个批次里仍是 `running`、还没写完页面的任务再跑一遍，结果写回原来的任务和页面。只在后端没法接手时用，不要对后端正在跑的任务用。
 
 ```bash
 code/backend/.venv/bin/python script/resume_stuck_generations.py --batch-id <批次 uuid>

@@ -7,21 +7,24 @@ from dataclasses import asdict, dataclass, field
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
+from sqlalchemy import select
 from starlette.datastructures import FormData, UploadFile
 
 from app.core.auth import get_client_ip, get_optional_actor, resolve_actor
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from app.models.entities import PageAsset
+from app.models.entities import GenerationTask, PageAsset
 from app.schemas.conversations import ConversationForkSource
 from app.schemas.generation import GenerationCreateRequest, GenerationCreateResponse, GenerationRunItem
 from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
 from app.services.consent_service import training_consent_for
 from app.services.document_extractor import prepare_generation_input
-from app.services.generation_service import GenerationService
+from app.services.generation_events import HEARTBEAT, stream_task_events
+from app.services.generation_runner import CANCELLED_ERROR_MESSAGE, generation_runner
+from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_STATUSES, GenerationService
 from app.services.image_assets import discard_stored_images, store_uploaded_images
 from app.services.scenes.catalog import compose_scene_prompt, format_image_block, get_scene, normalize_utm_source, parse_guide
-from app.services.sse import format_sse
+from app.services.sse import SseEvent, format_sse, format_sse_comment
 
 router = APIRouter(prefix="/api/generations", tags=["generations"])
 
@@ -136,6 +139,9 @@ async def create_generation(request: Request, response: Response) -> GenerationC
         finally:
             if stored_images and not created_ok:
                 await discard_stored_images(stored_images)
+
+        # 批次和图片都已提交，交给后台跑；浏览器之后只订阅事件，断开也不影响生成。
+        generation_runner.start([run.task_id for run in creation.runs], creation.batch_id)
 
         return GenerationCreateResponse(
             conversation_id=creation.conversation_id,
@@ -253,27 +259,117 @@ def _is_truthy(value: object) -> bool:
     return bool(value)
 
 
-@router.get("/{task_id}/events")
-async def stream_generation_events(task_id: uuid.UUID, request: Request) -> StreamingResponse:
+# no-transform：不让中间层（Next 开发代理、CDN 等）压缩事件流，压缩会把小块实时事件攒在缓冲里不发。
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+
+@dataclass(frozen=True)
+class _BatchTaskRef:
+    task_id: uuid.UUID
+    status: str
+    requested_by_user_id: uuid.UUID
+
+
+async def _load_owned_batch_tasks(request: Request, batch_id: uuid.UUID) -> list[_BatchTaskRef]:
+    """读批次里的任务并校验归属。不存在或不属于当前操作者都按 404 处理，不暴露批次是否存在。"""
     async with AsyncSessionLocal() as session:
         user = await get_optional_actor(session, request)
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
+        result = await session.execute(
+            select(GenerationTask.id, GenerationTask.status, GenerationTask.requested_by_user_id).where(
+                GenerationTask.batch_id == batch_id
+            )
+        )
+        tasks = [_BatchTaskRef(row.id, row.status, row.requested_by_user_id) for row in result.all()]
+    if not tasks or any(task.requested_by_user_id != user.id for task in tasks):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="生成批次不存在")
+    return tasks
 
+
+def _event_stream_response(request: Request, events) -> StreamingResponse:
     async def event_generator():
-        async with AsyncSessionLocal() as session:
-            service = GenerationService(session)
-            async for event in service.run_or_replay(task_id, user):
-                if await request.is_disconnected():
-                    break
-                yield format_sse(event)
+        async for item in events:
+            if await request.is_disconnected():
+                break
+            yield format_sse_comment("ping") if item is HEARTBEAT else format_sse(item)
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+@router.get("/batches/{batch_id}/events")
+async def stream_batch_events(batch_id: uuid.UUID, request: Request, after: str | None = None) -> StreamingResponse:
+    """一轮一条连接：带这一轮所有模型的事件（payload 里有 task_id），全部收尾后发 batch_done。
+
+    断线重连时浏览器自动带 Last-Event-ID，从断点续传；也可以用 ?after= 显式指定。
+    """
+    tasks = await _load_owned_batch_tasks(request, batch_id)
+    last_event_id = request.headers.get("last-event-id") or after
+    events = stream_task_events(
+        session_factory=AsyncSessionLocal,
+        runner=generation_runner,
+        task_ids=[task.task_id for task in tasks],
+        signal_key=batch_id,
+        last_event_id=last_event_id,
     )
+    return _event_stream_response(request, events)
+
+
+@router.post("/batches/{batch_id}/cancel")
+async def cancel_batch(batch_id: uuid.UUID, request: Request) -> dict[str, object]:
+    """停止这一轮里还没完成的模型。已完成的照常结算，被停的不扣积分。"""
+    tasks = await _load_owned_batch_tasks(request, batch_id)
+    stopping = 0
+    for task in tasks:
+        if task.status in TERMINAL_STATUSES:
+            continue
+        if await generation_runner.cancel(task.task_id):
+            stopping += 1
+            continue
+        # 不在本进程里调用模型（还在排队或是孤儿任务）：直接写成已停止。
+        async with AsyncSessionLocal() as session:
+            changed = await GenerationService(session).finish_unfinished_task(
+                task.task_id,
+                status="cancelled",
+                message=CANCELLED_ERROR_MESSAGE,
+                user_message=CANCELLED_USER_MESSAGE,
+            )
+        if changed:
+            stopping += 1
+            generation_runner.notify(batch_id)
+    return {"batch_id": str(batch_id), "stopping": stopping}
+
+
+@router.get("/{task_id}/events")
+async def stream_generation_events(task_id: uuid.UUID, request: Request) -> StreamingResponse:
+    """单个任务的事件流（旧前端在用）。只读回放加实时跟进，不会触发或打断生成。"""
+    async with AsyncSessionLocal() as session:
+        user = await get_optional_actor(session, request)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
+        task = await session.get(GenerationTask, task_id)
+
+    async def single(message: str):
+        yield SseEvent("failed", {"type": "failed", "message": message})
+
+    if task is None:
+        return _event_stream_response(request, single("生成任务不存在"))
+    if task.requested_by_user_id != user.id:
+        return _event_stream_response(request, single("无权访问该生成任务"))
+
+    if task.status == "pending" and not generation_runner.is_active(task.id):
+        # 兜底：没人在跑的 pending 任务交给后台；正常情况下创建批次时就已经启动了。
+        generation_runner.start([task.id], task.batch_id)
+
+    events = stream_task_events(
+        session_factory=AsyncSessionLocal,
+        runner=generation_runner,
+        task_ids=[task.id],
+        signal_key=task.batch_id or task.id,
+        last_event_id=request.headers.get("last-event-id"),
+    )
+    return _event_stream_response(request, events)

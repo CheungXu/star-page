@@ -3841,6 +3841,25 @@ h1 {
   line-height: 1.7;
 }
 
+/* 用户主动停止：中性灰，和失败的红色区分开 */
+.preview-cell-error.is-stopped p {
+  color: var(--color-text-tertiary);
+}
+
+.dot.stopped {
+  background: var(--color-text-muted);
+}
+
+.run-status-chip.is-cancelled {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-text-tertiary);
+}
+
+/* 生成中的发送按钮变成「停止生成」：可点击，不沿用禁用态的半透明 */
+.composer-send.is-stop {
+  cursor: pointer;
+}
+
 /* 退出聚焦按钮 */
 .exit-focus-button {
   margin-left: 12px;

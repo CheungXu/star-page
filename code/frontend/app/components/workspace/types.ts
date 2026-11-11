@@ -1,4 +1,5 @@
-export type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed";
+/** cancelled：用户点了「停止生成」，不算失败，界面显示「已停止」。 */
+export type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed" | "cancelled";
 
 export type ProgressStepId =
   | "upload_file"
