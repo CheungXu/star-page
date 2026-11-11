@@ -90,7 +90,7 @@ journalctl -u star-page-backend.service -f
 
 用户侧（`routes_billing.py`）：
 
-- `GET /api/billing/account`：返回积分余额（登录）或剩余免费次数（匿名/未分配 cookie 的访客返回合成的满额免费态）。
+- `GET /api/billing/account`：返回当前可用积分（登录）或剩余免费次数（匿名/未分配 cookie 的访客返回合成的满额免费态）。登录用户另有冻结中积分、欠费、是否已充值和剩余旗舰首秀次数；`total_balance` 只计可用，不含冻结。
 - `GET /api/billing/transactions`：当前用户积分流水（登录或带匿名 cookie 的访客）。
 - `GET /api/billing/packages`：充值套餐（DB `credit_packages`，启动 seed mock）。
 - `POST /api/billing/recharge`：建单，**只收 `package_key`（+可选 `provider`）**，金额/积分服务端按套餐计算（价格服务端权威）。需登录。`provider=wechat` 走微信 Native 下单并返回二维码链接 `code_url`；`provider=mock` 仅非生产；不传时微信已配置则默认微信、否则回退 mock。
@@ -117,7 +117,7 @@ journalctl -u star-page-backend.service -f
 
 管理员维护：管理员手机号存于数据库 `admin_phones` 表（迁移 `014_admin_flag.sql` 创建并引导初始管理员）。增删管理员用 `code/backend/.venv/bin/python script/set_admin.py {list|grant <手机号> [--note 备注]|revoke <手机号>}`，可预授权尚未注册的手机号；变更即时生效，无需重启。
 
-计费实现位于 `app/services/billing/`：`pricing.py`（`扣费积分 = max(ceil(原始成本×倍率×100), 1)`）、`account.py`（钱包：赠送/充值入账、生成结算，扣减顺序 gift→paid，全部按 `idempotency_key` 幂等）、`ledger.py`（复式过账，借贷必平且按 `(event_type, event_ref)` 幂等）。倍率与匿名围栏参数读 `config/billing.json`。
+计费实现位于 `app/services/billing/`：`pricing.py`（标准积分向上取整，授权折扣向下取整且不低于 `1.25x` 原始成本）、`account.py`（提交时 `FOR UPDATE` 冻结预留，完成时多退少补并封顶记欠费，充值入账时冲抵欠费；扣减顺序 gift→paid，全部按 `idempotency_key` 幂等）、`ledger.py`（复式过账，借贷必平且按 `(event_type, event_ref)` 幂等）。预授权和单纯解冻不写消费流水。倍率、预留额和匿名围栏读 `config/billing.json`。管理端用户余额和预收负债按「可用 + 冻结」统计。技能路由和长文档压缩按各自模型单价计入成本；格式重试只向用户收成功那一轮，账上记两轮真实消耗。详见 `app/services/billing/README.md`。
 
 ### 运营埋点与运营后台接口
 
@@ -133,13 +133,13 @@ journalctl -u star-page-backend.service -f
 
 - **授权快照**：`users.allow_training`（默认开）是当前开关；`generation_batches` / `generation_tasks` / `page_versions` / `page_assets` / `analytics_events` 的 `training_consent` 记录**数据产生那一刻**的状态：`granted` / `denied` / `legacy`（协议上线前的数据，或尚未看到更新告知的老用户）。判定在 `consent_service.training_consent_for`。**训练取数口径**：`training_consent='granted'` 且所属用户当前 `allow_training=true`。
 - **同意记录**：`user_consents` 只追加，事件 `login_agree`（登录勾选，带 `agreement_version`）/ `notice_ack`（老用户点「知道了」）/ `anon_notice`（匿名首访）/ `preference`（开关变更）/ `merge_opt_out`（匿名关过、登录归并时带到正式账号）。协议版本常量 `POLICY_VERSION` 与前端 `LEGAL_POLICY_VERSION` 必须同步。
-- **授权优惠**：倍率读 `config/billing.json.training_discount_rate`（限 0.5–1.0，当前 0.9）。按批次快照判断，`granted` 时 `apply_training_discount` 向下取整（至少 1 积分），优惠额记 `credit_transactions.training_discount_credits`；事后关开关不补扣。前台文案统一写「积分优惠」，不写死折数，方便直接改配置调价。
+- **授权优惠**：倍率读 `config/billing.json.training_discount_rate`（限 0.5–1.0，当前 0.92）。按批次快照判断，`granted` 时 `apply_training_discount` 向下取整，同时不低于 `cost_floor_multiplier`（当前 1.25）倍原始成本，优惠额记 `credit_transactions.training_discount_credits`；事后关开关不补扣。前台文案统一写「积分优惠」，不写死折数，方便直接改配置调价。
 - **匿名结构样本**：`granted` 的生成结算后，`training_samples.store_training_sample` 抽取去掉文字/链接/联系方式的 HTML 骨架入 `training_samples`（不含 user/page id，按 `content_hash` 去重，`EXTRACTOR_VERSION` 区分抽取规则），关开关不撤回。
 - **成本只给管理员看**：生成进度、完成事件、会话详情和用户积分流水接口只向用户返回扣掉的积分和优惠（`credits_charged` / `discount_credits`），不再返回 `cost`、`raw_cost_cny`、`revenue_cny`；回放旧事件时也会去掉 `cost`。实际金额仍记在 `page_versions` 和 `credit_transactions` 里，供 `/admin` 与 `/ops` 读取。
 - 接口：`GET / PUT /api/privacy/preferences`（PUT 会给未登录访客懒建匿名身份）、`POST /api/privacy/notice-ack`。`/api/auth/me` 返回 `allow_training`、`needs_policy_notice`。
 - **举报**：公开页浮标「举报」跳平台 `/report?page=&slug=`（生成页 CSP 禁止直接请求接口）。`GET /api/reports/target`、`POST /api/reports`（同 IP 同页 24h 一次、每 IP 每日 20 次）；管理端 `GET /api/admin/reports?status=pending|taken_down|rejected|all`、`POST /api/admin/reports/{id}/review`（`takedown` / `reject` / `restore`）。下架即 `pages.moderation_status='blocked'`，`/p` 与 `/u` 返回 451「该页面因违规已下架」，不可再发布，案例墙同步过滤。
 
-匿名体系：未登录访客经 `resolve_actor` 懒签发 HMAC 签名 `sp_anon` cookie 并建 `is_anonymous` 用户，免费 2 次生成；高价模型后端强校验拒绝（匿名只允许 `anon_allowed_models`、单次 ≤ `anon_max_models_per_gen`）；按 IP 每日限制签发匿名 id 数与免费次数。手机验证码登录时把匿名会话/页面归并到正式账号并首次赠送 1000 积分（幂等）。
+匿名体系：未登录访客经 `resolve_actor` 懒签发 HMAC 签名 `sp_anon` cookie 并建 `is_anonymous` 用户，免费 1 次生成（读访客行时加行锁，避免并发把免费次数用穿）；高价模型后端强校验拒绝（匿名只允许 `anon_allowed_models`、单次 ≤ `anon_max_models_per_gen`）；按 IP 每日限制签发匿名 id 数与免费次数。手机验证码登录时把匿名会话/页面归并到正式账号，并首次赠送 450 积分和 1 次旗舰双模首秀（幂等）。未充值用户在首秀用完后只能选轻量模型。
 
 `POST /api/generations` 同时兼容 JSON 和 `multipart/form-data`。上传文件时表单字段为：
 

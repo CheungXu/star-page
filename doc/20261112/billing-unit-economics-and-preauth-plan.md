@@ -1,7 +1,7 @@
 # 计费单位经济重构与防透支预授权改造方案
 
 **日期**：2026-11-12  
-**状态**：方案待确认（确认后进入编码与数据库迁移）  
+**状态**：已上线（2026-11-12）  
 **关联前序文档**：`doc/20260614/billing-system-plan.md`、`doc/20260615/billing-finance-enhancements-record.md`、`doc/20261015/training-consent-report-discount-plan.md`
 
 ---
@@ -20,11 +20,11 @@
 
 3. **「先上车后补票」并发透支窗口（现网已真实触发）**
    - 前置校验 `ensure_can_start_batch` 仅判断当时 `paid_balance + gift_balance > 0`，既未加行锁，也未预冻结积分或统计在途排队任务；结算时 `deduct = min(credits, total_balance)` 在余额归零后静默免单。
-   - 2026-11-11 现网真实案例（批次 `d88e9935`）：用户在约 3,105 积分时连续并发提交 4 轮 × 9 模型（共 36 个任务）全部过检；`glm-5.3` 扣完最后 237 积分后，同批 `qwen3.8-max` 消耗 **¥3.80** 真实算力却实扣 **0 积分**。极端情况下，剩 1 积分的脚本账号可瞬间塞入数百个顶配任务清空云账户预存款。
+   - 2026-11-11 现网真实案例：同一用户在 11-11 00:10～00:53（北京时间）分四次提交了 4 个 9 模型批次，每次提交时余额都大于 0，全部放行，积分要到出稿后才扣。这 36 个任务当晚卡住，13:51 后台执行器上线时被扫尾一起自动重跑（25 个任务记有 `restarted` 事件）。重跑中 `glm-5.3` 扣完最后 237 积分后，批次 `d88e9935` 里的 `qwen3.8-max` 消耗 **¥3.80** 真实算力却实扣 **0 积分**。
+   - 结论：漏洞不在「同一时刻连发」，而在「提交只查余额 > 0、出稿才扣」。提交时间分散、后台重跑、排队任务都会把余额扣穿；剩 1 积分的账号也能排进任意多个任务。
 
-4. **三处代码级隐性算力漏损（账外成本）**
+4. **代码级隐性算力漏损（账外成本，均已修补，见 5.4）**
    - 技能分类路由（`selector.py`）直接调用用户所选旗舰模型且开启深度思考去选一个分类词，12 秒超时丢弃且不记成本；
-   - 超长文档压缩（占总任务 12.6%）未汇总返回 `LlmUsage`，未入账也未计费；
    - Tailwind 违规自动重跑在第二轮前清空了 `generation_usage = None`，抹掉了首轮数万 Token 的 `6001` 算力成本记录。
 
 ---
@@ -37,12 +37,15 @@
 | --- | --- | --- | --- |
 | 模型定价倍率 | 主力 1.2x / 顶配 1.5x | **轻量 2.0x / 主力 1.65x / 顶配 1.80x** | 轻量单次仍仅 0.18~0.50 元，全线恢复健康毛利 |
 | 训练授权优惠 | 90 折，向下取整无底线 | **92 折，向下取整 + `1.25x` 原始成本硬地板** | 既保留每次可见整数立减，又彻底消灭小额负毛利 |
-| 充值套餐返赠 | 0% / 10% / 15% / 25% | **首充 ¥19.9(+5%) / ¥50(+6%) / ¥100(+10%) / ¥500(+15%)** | 顶格 ¥500 档叠满折扣与损耗后净现金毛利仍 >16%，综合净毛利 ~31% |
-| 匿名与注册补贴 | 匿名 2 轮；注册送 1000 积分全放开 | **匿名 1 轮；注册送 400 积分 + 1 次旗舰双模首秀券** | 保留旗舰首秀惊艳转化钩子，单注册免费成本从 ¥9.87 降至 **~¥2.10（降 79%）** |
-| 防透支机制 | 仅判余额 > 0，扣光免单 | **P90 预授权冻结 + 多退 + 超长页 ≤100 积分欠费下次充抵** | 单用户最大极端敞口从无限大锁死在 ≤¥1.00，且不毁用户长文成果 |
+| 充值套餐返赠 | 0% / 10% / 15% / 25% | **首充 ¥19.9(+5%) / ¥50(+6%) / ¥100(+10%) / ¥500(+15%)** | ¥500 档叠满 92 折、15% 赠送、0.6% 手续费和 3% 损耗后，主力模型净现金毛利约 21%，顶配约 28%，轻量约 35%（由费率公式直接算出） |
+| 匿名与注册补贴 | 匿名 2 轮；注册送 1000 积分全放开 | **匿名 1 轮；注册送 450 积分 + 1 次旗舰双模首秀券** | 保留旗舰首秀转化钩子，单注册用户免费成本从 ¥9.87 降至 **约 ¥3.1（降约 69%）**，算法见 3.1 |
+| 防透支机制 | 仅判余额 > 0，扣光免单 | **预授权冻结 + 多退 + 超长页 ≤100 积分欠费下次充抵** | 单任务超出预留的部分，用户最多欠 ¥1.00；再超出的极端尾差由平台承担（见 4.2） |
 | 取消任务规则 | 点击停止一律 0 积分 | **首字前或系统报错全退；吐字超 2000 tok 主动停止按 1.0x 成本保底** | 封堵黑产卡点取消白嫖算力，系统故障仍由平台全额兜底 |
 
-> **协议兼容性核验**：现行《积分充值服务协议》（2026-10-15 生效）第 1.4 条已约定「各项服务消耗的积分，以生成前页面上的提示为准……享受授权积分优惠（优惠幅度以平台当前规则为准）」，本次调优与现行法律文本完全兼容，**无需老用户重签协议**，仅需按约在前端展示预计积分提示。
+> **协议兼容性核验**：现行《积分充值服务协议》（2026-10-15 生效）第 1.4 条约定「各项服务消耗的积分，以生成前页面上的提示为准……享受授权积分优惠（优惠幅度以平台当前规则为准）」。调整倍率、授权优惠幅度和套餐**不需要老用户重签**，生成前展示预计积分即可。
+> 但「中途停止按已生成部分收费」和「超出预留记欠费、欠费未补不能开新一轮」是新的扣费规则，第 1.4 条覆盖不到：同步修订《积分充值服务协议》写入这两条即可，界面不额外加文字说明，避免变繁琐（见 4.2 第 6 条）。
+>
+> **测算口径说明**：配套画布里的综合毛利、月度现金流使用了假设的模型组合（轻量 15% / 主力 60% / 顶配 25%）、客单价和当月核销比例，只作方案间相对比较，不是预测值。
 
 ---
 
@@ -60,12 +63,17 @@
 | 轻量引流层 | `deepseek-v4.1-flash` | DeepSeek V4.1 Flash | ¥0.25 | ¥0.41 | **2.00x** | 85 | 79 | 匿名 + 注册可用 |
 | 主力默认层 | `deepseek-v4-pro` | DeepSeek V4 Pro | ¥0.46 | ¥0.56 | **1.65x** | 95 | 88 | 充值后解锁 |
 | 主力默认层 | `doubao` | 豆包 Seed 2.1 Pro | ¥0.47 | ¥0.61 | **1.65x** | 105 | 97 | 首秀券 1 次 / 充值解锁 |
-| 主力默认层 | `qwen` | 通义千问 3.8 Max | ¥1.30 | ¥1.95 | **1.65x** | 300 | 276 | 首秀券 1 次 / 充值解锁 |
+| 主力默认层 | `qwen` | 通义千问 3.8 Max | ¥1.30 | ¥1.95 | **1.65x** | 325 | 299 | 首秀券 1 次 / 充值解锁 |
 | 顶配高思考层 | `glm-5.3` | 智谱 GLM-5.3 | ¥1.34 | ¥1.87 | **1.80x** | 340 | 313 | 充值后解锁 |
 | 顶配高思考层 | `kimi-k3.1-pro` | Kimi K3.1 Pro | ¥2.62 | ¥3.31 | **1.80x** | 600 | 552 | 充值后解锁 |
 
 - **超长资料压缩附加预留**：当上传资料提取文本超过 `5,000` 字符需调用压缩模型时，本批次额外增加预冻结 **`15` 积分**。
-- **首秀金额精准衔接**：新注册用户获赠 `400` 积分 + `1` 次旗舰双模首秀资格，默认勾选 `qwen + doubao` 时，授权预冻结为 `276 + 97 = 373` 积分（`< 400`），一步顺畅跑通！按均值实扣约 `270` 积分并退回 `103` 积分，剩余约 `130` 积分可继续用轻量模型微调 2～4 轮。
+- **预留额 = 实测 P90 原始成本 × 新倍率，向上取整到 5**。`qwen` 当前授权期样本 P90 为 ¥1.95，全量 23 个样本 P90 为 ¥1.85，按前者取 325。
+- **样本量很小，以上预留额都是临时值**：当前授权期样本 `qwen` 13 个、`glm-5.3` 13 个、`kimi-k3.1-pro` 和 `glm-5.3-flash` 各 4 个。上线后每周按最近 30 天真实结算重算 P90 并更新 `model_hold_credits`；同时统计「实扣超出预留」的任务占比，目标不高于 10%。
+- **已知尾部风险**：`qwen` 历史最高单次 ¥3.80，按 1.65x 约 627 积分，超出预留约 300；用户最多记 100 积分欠费，其余约 200 积分由平台承担。
+- **首秀金额衔接**：新注册用户获赠 `450` 积分 + `1` 次旗舰双模首秀资格。仍有首秀券或已充值时，默认勾选 `qwen + doubao`，授权预冻结为 `299 + 97 = 396` 积分（`< 450`），一次跑通。按均值实扣约 `268` 积分（`qwen` 197 + `doubao` 71），剩余约 `180` 积分，够用轻量双模（约 52 积分/轮）再微调 3 轮左右。
+- **首秀用完后的默认勾选**：从未充值且 `free_flagship_batches_remaining = 0` 时，默认改为 `qwen-plus + doubao-code`。本机若还存着旗舰勾选，打开页面时整组改回这两个轻量模型。可用积分被在途任务全部冻住、且没有欠费时，再次提交直接进入充值页。
+- **单注册用户免费成本**：首秀原始成本约 ¥1.77 + 剩余 182 积分按轻量 1.84 倍（2.0 × 0.92）折回原始成本约 ¥0.99 + 短信 ¥0.045 + 匿名 1 轮轻量双模约 ¥0.28，合计约 **¥3.1**（现状 ¥9.87）。
 
 ### 3.2 结算取整与成本地板公式
 
@@ -91,9 +99,10 @@
 
 ### 3.4 存量老用户平滑过渡规则
 
-- 已充值老用户（`total_recharged_credits > 0`）：直接视为已解锁全部旗舰模型与付费并发上限（最多 9 路在途），存量 `paid_balance` 与 `gift_balance` 原封不动。
-- 未充值老注册用户：保留现有积分余额不变，迁移脚本统一初始化 `free_flagship_batches_remaining = 1`，体验不降级。
+- 已充值老用户（`total_recharged_credits > 0`）：直接视为已解锁全部旗舰模型，存量 `paid_balance` 与 `gift_balance` 原封不动。
+- 未充值老注册用户：保留现有积分余额不变，迁移脚本只给这类账户补 `free_flagship_batches_remaining = 1`；该列默认值为 0，匿名账户和已充值账户不发首秀券，避免对账时出现无意义的次数。
 - 迁移前处于 `pending` 的未支付充值订单：支付回调仍按订单行上已快照的 `amount_cny / base_credits / bonus_credits` 履约入账。
+- **部署瞬间仍在排队或运行的任务**：它们创建时没有预留（`reserved_* = 0`），结算时按老逻辑扣到 0 为止。上线前先确认没有在途任务，或接受这一批按老规则结算；新提交的任务一律走预授权。
 
 ---
 
@@ -111,14 +120,14 @@ sequenceDiagram
 
   FE->>API: 提交生成 (选中模型列表 + 资料)
   API->>DB: SELECT ... FOR UPDATE 锁住用户钱包行
-  API->>DB: 校验 debt_credits == 0 且 在途任务数未超限
-  alt 可用余额 < 批次 P90 预冻结总额 H
+  API->>DB: 校验 debt_credits == 0
+  alt 可用余额 < 批次预冻结总额 H
     DB-->>API: 回滚事务，分文未动
     API-->>FE: HTTP 402 (返回当前可用、所需预留 H、可降级模型建议)
     FE->>FE: 弹出「首充解锁 / 单模型降级 / 换极速双模」三选一卡片
   else 可用余额 >= H (且满足模型解锁条件)
     API->>DB: 从 gift/paid 扣减 H 转入 frozen_gift/frozen_paid；若用首秀券则扣减次数；记录每任务 reserved_* 后 COMMIT
-    API->>RUN: 投递后台异步执行
+    API->>RUN: 投递后台执行（超出个人同时生成上限的任务照常排队，预留已冻结）
     API-->>FE: 返回 batch_id，建立 SSE
     RUN->>LLM: 流式调用模型 (路由固定走 qwen-plus 无思考)
     alt 正常生成完成 (Confirm)
@@ -126,32 +135,39 @@ sequenceDiagram
     else 首字前取消 / 系统或上游报错失败 (Cancel-Full)
       RUN->>DB: 本任务 reserved_* 100% 原路退回 gift/paid；若首秀券整批全败则退回首秀券
     else 输出超 2000 tokens 后用户主动点击停止 (Cancel-Partial)
-      RUN->>DB: 按已输出字符估算 1.0x 原始成本保底扣费，其余 reserved_* 原路退回
+      RUN->>DB: 按已收到的思考文本 + 正文估算输出 Token，按 1.0x 原始成本扣费，其余 reserved_* 原路退回
     end
   end
 ```
 
 ### 4.2 关键业务边界约定
 
-1. **在途并发上限（防队列堆积）**：
-   - 匿名用户：同时 `pending + running` 任务数 ≤ **2**；
-   - 未充值注册用户：同时 `pending + running` 任务数 ≤ **3**；
-   - 已充值用户：同时 `pending + running` 任务数 ≤ **9**（或 `users.generation_concurrency` 指定值）。
+1. **同时生成上限沿用现有排队机制**（`doc/20261111/per-user-generation-limit.md`）：
+   - 每用户同时生成默认 10 个模型，超出的按提交顺序排队，全站上限 48，均不变；不新增「超限直接拒绝」。
+   - 防透支由预授权负责：排队中的任务在提交时已冻结积分，所以无论排多少，总冻结额都不会超过用户余额。
 2. **小额欠费桶 `debt_credits` 规则**：
-   - 仅作为「已通过预授权、但单次生成字数超出 P90 预留且账户无剩余可用积分」时的温和交付兜底，单任务封顶记入 **100 积分（¥1.00）**，超出 100 的极端尾差由平台吸收，不让用户负债失控。
-   - 当 `debt_credits > 0` 时，账号禁止发起下一轮新生成（前端顶部余额区提示「上轮超长页面待补缴 N 积分，充值后自动抵扣」）。
-   - 任何充值入账（`apply_recharge`）或后台人工调账赠币时，优先自动冲抵 `debt_credits`（确认对应递延收入），剩余部分进入可用余额。
+   - 仅作为「已通过预授权、但单次生成超出预留且账户无剩余可用积分」时的交付兜底，单任务封顶记入 **100 积分（¥1.00）**，超出 100 的尾差由平台承担。
+   - 当 `debt_credits > 0` 时，账号禁止发起下一轮新生成（前端余额区提示「上轮超长页面待补缴 N 积分，充值后自动抵扣」）。已在排队或运行的任务不受影响。
+   - 任何充值入账或后台赠送积分时，优先冲抵 `debt_credits`，剩余部分进入可用余额。
+   - **记账**：结算产生欠费时，`consume` 流水与凭证只按实扣积分确认收入，COGS 按全额原始成本记；欠费部分不确认收入。冲抵时另写一条流水（类型 `debt_settle`，按冲抵所用桶记 `paid_delta / gift_delta`，幂等键 `debt_settle:{recharge_order_id 或 调账单号}`），并过一张凭证：付费积分冲抵「借 2001 / 贷 5001」，赠送积分冲抵「借 2002 / 贷 5001」，金额均为冲抵积分 × 0.01。`credit_transactions.type` 的 CHECK 约束需加入 `debt_settle`（见 5.1）。
 3. **复式记账时点不变**：
    - **预授权冻结（Try）与解冻退回（Cancel）仅在 `credit_accounts` 内部桶之间腾挪，不产生 `credit_transactions` 消费行，也不触发 `5001 / 6001` 复式过账**，确保总账绝对干净；仅在最终结算（正常完成，或超 2000 tokens 主动取消保底结算）时写入一条幂等 `consume` 流水与复式凭证。
 4. **重启扫尾（`sweep`）资金守恒**：
-   - 若中断任务进入 `plan.rerun`（自动重跑一次）：沿用该任务身上已挂的 `reserved_gift_credits / reserved_paid_credits` 继续跑，不重复冻结；
-   - 若中断任务进入 `plan.fail`（超时或已重跑过标失败）：在标 `failed` 的同一数据库事务内，将该任务未结算的 `reserved_*` 全额原路解冻回 `gift_balance / paid_balance`，并将 `reservation_released` 置为 `true`。
+   - 若中断任务进入 `plan.rerun` 或 `plan.start`：沿用该任务已挂的 `reserved_gift_credits / reserved_paid_credits` 继续跑，不重复冻结；结算仍以预留为上限加 ≤100 欠费，后台重跑不能再把余额扣穿（11-11 事故的直接原因）。
+   - 若中断任务进入 `plan.fail`：在标 `failed` 的同一数据库事务内，将该任务未结算的 `reserved_*` 全额原路解冻回 `gift_balance / paid_balance`，并将 `reservation_settled` 置为 `true`。
+   - 每日巡检断言：每个账户的 `frozen_paid_balance + frozen_gift_balance` 等于其 `reservation_settled = false` 的任务 `reserved_*` 之和。
+5. **所有读余额的地方改为「可用 + 冻结」口径**：
+   - 冻结会把积分从 `paid_balance / gift_balance` 移走。以下位置原来按 `paid_balance` 计算，需改为可用加冻结：`routes_admin.py` 与 `schemas/admin.py` 的用户余额与预收负债展示、`routes_admin_analytics.py` 与 `schemas/analytics.py` 的余额统计、充值协议第 3.2 条「停止运营按未用付费积分退款」和第四条「违规账号付费积分退回」的计算。
+   - 退款或注销账号前，先等在途任务结算或全部解冻，再按「可用 + 冻结 − 欠费」计算可退付费积分。
+6. **新扣费规则的告知**：
+   - 界面保持克制：生成前只简短显示预计预留积分（多退），点击停止直接执行，不在界面上加停止收费或欠费规则的文字说明。
+   - 同步修订《积分充值服务协议》第 1.4 条，写入停止收费与欠费规则，更新生效日期；老用户沿用现有告知条提示一次，不强制重签。
 
 ---
 
 ## 五、技术实施规范（确认后按此编码）
 
-### 5.1 数据库迁移脚本：`code/backend/migrations/023_billing_preauth_and_tier_pricing.sql`
+### 5.1 数据库迁移脚本：`code/backend/migrations/024_billing_preauth_and_tier_pricing.sql`
 
 全部采用幂等 DDL，支持安全重复执行：
 
@@ -163,7 +179,18 @@ ALTER TABLE credit_accounts
   ADD COLUMN IF NOT EXISTS frozen_paid_balance bigint NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS frozen_gift_balance bigint NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS debt_credits bigint NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS free_flagship_batches_remaining integer NOT NULL DEFAULT 1;
+  ADD COLUMN IF NOT EXISTS free_flagship_batches_remaining integer NOT NULL DEFAULT 0;
+
+-- 只给未充值的已注册用户补 1 次首秀券（重复执行无副作用：已用掉的不会被补回，因为条件里要求从未发过）
+ALTER TABLE credit_accounts
+  ADD COLUMN IF NOT EXISTS flagship_trial_granted boolean NOT NULL DEFAULT false;
+UPDATE credit_accounts ca
+SET free_flagship_batches_remaining = 1, flagship_trial_granted = true
+FROM users u
+WHERE u.id = ca.user_id
+  AND u.is_anonymous = false
+  AND ca.total_recharged_credits = 0
+  AND ca.flagship_trial_granted = false;
 
 ALTER TABLE credit_accounts DROP CONSTRAINT IF EXISTS chk_credit_accounts_frozen_paid;
 ALTER TABLE credit_accounts DROP CONSTRAINT IF EXISTS chk_credit_accounts_frozen_gift;
@@ -187,7 +214,13 @@ ALTER TABLE generation_tasks
   ADD COLUMN IF NOT EXISTS reserved_gift_credits bigint NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS reservation_settled boolean NOT NULL DEFAULT false;
 
--- 4. credit_packages：上线首充包与轻量包，更新阶梯赠币（保留历史订单引用，旧 starter_10 下架）
+-- 4. 积分流水类型增加欠费冲抵
+ALTER TABLE credit_transactions DROP CONSTRAINT IF EXISTS chk_credit_transactions_type;
+ALTER TABLE credit_transactions
+  ADD CONSTRAINT chk_credit_transactions_type
+  CHECK (type IN ('recharge', 'gift', 'consume', 'refund', 'adjust', 'expire', 'debt_settle'));
+
+-- 5. credit_packages：上线首充包与轻量包，更新阶梯赠币（保留历史订单引用，旧 starter_10 下架）
 UPDATE credit_packages SET is_active = false, updated_at = now() WHERE key = 'starter_10';
 
 INSERT INTO credit_packages (key, title, amount_cny, base_credits, bonus_credits, is_active, sort_order)
@@ -234,7 +267,7 @@ ON CONFLICT (key) DO UPDATE SET
     "deepseek-v4.1-flash": 85,
     "deepseek-v4-pro": 95,
     "doubao": 105,
-    "qwen": 300,
+    "qwen": 325,
     "glm-5.3": 340,
     "kimi-k3.1-pro": 600
   },
@@ -246,7 +279,7 @@ ON CONFLICT (key) DO UPDATE SET
   "cancel_charge_min_output_tokens": 2000,
   "cancel_cost_multiplier": 1.0,
   "free_trial_generations": 1,
-  "signup_bonus_credits": 400,
+  "signup_bonus_credits": 450,
   "signup_flagship_trial_batches": 1,
   "free_registered_allowed_models": [
     "qwen-plus",
@@ -255,9 +288,6 @@ ON CONFLICT (key) DO UPDATE SET
     "deepseek-v4.1-flash"
   ],
   "flagship_trial_allowed_models": ["qwen", "doubao"],
-  "max_inflight_tasks_anon": 2,
-  "max_inflight_tasks_free": 3,
-  "max_inflight_tasks_paid": 9,
   "first_recharge_only_packages": ["first_19_9"],
   "hide_when_first_recharge_available": ["starter_20"],
   "anon_allowed_models": ["deepseek-v4.1-flash", "qwen-plus", "doubao-code"],
@@ -290,7 +320,8 @@ ON CONFLICT (key) DO UPDATE SET
      - `free_flagship_batches_remaining: int`（剩余旗舰首秀券次数）
 
 3. **`GET /api/billing/packages`**
-   - 按当前登录用户的 `total_recharged_credits == 0` 动态过滤：未首充用户展示 `first_19_9 + basic_50 + pro_100 + flagship_500`；已首充用户展示 `starter_20 + basic_50 + pro_100 + flagship_500`；`create_recharge_order` 服务端同步强校验首充资格，防接口重放。
+   - 按当前登录用户的 `total_recharged_credits == 0` 动态过滤：未首充用户展示 `first_19_9 + basic_50 + pro_100 + flagship_500`；已首充用户展示 `starter_20 + basic_50 + pro_100 + flagship_500`；`create_recharge_order` 建单时校验首充资格。
+   - 建单校验挡不住「先建两笔首充单再分别付款」。`mark_order_paid` 入账时再查一次：该用户已有一笔 `first_19_9` 为 `paid` 时，本单照收款、只发 `base_credits`（1,990），不发 100 赠送积分，流水备注「首充优惠已使用」。
 
 4. **`POST /api/generations`（余额/权限不足时的结构化 402 响应）**
    - 当可用积分不足预冻结额、存在未结清 `debt_credits`、或未充值用户首秀券用尽后选了旗舰模型时，返回 `HTTP 402`：
@@ -308,7 +339,7 @@ ON CONFLICT (key) DO UPDATE SET
      }
    }
    ```
-   - 当在途任务超限时返回 `HTTP 429`（`code: "too_many_inflight_tasks"`）。
+   - 超出个人同时生成上限的任务不返回错误，照常排队。
 
 5. **生成完成 SSE 事件 `completed.billing` 扩展**
    - 在现有 `credits_charged`、`discount_credits` 基础上补充 `reserved_credits` 与 `refunded_credits`，前端完成气泡可直观提示退回积分。
@@ -324,20 +355,12 @@ ON CONFLICT (key) DO UPDATE SET
 
 ---
 
-## 六、分步实施与上线验证计划
+## 六、上线记录
 
-确认本方案后，按以下 4 个原子步骤推进并逐项验证：
+2026-11-12 已在生产生效。当时没有付费用户，新倍率、新预留和新套餐对所有人立即生效。
 
-1. **Step 1 — 数据库迁移与计费内核（后端 + 单测）**
-   - 编写并执行 `023_billing_preauth_and_tier_pricing.sql`；
-   - 更新 `config/billing.json`、`pricing.py`、`account.py`（实现 `reserve_for_batch`、`settle_with_reservation`、`release_reservation`、充值冲抵 `debt_credits`、首充包过滤与防重）；
-   - 补齐单元测试：并发 `FOR UPDATE` 防超发测试、小额 `cost_floor` 边界测试、超长页 `debt_credits` 冲抵测试、中途取消保底扣费测试、重启 `sweep` 资金守恒测试。
-2. **Step 2 — 修补三处算力漏损**
-   - 改造技能路由客户端、文档压缩 `usage` 汇总分摊、Tailwind 重试双轮成本记账，并跑通回归单测。
-3. **Step 3 — 前端透明预计消耗与三选一促单弹窗**
-   - 输入框模型选择区接入 `hold_credits` 动态预估提示；
-   - 侧边栏账户区适配可用积分 / 冻结中积分 / 首秀券标识；
-   - 拦截 `402` 弹出「一键首充 ¥19.9 / 仅跑单模型 / 切换极速双模」引导卡；更新 `/pricing` 购买页首充包标签。
-4. **Step 4 — 构建上线与对账巡检**
-   - 执行生产迁移、构建前端并重启 `star-page-backend` 与 `star-page-frontend`；
-   - 验证存量用户余额、首充包展示、并发提交拦截以及 `SUM(frozen) == SUM(在途 reserved)` 守恒断言。
+- 数据库迁移为 `024_billing_preauth_and_tier_pricing.sql`，生产已执行。提交即按模型预留冻结，排队规则不变。
+- 仍有首秀券或已充值的人，默认勾选两个旗舰。首秀券用完且从未充值的人，默认两个轻量模型；浏览器里若还存着旗舰勾选，打开页面时整组改回。
+- 可用积分被在途任务全部冻住、且没有欠费时，再次提交直接进入充值页。余额不够本次预留、有未补欠费，或未充值却选了旗舰时，弹出充值或换模型的引导。
+- 技能路由、长文档压缩和格式重试的真实成本已计入账本。停止收费和欠费规则写在《积分充值服务协议》，界面不另加说明。
+- 上线后每周用近 30 天结算重算预留额，并看「实扣超出预留」的任务占比，目标不高于 10%。

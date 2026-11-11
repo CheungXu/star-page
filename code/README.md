@@ -19,8 +19,8 @@ code/
 
 - `POST /api/generations` 创建一轮生成（批次）：支持 `models` 多选并行、上传文件、以及 `conversation_id`+`base_page_id` 续写；每个模型一个独立 `Page` 节点，返回 `conversation_id/batch_id/runs[]`。
 - `GET /api/generations/batches/{batch_id}/events` 一轮一条 SSE 连接，带这一轮各模型的事件（payload 带 `task_id`），支持断线按游标续传；生成由后端后台执行器跑完，连接断开不影响生成（单任务的 `/{task_id}/events` 保留只读兼容）。
-- `POST /api/generations/batches/{batch_id}/cancel` 停止这一轮还没完成的模型，已完成的保留并计费，被停的记为 `cancelled`、不计费。
-- `GET /api/models` 返回模型目录（key/label/是否默认/是否可用），供前端动态渲染多选。
+- `POST /api/generations/batches/{batch_id}/cancel` 停止这一轮还没完成的模型，已完成的保留并计费。被停的记为 `cancelled`：输出未满 2,000 Token（含思考）或系统报错时解冻退回；主动停止且已超过该线时按 1.0 倍原始成本保底收费。界面只显示「已停止」，收费规则写在充值协议里。
+- `GET /api/models` 返回模型目录（key/label/是否默认/是否可用，以及档位、预留积分、未充值是否需首充），供前端动态渲染多选。
 - `GET /api/conversations`、`GET /api/conversations/{id}` 会话列表（按会话一条）与会话树（批次 + 各模型节点，含 `usage`、`billing`、`duration_ms`），用于历史与多轮恢复。
 - `GET /api/pages/{page_id}` 查询页面元数据。
 - `GET /p/{conversation_id}/{page_id}` 作为页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回。生成页支持展示型 CSS/JS，网关下发"隔离优先"的沙箱 CSP（`sandbox allow-scripts ...; connect-src 'none'`），详见 `wiki/generated-page-js-sandbox-and-security.md`。
