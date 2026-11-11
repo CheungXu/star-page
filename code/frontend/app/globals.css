@@ -3850,9 +3850,15 @@ h1 {
   background: var(--color-text-muted);
 }
 
-.run-status-chip.is-cancelled {
+.run-status-chip.is-cancelled,
+.run-status-chip.is-queued {
   background: rgba(15, 23, 42, 0.06);
   color: var(--color-text-tertiary);
+}
+
+.dot.queued {
+  border: 1.5px dashed var(--color-text-muted);
+  background: transparent;
 }
 
 /* 生成中的发送按钮变成「停止生成」：可点击，不沿用禁用态的半透明 */

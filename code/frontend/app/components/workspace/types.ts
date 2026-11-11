@@ -1,5 +1,8 @@
-/** cancelled：用户点了「停止生成」，不算失败，界面显示「已停止」。 */
-export type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed" | "cancelled";
+/**
+ * queued：名额已满在排队（个人上限或全站上限），轮到后自动变成 thinking。
+ * cancelled：用户点了「停止生成」，不算失败，界面显示「已停止」。
+ */
+export type GenerationStatus = "idle" | "queued" | "thinking" | "creating" | "completed" | "failed" | "cancelled";
 
 export type ProgressStepId =
   | "upload_file"

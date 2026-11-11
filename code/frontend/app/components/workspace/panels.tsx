@@ -19,6 +19,7 @@ import {
   formatDuration,
   formatTokens,
   isEndedStatus,
+  isLiveStatus,
   modelAccent,
   modelGlyph,
   outputTokenCount,
@@ -34,19 +35,24 @@ function liveCount(run: WorkspaceRun): string {
   return tokens > 0 ? formatTokens(tokens) : stageLabel(run);
 }
 
+/** 排队原因：后端 queued 事件给的说明去掉「排队中 · 」前缀，标题已经写了排队中。 */
+function queueHint(run: WorkspaceRun): string {
+  return run.statusText.replace(/^排队中\s*·\s*/, "") || "轮到后自动开始";
+}
+
 function LiveCard({ run }: { run: WorkspaceRun }) {
   const { elapsed, renderPreview } = useWorkspace();
   const value = estimateProgress(run, elapsed(run));
   const tokens = outputTokenCount(run);
-  const pending = run.status === "thinking" || run.status === "creating";
+  const pending = isLiveStatus(run.status);
   return (
     <div className="vb-live">
       {renderPreview(run, { presentation: "default" })}
       {pending && (
-        <div className="vb-live-overlay">
+        <div className={`vb-live-overlay ${run.status === "queued" ? "is-queued" : ""}`}>
           <Ring value={value} />
           <strong>{liveCount(run)}</strong>
-          <span>{tokens > 0 ? `${stageLabel(run)} · tokens` : "还没开始写页面"}</span>
+          <span>{run.status === "queued" ? queueHint(run) : tokens > 0 ? `${stageLabel(run)} · tokens` : "还没开始写页面"}</span>
         </div>
       )}
     </div>
@@ -69,14 +75,18 @@ export function GenerationProgress({ history }: { history?: PastRoundProps } = {
   const [open, setOpen] = useState(false);
   const done = runs.filter((run) => run.status === "completed").length;
   const stopped = runs.filter((run) => run.status === "cancelled").length;
+  const queued = runs.filter((run) => run.status === "queued").length;
   const clock = batchElapsed(runs, elapsed);
   const tokens = sumOutputTokens(runs);
   const clockText = clock === null ? "" : isGenerating ? formatClock(clock) : formatDuration(clock);
   const credits = sumCredits(runs);
   const settled = runs.every((run) => isEndedStatus(run.status));
   const insights = batchInsights(runs, elapsed);
+  const working = runs.filter((run) => run.status === "thinking" || run.status === "creating").length;
   const title = isGenerating
-    ? `${runs.length} 个模型生成中`
+    ? queued > 0
+      ? `${working} 个生成中 · ${queued} 个排队`
+      : `${runs.length} 个模型生成中`
     : `${done}/${runs.length} 已完成${stopped > 0 ? ` · ${stopped} 已停止` : ""}`;
   const sub = isGenerating ? (
     `已写 ${formatTokens(tokens)} tokens`
@@ -202,6 +212,7 @@ const SHORT_STAGE: Record<string, string> = {
   发布中: "发布",
   准备中: "准备",
   已停止: "已停止",
+  排队中: "排队中",
 };
 
 function shortDuration(ms: number | null): string {
@@ -278,7 +289,7 @@ function MiniRow({
   const { elapsed } = useWorkspace();
   const progress = estimateProgress(run, elapsed(run));
   const tokens = outputTokenCount(run);
-  const pending = run.status === "thinking" || run.status === "creating";
+  const pending = isLiveStatus(run.status);
   const charged = run.usageSummary?.creditsCharged;
   const discount = run.usageSummary?.discountCredits;
   const failedAt = run.status === "failed" ? PHASES.findIndex((phase) => progress < phase.to) : -1;
@@ -580,7 +591,7 @@ function FocusPanel({ run, active }: { run: WorkspaceRun; active: boolean }) {
   const credits = run.usageSummary?.creditsCharged;
   const duration = elapsed(run);
   const completed = run.status === "completed";
-  const pending = run.status === "thinking" || run.status === "creating";
+  const pending = isLiveStatus(run.status);
   return (
     <div className={`tb-focus ${active ? "is-active" : ""}`} inert={!active} style={{ "--accent": modelAccent(run.modelKey) } as CSSProperties}>
       <div className="tb-focus-inner">
@@ -618,7 +629,9 @@ function FocusPanel({ run, active }: { run: WorkspaceRun; active: boolean }) {
             renderActions(run, "card")
           ) : (
             <p className="tb-focus-hint">
-              {pending
+              {run.status === "queued"
+                ? `排队中：${queueHint(run)}`
+                : pending
                 ? "生成完成后就能打开、分享"
                 : run.status === "cancelled"
                   ? "这个模型已停止生成，不扣积分"
@@ -734,11 +747,11 @@ export function GenerationResults() {
               )}
               <div className="vb-stage-view">
                 <StageSwap active={active} />
-                {(active.status === "thinking" || active.status === "creating") && (
-                  <div className="vb-stage-overlay">
+                {isLiveStatus(active.status) && (
+                  <div className={`vb-stage-overlay ${active.status === "queued" ? "is-queued" : ""}`}>
                     <Ring value={estimateProgress(active, elapsed(active))} />
                     <strong>{liveCount(active)}</strong>
-                    <span>{active.modelLabel} · {stageLabel(active)}</span>
+                    <span>{active.modelLabel} · {active.status === "queued" ? queueHint(active) : stageLabel(active)}</span>
                   </div>
                 )}
               </div>

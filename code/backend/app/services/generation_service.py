@@ -1103,6 +1103,10 @@ class GenerationService:
         await self.session.commit()
         return event
 
+    async def record_event(self, task_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> SseEvent:
+        """执行器写排队、开始这类不属于生成流程本身的事件。"""
+        return await self._record_event(task_id, event_type, payload)
+
     def _stage_event(self, task_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> SseEvent:
         """只加入会话不提交，用来和状态变更放进同一个事务。"""
         self.session.add(GenerationEvent(task_id=task_id, event_type=event_type, payload=payload))
@@ -1110,8 +1114,10 @@ class GenerationService:
 
     async def finish_unfinished_task(self, task_id: uuid.UUID, *, status: str, message: str, user_message: str) -> bool:
         """把仍未结束的任务直接写成终态（硬取消、执行器兜底、启动扫尾用）。已结束的不动，返回是否改了。"""
-        task = await self.session.get(GenerationTask, task_id, populate_existing=True)
+        # 行锁：停止接口和执行器兜底可能同时收尾同一个任务，只能有一方写终态和收尾事件。
+        task = await self.session.get(GenerationTask, task_id, populate_existing=True, with_for_update=True)
         if task is None or task.status in TERMINAL_STATUSES:
+            await self.session.rollback()
             return False
         task.status = status
         task.error_message = message

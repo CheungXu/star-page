@@ -58,6 +58,11 @@ function useRunTimings(runs: WorkspaceRun[]) {
         for (const run of runs) {
           const key = run.taskId || run.modelKey;
           const active = run.status === "thinking" || run.status === "creating";
+          // 排队不计入用时：提交后才知道要排队，先前按「构思中」记下的起点作废，轮到时重新开始计。
+          if (next[key] && !next[key].endedAt && run.status === "queued") {
+            delete next[key];
+            changed = true;
+          }
           if (!next[key] && active) {
             next[key] = { startedAt: timestamp };
             changed = true;

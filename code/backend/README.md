@@ -165,7 +165,7 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 
 模型调用由进程内的后台执行器跑完，和浏览器的事件流连接无关。用户新建对话、切到别的历史、刷新或关掉页面，生成都会继续，回来时从数据库回放进度再跟进实时事件。
 
-- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后立即 `start`，每个任务一个 `asyncio.Task`、各自一个数据库会话。`GENERATION_MAX_CONCURRENCY`（默认 48）限制同时调用模型的任务数，超出的保持 `pending` 按先来后到排队。上限是全局的：一次大批量生成占满名额时，后来的用户要等前面有任务完成，所以上限要明显高于单个用户的突发量（9 模型连发 4 轮 = 36）。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
+- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后立即 `start`，每个任务一个 `asyncio.Task`、各自一个数据库会话。名额分两层，都按先来后到排队：先过**个人上限**（每个用户同时生成的模型数，默认 `GENERATION_USER_CONCURRENCY=10`，`users.generation_concurrency` 有值时以它为准，会员放宽限制时写这一列或改 `user_concurrency_limit`），再过**全站上限** `GENERATION_MAX_CONCURRENCY`（默认 48）。个人名额没轮到的任务不占全站名额，一个人提交再多也挤不到别人。排队时写一条 `queued` 事件（`reason` 为 `user_limit` 或 `global_limit`，`message` 是给用户看的说明），轮到后写 `started`，任务在库里一直是 `pending`。同一用户的任务按提交顺序开始；每次提交都会按最新上限调整，调大后排队的立即补上。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
 - **停止**：先协作式中止，在两个模型 chunk 之间检查，写成 `cancelled`；3 秒内模型没吐下一个 chunk 就直接取消协程，再由兜底写库。模型已经完整输出后不再响应停止，页面照常发布。
 - **终态与收尾事件同事务**：`completed` / `failed` / `cancelled` 事件和任务终态在同一个事务里提交。事件流据此判断「任务结束」，不会出现状态已结束却漏掉 `completed` 的情况。
 - **事件流**（`app/services/generation_events.py`）：只读数据库，每个任务各有一个游标。原因是 `sequence` 全局递增，多个任务并发写入时提交顺序和 `sequence` 顺序不一致，用一个全局游标会永久漏掉晚提交的小号事件。续传 id 是按任务 id 排序后各任务游标用点连接的字符串。回放时把同一任务连续的 `reasoning_delta` 合成一条；执行器每写一条事件就唤醒订阅者，唤醒后等 0.2 秒合批再读库；空闲时每 15 秒发一行 `: ping`，避开 nginx 420 秒读超时。响应头带 `Cache-Control: no-cache, no-transform`，防止中间层压缩把实时事件攒住。
@@ -174,7 +174,8 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - **预览实例注意**：在 worktree 里起后端预览时，如果连的是线上库，必须设 `GENERATION_STARTUP_SWEEP=false`，否则一启动就会去重跑或标记线上的任务。最好连独立测试库。
 - **补救卡住的任务**：`script/requeue_stuck_generations.py --batch <id>` 给指定批次没完成的任务刷新最近活动时间，随后在窗口内重启后端，由扫尾重跑（见 `script/README.md`）。
 - **重启耗时**：有 SSE 连接时 uvicorn 会等连接关闭，systemd 到 `TimeoutStopSec=10s` 才强杀。强杀不影响正确性，被打断的任务由下次启动扫尾处理。
-- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。
+- **改某个用户的上限**：暂无管理界面，直接改库，例如 `UPDATE users SET generation_concurrency = 30 WHERE phone = '...'`；改回默认设为 `NULL`。下次提交生效（迁移 `021_user_generation_concurrency.sql`）。
+- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器、名额闸门、个人上限取值）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾、个人上限排队与补位、调大上限立即补上、全站上限排队原因），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。
 
 ## 生成过程事件
 
@@ -186,7 +187,9 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。`model_output` 完成时携带真实 `input_tokens`/`output_tokens`。
 - `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；携带 `usage` 与 `billing`（扣掉的积分和授权优惠）。
 - `failed`：生成失败。
-- `cancelled`：用户停止了这个模型。
+- `queued`：名额已满在排队，带 `reason`（`user_limit` / `global_limit`）和 `message`。
+- `started`：排队的任务拿到名额、开始调用模型（没排过队的任务不发）。
+- `cancelled`：用户停止了这个模型（排队中的也可以停，不扣积分）。
 - `restarted`：后端重启后这个任务被自动从头重跑，前端应清空它之前的思考和进度。
 - `batch_done`：仅批次流，这一轮所有模型都已收尾。
 

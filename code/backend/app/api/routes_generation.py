@@ -20,7 +20,7 @@ from app.services.billing.errors import AnonLimitError, BillingError, Insufficie
 from app.services.consent_service import training_consent_for
 from app.services.document_extractor import prepare_generation_input
 from app.services.generation_events import HEARTBEAT, stream_task_events
-from app.services.generation_runner import CANCELLED_ERROR_MESSAGE, generation_runner
+from app.services.generation_runner import CANCELLED_ERROR_MESSAGE, generation_runner, user_concurrency_limit
 from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_STATUSES, GenerationService
 from app.services.image_assets import discard_stored_images, store_uploaded_images
 from app.services.scenes.catalog import compose_scene_prompt, format_image_block, get_scene, normalize_utm_source, parse_guide
@@ -141,7 +141,12 @@ async def create_generation(request: Request, response: Response) -> GenerationC
                 await discard_stored_images(stored_images)
 
         # 批次和图片都已提交，交给后台跑；浏览器之后只订阅事件，断开也不影响生成。
-        generation_runner.start([run.task_id for run in creation.runs], creation.batch_id)
+        generation_runner.start(
+            [run.task_id for run in creation.runs],
+            creation.batch_id,
+            user_id=owner_id,
+            user_limit=user_concurrency_limit(user),
+        )
 
         return GenerationCreateResponse(
             conversation_id=creation.conversation_id,
@@ -363,7 +368,9 @@ async def stream_generation_events(task_id: uuid.UUID, request: Request) -> Stre
 
     if task.status == "pending" and not generation_runner.is_active(task.id):
         # 兜底：没人在跑的 pending 任务交给后台；正常情况下创建批次时就已经启动了。
-        generation_runner.start([task.id], task.batch_id)
+        generation_runner.start(
+            [task.id], task.batch_id, user_id=user.id, user_limit=user_concurrency_limit(user)
+        )
 
     events = stream_task_events(
         session_factory=AsyncSessionLocal,

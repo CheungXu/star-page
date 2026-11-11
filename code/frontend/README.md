@@ -2,7 +2,7 @@
 
 前端负责浅色极简首页、SSE 思考过程展示、页面创建节点、页面预览和复制链接。
 
-生成进度：每轮只开一条 `EventSource`（`connectBatch`，订阅 `/api/generations/batches/{batch_id}/events`），按 payload 里的 `task_id` 分发到各模型。生成在后端跑，关掉连接只是不再看：新建对话、切历史时 `closeAllSources` 关闭连接并作废待重连；回到有模型在生成的会话时 `restoreConversation` 重新订阅，回放进度后跟进实时事件。断线时浏览器自带重连（带 `Last-Event-ID`）；遇到非 200（后端重启时 nginx 返回 502）浏览器不再重连，前端按 1 秒起、最长 30 秒退避自己重连，用 `?after=` 带上最后的游标，最多 8 次后以会话详情为准。生成中工作区的发送按钮变成「停止生成」（`POST /api/generations/batches/{batch_id}/cancel`），被停的模型状态为 `cancelled`，界面显示「已停止」（中性灰，不按失败样式）。收到 `restarted` 时清空该模型的思考和进度。
+生成进度：每轮只开一条 `EventSource`（`connectBatch`，订阅 `/api/generations/batches/{batch_id}/events`），按 payload 里的 `task_id` 分发到各模型。生成在后端跑，关掉连接只是不再看：新建对话、切历史时 `closeAllSources` 关闭连接并作废待重连；回到有模型在生成的会话时 `restoreConversation` 重新订阅，回放进度后跟进实时事件。断线时浏览器自带重连（带 `Last-Event-ID`）；遇到非 200（后端重启时 nginx 返回 502）浏览器不再重连，前端按 1 秒起、最长 30 秒退避自己重连，用 `?after=` 带上最后的游标，最多 8 次后以会话详情为准。生成中工作区的发送按钮变成「停止生成」（`POST /api/generations/batches/{batch_id}/cancel`），被停的模型状态为 `cancelled`，界面显示「已停止」（中性灰，不按失败样式）。收到 `restarted` 时清空该模型的思考和进度。名额已满时模型状态为 `queued`，界面显示「排队中」并写明原因（个人上限已满 / 使用的人较多），收到 `started` 后切到「构思中」；排队不计入用时，进度摘要标题写「N 个生成中 · M 个排队」。从历史打开时，任务还是 `pending` 的直接还原为「排队中」。判断「是否还在生成」统一用 `isLiveStatus`（排队、构思、编写）。
 
 ## 交互状态
 

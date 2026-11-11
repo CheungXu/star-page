@@ -35,6 +35,11 @@
   background: var(--color-text-muted);
 }
 
+/* 排队中：虚线空心圈，表示还没开始、在等名额。 */
+.vp-mark.is-queue {
+  border: 1.5px dashed var(--color-text-muted);
+}
+
 .vp-mark.is-run {
   border: 2px solid var(--color-primary-soft-strong);
   border-top-color: var(--color-primary);
@@ -947,6 +952,14 @@ body.is-resizing-panes iframe {
 .vb-mini-row.is-failed .vb-mini-stage { color: var(--color-danger); }
 .vb-mini-row.is-cancelled .vb-pip span { background: rgba(15, 23, 42, 0.18); }
 .vb-mini-row.is-cancelled .vb-mini-stage { color: var(--color-text-muted); }
+.vb-mini-row.is-queued .vb-mini-stage { color: var(--color-text-tertiary); }
+.vb-avatar.is-queued { opacity: 0.6; }
+
+/* 排队中的遮罩：进度环淡一些，说明文字可换行，原因说得清楚。 */
+.vb-live-overlay.is-queued .vp-ring,
+.vb-stage-overlay.is-queued .vp-ring { opacity: 0.45; }
+.vb-live-overlay.is-queued span,
+.vb-stage-overlay.is-queued span { max-width: 280px; white-space: normal; text-align: center; line-height: 1.5; }
 
 /* 回看模式胶囊：深色底让"现在不是最新"一眼可辨，右半是回到最新的按钮 */
 .vb-past-chip {

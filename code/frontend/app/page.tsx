@@ -18,9 +18,10 @@ import { ResultActions } from "./components/workspace/actions";
 import { RoundSource } from "./components/workspace/bits";
 import { WorkspaceProvider } from "./components/workspace/context";
 import { GenerationProgress, GenerationResults } from "./components/workspace/panels";
+import { isLiveStatus } from "./components/workspace/progress-utils";
 import type { ActionLayout, PreviewPresentation, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
 
-type GenerationStatus = "idle" | "thinking" | "creating" | "completed" | "failed" | "cancelled";
+type GenerationStatus = "idle" | "queued" | "thinking" | "creating" | "completed" | "failed" | "cancelled";
 
 type ModelInfo = {
   key: string;
@@ -863,14 +864,22 @@ function PreviewCell({
   };
 
   const statusLabel =
-    run.status === "failed" ? "生成失败" : run.status === "cancelled" ? "已停止" : run.status === "creating" ? "创建中" : "思考中";
+    run.status === "failed"
+      ? "生成失败"
+      : run.status === "cancelled"
+        ? "已停止"
+        : run.status === "queued"
+          ? "排队中"
+          : run.status === "creating"
+            ? "创建中"
+            : "思考中";
   const ended = run.status === "failed" || run.status === "cancelled";
 
   return (
     <article className={`preview-cell presentation-${presentation} ${selectedAsBase ? "is-continue-base" : ""} ${dimmedByBase ? "is-dimmed-by-base" : ""}`}>
       <header className="preview-cell-head">
         <span
-          className={`dot ${run.status === "completed" ? "ready" : run.status === "failed" ? "failed" : run.status === "cancelled" ? "stopped" : "loading"}`}
+          className={`dot ${run.status === "completed" ? "ready" : run.status === "failed" ? "failed" : run.status === "cancelled" ? "stopped" : run.status === "queued" ? "queued" : "loading"}`}
           aria-hidden="true"
         />
         <strong className="preview-cell-model" title={run.modelLabel}>{run.modelLabel}</strong>
@@ -1763,6 +1772,16 @@ export default function HomePage() {
       });
     };
 
+    on("queued", (payload, patch) => {
+      patch((run) => ({ ...run, status: "queued", statusText: payload.message ?? "排队中" }));
+    });
+
+    // 排到名额，开始调用模型；用时从这一刻算，和服务端记录的口径一致。
+    on("started", (payload, patch) => {
+      if (payload.task_id && runStartedAtRef.current[payload.task_id]) runStartedAtRef.current[payload.task_id] = Date.now();
+      patch((run) => (run.status === "queued" ? { ...run, status: "thinking", statusText: "正在理解你的页面需求..." } : run));
+    });
+
     on("status", (payload, patch) => {
       if (payload.text) patch((run) => ({ ...run, statusText: payload.text ?? run.statusText }));
     });
@@ -1879,7 +1898,7 @@ export default function HomePage() {
     const markReconnecting = () =>
       setRuns((current) =>
         current.map((run) =>
-          run.status === "thinking" || run.status === "creating" ? { ...run, statusText: "连接中断，正在重连…" } : run,
+          isLiveStatus(run.status) ? { ...run, statusText: "连接中断，正在重连…" } : run,
         ),
       );
 
@@ -1921,7 +1940,7 @@ export default function HomePage() {
         current.map((run) => {
           const latest = fresh.get(run.taskId);
           if (!latest) return run;
-          if (latest.status === "thinking" || latest.status === "creating") {
+          if (isLiveStatus(latest.status)) {
             return { ...run, statusText: "连接已断开，刷新页面可继续查看进度" };
           }
           return { ...latest, reasoning: run.reasoning };
@@ -1937,7 +1956,7 @@ export default function HomePage() {
     if (!batchId || isStopping) return;
     setIsStopping(true);
     setRuns((current) =>
-      current.map((run) => (run.status === "thinking" || run.status === "creating" ? { ...run, statusText: "正在停止…" } : run)),
+      current.map((run) => (isLiveStatus(run.status) ? { ...run, statusText: "正在停止…" } : run)),
     );
     try {
       const response = await apiFetch(`/api/generations/batches/${batchId}/cancel`, { method: "POST" });
@@ -2007,7 +2026,7 @@ export default function HomePage() {
       writeCurrentSession(session);
       playTransition(() => applyStoredSession(session));
       // 最新一轮还有模型在生成：接上这一轮的事件流，从头回放再跟进实时进度。
-      if (session.runs.some((run) => (run.status === "thinking" || run.status === "creating") && run.taskId)) {
+      if (session.runs.some((run) => isLiveStatus(run.status) && run.taskId)) {
         connectBatch(session.batchId, detail.id);
       }
     } catch {
@@ -2245,7 +2264,7 @@ export default function HomePage() {
     handleFileChange(event.dataTransfer.files);
   }
 
-  const isGenerating = runs.some((run) => run.status === "thinking" || run.status === "creating");
+  const isGenerating = runs.some((run) => isLiveStatus(run.status));
   const canSubmit = Boolean(prompt.trim()) || selectedFiles.length > 0 || (phase === "idle" && Boolean(activeScene));
   const isLongPrompt = submittedPrompt.length > 260;
   const isMulti = runs.length > 1;
@@ -2567,7 +2586,7 @@ export default function HomePage() {
       compact &&
       isGenerating &&
       Boolean(batchId) &&
-      runs.some((run) => Boolean(run.taskId) && (run.status === "thinking" || run.status === "creating"));
+      runs.some((run) => Boolean(run.taskId) && isLiveStatus(run.status));
     const submitDisabled = submitBlocked || !canSubmit;
     const isEmptySubmit = !compact && !canSubmit && !isGenerating && !submitBlocked;
     const promptWrapClassName = compact
@@ -3230,7 +3249,9 @@ function mapNodeStatus(pageStatus: string, generationStatus?: string | null): Ge
   // 被停的页面在库里也记成 failed，先看任务状态才能区分「已停止」和「失败」。
   if (generationStatus === "cancelled") return "cancelled";
   if (pageStatus === "failed" || generationStatus === "failed") return "failed";
-  if (pageStatus === "generating" || generationStatus === "pending" || generationStatus === "running") return "thinking";
+  // 任务还是 pending 说明没拿到名额，在排队；具体原因由随后回放的 queued 事件补上。
+  if (generationStatus === "pending") return "queued";
+  if (pageStatus === "generating" || generationStatus === "running") return "thinking";
   return "idle";
 }
 
@@ -3311,6 +3332,7 @@ function getStoredStatusText(status: GenerationStatus): string {
   if (status === "completed") return "页面已创建完成";
   if (status === "failed") return "生成失败";
   if (status === "cancelled") return "已停止";
+  if (status === "queued") return "排队中";
   if (status === "thinking" || status === "creating") return "正在恢复生成进度...";
   return "描述你想创建的页面";
 }

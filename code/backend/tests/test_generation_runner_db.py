@@ -107,6 +107,12 @@ async def _create_batch(factory, models: list[str]):
     return creation
 
 
+async def _start(runner: GenerationRunner, factory, creation, task_ids=None, limit: int = 10) -> None:
+    owner = (await _task(factory, creation.runs[0].task_id)).requested_by_user_id
+    ids = task_ids if task_ids is not None else [run.task_id for run in creation.runs]
+    runner.start(ids, creation.batch_id, user_id=owner, user_limit=limit)
+
+
 async def _task(factory, task_id) -> GenerationTask:
     async with factory() as session:
         return await session.get(GenerationTask, task_id)
@@ -156,7 +162,7 @@ def test_runs_in_background_and_stream_resumes():
     async def flow(factory, runner):
         creation = await _create_batch(factory, ["ok-a", "ok-b"])
         task_ids = [run.task_id for run in creation.runs]
-        runner.start(task_ids, creation.batch_id)
+        await _start(runner, factory, creation, task_ids)
         await _wait_idle(runner)
 
         for task_id in task_ids:
@@ -217,7 +223,7 @@ def test_live_stream_follows_running_task():
 
         consumer = asyncio.create_task(consume())
         await asyncio.sleep(0.1)
-        runner.start(task_ids, creation.batch_id)
+        await _start(runner, factory, creation, task_ids)
         received = await asyncio.wait_for(consumer, timeout=10)
         events = [item.event for item in received if item is not HEARTBEAT]
         assert "completed" in events and events[-1] == "batch_done"
@@ -230,7 +236,7 @@ def test_cooperative_cancel_marks_cancelled_without_version():
         creation = await _create_batch(factory, ["slow"])
         task_id = creation.runs[0].task_id
         page_id = creation.runs[0].page_id
-        runner.start([task_id], creation.batch_id)
+        await _start(runner, factory, creation, [task_id])
 
         async def thinking() -> bool:
             return (await _event_types(factory, task_id)).count("reasoning_delta") >= 3
@@ -255,7 +261,7 @@ def test_hard_cancel_when_model_stalls():
     async def flow(factory, runner):
         creation = await _create_batch(factory, ["hang"])
         task_id = creation.runs[0].task_id
-        runner.start([task_id], creation.batch_id)
+        await _start(runner, factory, creation, [task_id])
 
         async def started() -> bool:
             return "reasoning_delta" in await _event_types(factory, task_id)
@@ -274,10 +280,10 @@ def test_hard_cancel_when_model_stalls():
 
 def test_cancel_queued_task_returns_false():
     async def flow(factory, runner):
-        runner._semaphore = asyncio.Semaphore(0)  # 永远排队
+        runner._global_gate = runner_module.FifoGate(0)  # 全站名额为 0：永远排队
         creation = await _create_batch(factory, ["ok"])
         task_id = creation.runs[0].task_id
-        runner.start([task_id], creation.batch_id)
+        await _start(runner, factory, creation, [task_id])
         await asyncio.sleep(0.05)
         assert await runner.cancel(task_id) is False
         async with factory() as session:
@@ -287,6 +293,104 @@ def test_cancel_queued_task_returns_false():
         assert changed is True
         await _wait_idle(runner)
         assert (await _task(factory, task_id)).status == "cancelled"
+
+    _run(flow)
+
+
+async def _payloads(factory, task_id, event_type: str) -> list[dict]:
+    async with factory() as session:
+        result = await session.execute(
+            select(GenerationEvent.payload)
+            .where(GenerationEvent.task_id == task_id, GenerationEvent.event_type == event_type)
+            .order_by(GenerationEvent.sequence)
+        )
+        return list(result.scalars().all())
+
+
+def test_user_limit_queues_in_order_and_backfills():
+    async def flow(factory, runner):
+        creation = await _create_batch(factory, ["slow-a", "slow-b", "slow-c"])
+        ids = [run.task_id for run in creation.runs]
+        await _start(runner, factory, creation, ids, limit=2)
+
+        async def two_running() -> bool:
+            statuses = [(await _task(factory, task_id)).status for task_id in ids]
+            return statuses.count("running") == 2 and statuses.count("pending") == 1
+
+        await _wait_until(two_running)
+        # 按提交顺序：前两个开始，第三个排队，排队原因是个人上限。
+        assert [(await _task(factory, task_id)).status for task_id in ids] == ["running", "running", "pending"]
+        queued = await _payloads(factory, ids[2], "queued")
+        assert [item["reason"] for item in queued] == ["user_limit"]
+        assert "已满 2 个" in queued[0]["message"]
+
+        # 停掉一个正在跑的，排队的补上，并收到 started。
+        assert await runner.cancel(ids[0]) is True
+
+        async def third_started() -> bool:
+            return (await _task(factory, ids[2])).status == "running"
+
+        await _wait_until(third_started)
+        types = await _event_types(factory, ids[2])
+        assert types.index("queued") < types.index("started")
+        for task_id in ids[1:]:
+            await runner.cancel(task_id)
+        await _wait_idle(runner)
+        assert not runner._user_gates
+
+    _run(flow)
+
+
+def test_raising_user_limit_starts_queued_task():
+    async def flow(factory, runner):
+        creation = await _create_batch(factory, ["slow-a", "slow-b"])
+        ids = [run.task_id for run in creation.runs]
+        await _start(runner, factory, creation, ids, limit=1)
+
+        async def second_queued() -> bool:
+            return "queued" in await _event_types(factory, ids[1])
+
+        await _wait_until(second_queued)
+        assert (await _task(factory, ids[1])).status == "pending"
+        # 再提交一次（例如刚升级会员）时按新上限调整，排队的立即开始。
+        await _start(runner, factory, creation, [], limit=2)
+
+        async def second_running() -> bool:
+            return (await _task(factory, ids[1])).status == "running"
+
+        await _wait_until(second_running)
+        for task_id in ids:
+            await runner.cancel(task_id)
+        await _wait_idle(runner)
+
+    _run(flow)
+
+
+def test_global_limit_queue_reason_and_other_users_unaffected_by_user_limit():
+    async def flow(factory, runner):
+        runner._global_gate = runner_module.FifoGate(1)
+        first = await _create_batch(factory, ["slow"])
+        second = await _create_batch(factory, ["slow"])
+        await _start(runner, factory, first)
+        await _start(runner, factory, second)
+        a, b = first.runs[0].task_id, second.runs[0].task_id
+
+        async def b_queued() -> bool:
+            return "queued" in await _event_types(factory, b)
+
+        await _wait_until(b_queued)
+        assert [item["reason"] for item in await _payloads(factory, b, "queued")] == ["global_limit"]
+        assert (await _task(factory, b)).status == "pending"
+
+        assert await runner.cancel(a) is True
+
+        async def b_running() -> bool:
+            return (await _task(factory, b)).status == "running"
+
+        await _wait_until(b_running)
+        await runner.cancel(b)
+        await _wait_idle(runner)
+        assert runner._global().active == 0
 
     _run(flow)
 
@@ -312,7 +416,7 @@ def test_http_batch_stream_and_cancel(monkeypatch):
         monkeypatch.setattr(routes_generation, "get_optional_actor", fake_actor)
 
         ids = {run.model_key: run.task_id for run in creation.runs}
-        runner.start(list(ids.values()), creation.batch_id)
+        await _start(runner, factory, creation, list(ids.values()))
 
         async def ok_done() -> bool:
             return (await _task(factory, ids["ok-a"])).status == "succeeded"
@@ -369,7 +473,7 @@ def test_startup_sweep_reruns_recent_and_fails_stale(monkeypatch):
             await session.commit()
 
         started: list[uuid.UUID] = []
-        monkeypatch.setattr(runner, "start", lambda task_ids, batch_id: started.extend(task_ids))
+        monkeypatch.setattr(runner, "start", lambda task_ids, batch_id, **_kw: started.extend(task_ids))
         await runner.startup_sweep()
 
         r1 = await _task(factory, ids["r1"])

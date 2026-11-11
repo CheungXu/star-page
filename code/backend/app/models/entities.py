@@ -53,6 +53,8 @@ class User(Base, TimestampMixin):
     allow_training: Mapped[bool] = mapped_column(default=True, nullable=False)
     training_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     policy_notice_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 同时生成的模型数上限；为空用 GENERATION_USER_CONCURRENCY。会员放宽限制时写这里。
+    generation_concurrency: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class UserConsent(Base):

@@ -26,6 +26,7 @@ export function StatusMark({ status }: { status: WorkspaceRun["status"] }) {
   if (status === "completed") return <span className="vp-mark is-done">✓</span>;
   if (status === "failed") return <span className="vp-mark is-fail">!</span>;
   if (status === "cancelled") return <span className="vp-mark is-stop" title="已停止" />;
+  if (status === "queued") return <span className="vp-mark is-queue" title="排队中" />;
   return <span className="vp-mark is-run" />;
 }
 

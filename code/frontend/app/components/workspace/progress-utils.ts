@@ -60,6 +60,7 @@ export function stageLabel(run: WorkspaceRun): string {
   if (run.status === "completed") return "完成";
   if (run.status === "failed") return "失败";
   if (run.status === "cancelled") return "已停止";
+  if (run.status === "queued") return "排队中";
   const running = run.progressSteps.find((step) => step.status === "running");
   switch (running?.id) {
     case "upload_file":
@@ -86,6 +87,7 @@ export function stageLabel(run: WorkspaceRun): string {
 /** 估算进度只用来安抚等待，不显示百分比数字。 */
 export function estimateProgress(run: WorkspaceRun, elapsedMs: number | null): number {
   if (run.status === "completed") return 100;
+  if (run.status === "queued") return 0;
   const elapsed = Math.max(0, elapsedMs ?? 0);
   const thinking = run.progressSteps.find((step) => step.id === "model_thinking");
   const output = run.progressSteps.find((step) => step.id === "model_output");
@@ -149,6 +151,11 @@ export function sumOutputTokens(runs: WorkspaceRun[]): number {
 
 export function isSettled(run: WorkspaceRun): boolean {
   return isEndedStatus(run.status);
+}
+
+/** 还没结束：排队中、构思中或正在写页面。 */
+export function isLiveStatus(status: WorkspaceRun["status"]): boolean {
+  return status === "queued" || status === "thinking" || status === "creating";
 }
 
 /** 已经结束：成功、失败或被用户停止。 */
