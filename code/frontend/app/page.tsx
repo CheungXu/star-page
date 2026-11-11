@@ -258,8 +258,8 @@ const PROGRESS_STEP_META: Record<ProgressStepId, Pick<ProgressStep, "title" | "d
     description: "等待上传文件解析完成",
   },
   compress_document: {
-    title: "压缩文件内容",
-    description: "等待长文本压缩为页面生成简报",
+    title: "提取关键信息",
+    description: "结合当前需求，从资料中提取可用信息",
   },
   model_thinking: {
     title: "模型思考",
@@ -293,9 +293,17 @@ function createProgressStep(id: ProgressStepId, status: ProgressStepStatus = "pe
   };
 }
 
-function createInitialProgressSteps(hasFile = false): ProgressStep[] {
+/**
+ * hasFile：本轮上传了文件（文档或图片）；hasDocument：本轮有文档要解析；
+ * hasEarlierDocument：会话前面的轮次传过文档，本轮即使没传文件也会重新提取资料。
+ */
+type FileFlags = { hasFile?: boolean; hasDocument?: boolean; hasEarlierDocument?: boolean };
+
+function createInitialProgressSteps({ hasFile = false, hasDocument = false, hasEarlierDocument = false }: FileFlags = {}): ProgressStep[] {
   return [
-    ...(hasFile ? [createProgressStep("upload_file", "running"), createProgressStep("parse_file"), createProgressStep("compress_document")] : []),
+    ...(hasFile ? [createProgressStep("upload_file", "running")] : []),
+    ...(hasDocument ? [createProgressStep("parse_file")] : []),
+    ...(hasDocument || hasEarlierDocument ? [createProgressStep("compress_document")] : []),
     createProgressStep("model_thinking"),
     createProgressStep("model_output"),
     createProgressStep("deploy"),
@@ -309,7 +317,9 @@ const SELECTED_MODELS_KEY = "star-page-selected-models";
 const ANON_MAX_MODELS = 2;
 // 事件流被彻底关闭后的手动重连次数上限（退避 1s 起、最长 30s，合计约 2 分钟），用完后以服务端状态为准。
 const MAX_STREAM_RECONNECTS = 8;
-const ACCEPTED_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
+const DOCUMENT_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
+const IMAGE_FILE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+const ACCEPTED_FILE_EXTENSIONS = [...DOCUMENT_FILE_EXTENSIONS, ...IMAGE_FILE_EXTENSIONS];
 const ACCEPTED_FILE_TYPES = ACCEPTED_FILE_EXTENSIONS.join(",");
 const SCENE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -324,10 +334,12 @@ function sceneImageProblem(file: File): string {
   if (file.size > SCENE_IMAGE_MAX_BYTES) return `${file.name} 超过 2MB，请压缩后再上传`;
   return "";
 }
+// 与后端 app/services/document_parser/limits.py 保持一致。
 const MAX_FILE_COUNT = 3;
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const MAX_TOTAL_FILE_SIZE_BYTES = 50 * 1024 * 1024;
-const FILE_UPLOAD_TITLE = "支持 docx · pptx · xlsx · pdf · txt · md · html，最多 3 个，总计 ≤ 50MB";
+const MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
+const FILE_UPLOAD_TITLE = "支持 docx · pptx · xlsx · pdf · txt · md · html 和图片，最多 3 个，图片 ≤ 10MB，总计 ≤ 50MB";
 
 const HistoryIcon = () => (
   <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1564,7 +1576,11 @@ export default function HomePage() {
     const effectivePrompt =
       trimmedPrompt ||
       (!inConversation && activeScene ? activeScene.prompt_template : "") ||
-      (submitFiles.length > 0 ? "请根据我上传的文件生成一个网页。" : "");
+      (submitFiles.length > 0
+        ? submitFiles.some((file) => isDocumentName(file.name))
+          ? "请根据我上传的文件生成一个网页。"
+          : "请根据我上传的图片生成一个网页。"
+        : "");
     const validationError = validateFiles(submitFiles);
 
     if (!effectivePrompt) {
@@ -1612,11 +1628,8 @@ export default function HomePage() {
     //  - 未选中 -> 每个模型各自接上自己上一轮结果，并行继续。
     // 首页(idle)提交则新建会话。
     const fileNames = submitFiles.map((file) => file.name);
-    const hasFile = fileNames.length > 0;
     closeAllSources();
     setIsModelMenuOpen(false);
-
-    const pendingRuns: RunState[] = selectedModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), hasFile));
 
     const shownPrompt = trimmedPrompt || effectivePrompt;
     const submittedAt = currentTimeMs();
@@ -1626,6 +1639,18 @@ export default function HomePage() {
         : null;
     const nextBasedOn = inConversation && continueBase ? locateRoundBase(continueBase.pageId) : null;
     const forkRoundIndex = nextBasedOn && nextBasedOn.roundIndex < pastRounds.length ? nextBasedOn.roundIndex : null;
+    // 本轮接在哪几轮之后：分叉时只看分叉点及之前的轮次。
+    const lineageRounds = !inConversation
+      ? []
+      : forkRoundIndex !== null
+        ? pastRounds.slice(0, forkRoundIndex + 1)
+        : [...pastRounds, ...(finishedRound ? [finishedRound] : [])];
+    const fileFlags: FileFlags = {
+      hasFile: fileNames.length > 0,
+      hasDocument: fileNames.some(isDocumentName),
+      hasEarlierDocument: roundsHaveDocument(lineageRounds),
+    };
+    const pendingRuns: RunState[] = selectedModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), fileFlags));
 
     playTransition(() => {
       if (forkRoundIndex !== null) {
@@ -1718,7 +1743,7 @@ export default function HomePage() {
       setSelectedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
 
-      const nextRuns = data.runs.map((run) => makeRunFromResponse(run, hasFile));
+      const nextRuns = data.runs.map((run) => makeRunFromResponse(run, fileFlags));
       nextRuns.forEach((run) => {
         runStartedAtRef.current[run.taskId] = submittedAt;
       });
@@ -1883,7 +1908,11 @@ export default function HomePage() {
         errorMessage: "",
         usageSummary: undefined,
         durationMs: undefined,
-        progressSteps: createInitialProgressSteps(run.progressSteps.some((step) => step.id === "upload_file")),
+        progressSteps: createInitialProgressSteps({
+          hasFile: run.progressSteps.some((step) => step.id === "upload_file"),
+          hasDocument: run.progressSteps.some((step) => step.id === "parse_file"),
+          hasEarlierDocument: run.progressSteps.some((step) => step.id === "compress_document"),
+        }),
       }));
     });
 
@@ -2237,27 +2266,31 @@ export default function HomePage() {
     if (activeScene && activeScene.image_slots.length > 0) {
       const images = dropped.filter(isSceneImageFile);
       const documents = dropped.filter((file) => !isSceneImageFile(file));
-      if (images.length > 0) {
-        const problem = sceneImageProblem(images[0]);
-        if (problem) {
-          setFileError(problem);
-        } else {
-          const emptySlots = activeScene.image_slots.filter((slot) => !sceneImages[slot.key]);
-          if (emptySlots.length > 1) {
-            setFileError("请点下方对应的位置上传");
-          } else if (emptySlots.length === 0) {
-            setFileError("图片位置已经满了");
-          } else {
-            const slot = emptySlots[0];
-            setSceneImages((current) => ({ ...current, [slot.key]: images[0] }));
-            setFileError("");
-          }
-        }
+      const emptySlots = activeScene.image_slots.filter((slot) => !sceneImages[slot.key]);
+      // 只剩一个空位时第一张图放进去；其余图片（含超过槽位 2MB 上限的）作为普通附件。
+      const slotImage = emptySlots.length === 1 && images.length > 0 && !sceneImageProblem(images[0]) ? images[0] : null;
+      if (slotImage) {
+        setSceneImages((current) => ({ ...current, [emptySlots[0].key]: slotImage }));
       }
-      if (documents.length > 0 && activeScene.accepts_documents !== false) {
-        handleFileChange(documents);
-      } else if (images.length === 0) {
-        setFileError("这个场景请上传图片");
+      const extraImages = images.filter((file) => file !== slotImage);
+      if (activeScene.accepts_documents === false) {
+        if (extraImages.length > 0) {
+          setFileError(emptySlots.length > 1 ? "请点下方对应的位置上传" : "图片位置已经满了");
+        } else if (images.length === 0) {
+          setFileError("这个场景请上传图片");
+        } else {
+          setFileError("");
+        }
+        return;
+      }
+      const attachments = [...documents, ...extraImages];
+      if (attachments.length > 0) {
+        handleFileChange(attachments);
+        if (extraImages.length > 0 && emptySlots.length > 1 && !validateFiles(attachments)) {
+          setFileError("图片已作为附件加入；要放进指定位置，请点下方对应的按钮");
+        }
+      } else {
+        setFileError("");
       }
       return;
     }
@@ -2666,7 +2699,7 @@ export default function HomePage() {
                   <span className="hero-dropzone-icon" aria-hidden="true"><AttachmentIcon /></span>
                   <span className="hero-dropzone-text">
                     <strong>{activeScene ? `上传资料，做成${activeScene.name}` : "上传文档，一键转为网页"}</strong>
-                    <small>支持 Word · Excel · PDF · PPT</small>
+                    <small>支持 Word · Excel · PDF · PPT · 图片</small>
                   </span>
                   <span className="hero-dropzone-cta">选择文件</span>
                 </label>
@@ -3124,7 +3157,7 @@ function currentTimeMs(): number {
   return Date.now();
 }
 
-function makePendingRun(modelKey: string, modelLabel: string, hasFile: boolean): RunState {
+function makePendingRun(modelKey: string, modelLabel: string, fileFlags: FileFlags): RunState {
   return {
     taskId: "",
     pageId: "",
@@ -3135,11 +3168,11 @@ function makePendingRun(modelKey: string, modelLabel: string, hasFile: boolean):
     statusText: "正在提交你的需求...",
     pageUrl: "",
     errorMessage: "",
-    progressSteps: createInitialProgressSteps(hasFile),
+    progressSteps: createInitialProgressSteps(fileFlags),
   };
 }
 
-function makeRunFromResponse(run: GenerationRunResponse, hasFile: boolean): RunState {
+function makeRunFromResponse(run: GenerationRunResponse, fileFlags: FileFlags): RunState {
   return {
     taskId: run.task_id,
     pageId: run.page_id,
@@ -3150,7 +3183,7 @@ function makeRunFromResponse(run: GenerationRunResponse, hasFile: boolean): RunS
     statusText: "正在理解你的页面需求...",
     pageUrl: run.page_url,
     errorMessage: "",
-    progressSteps: createInitialProgressSteps(hasFile),
+    progressSteps: createInitialProgressSteps(fileFlags),
   };
 }
 
@@ -3270,10 +3303,14 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
     return { modelKey: node.model_key ?? "", modelLabel: node.model_label ?? node.model_key ?? "上一结果", roundIndex };
   };
 
-  const pastRounds: WorkspaceRound[] = batches.slice(0, -1).map((batch) => ({
+  // 会话线上传过文档之后，每一轮都会重新提取资料。
+  const earlierDocument = batches.map((_batch, index) =>
+    batches.slice(0, index).some((item) => (item.file_names ?? []).some(isDocumentName)),
+  );
+  const pastRounds: WorkspaceRound[] = batches.slice(0, -1).map((batch, index) => ({
     prompt: batch.user_prompt || batch.prompt,
     basedOn: roundBase(batch),
-    runs: buildRunsFromBatch(batch) as WorkspaceRun[],
+    runs: buildRunsFromBatch(batch, earlierDocument[index]) as WorkspaceRun[],
     inherited: Boolean(batch.inherited),
   }));
 
@@ -3285,7 +3322,7 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
     prompt: latest?.user_prompt || latest?.prompt || detail.title,
     fileNames: latest?.file_names ?? [],
     selectedModelKeys: latest?.selected_models ?? [],
-    runs: latest ? buildRunsFromBatch(latest) : [],
+    runs: latest ? buildRunsFromBatch(latest, earlierDocument[batches.length - 1]) : [],
     roundIndex: Math.max(0, batches.length - 1),
     pastRounds,
     currentBasedOn: latest ? roundBase(latest) : null,
@@ -3295,8 +3332,9 @@ function buildSessionFromDetail(detail: ConversationDetailResponse): StoredSessi
   };
 }
 
-function buildRunsFromBatch(batch: ConversationBatchResponse): RunState[] {
-  const hasFile = (batch.file_names ?? []).length > 0;
+function buildRunsFromBatch(batch: ConversationBatchResponse, hasEarlierDocument = false): RunState[] {
+  const names = batch.file_names ?? [];
+  const fileFlags: FileFlags = { hasFile: names.length > 0, hasDocument: names.some(isDocumentName), hasEarlierDocument };
   return batch.nodes.map((node) => {
     const status = mapNodeStatus(node.page_status, node.generation_status);
     const usageSummary = buildUsageSummaryFromDetail(node.usage, node.billing);
@@ -3310,7 +3348,7 @@ function buildRunsFromBatch(batch: ConversationBatchResponse): RunState[] {
       statusText: getStoredStatusText(status),
       pageUrl: node.page_url,
       errorMessage: status === "failed" ? "页面生成失败，请重新创建。" : status === "cancelled" ? "已停止生成" : "",
-      progressSteps: createInitialProgressSteps(hasFile).map((step) => ({
+      progressSteps: createInitialProgressSteps(fileFlags).map((step) => ({
         ...step,
         status: status === "completed" ? "completed" : step.status,
         outputTokens:
@@ -3369,10 +3407,13 @@ function updateProgressSteps(current: ProgressStep[], payload: SsePayload): Prog
     return current.map((step) => (step.id === payload.step ? nextStep(step) : step));
   }
 
+  // 初始进度里没有的步骤（例如前端没料到要提取资料）：资料类步骤插在模型思考之前。
   const insertedStep = nextStep(createProgressStep(payload.step));
-  const modelIndex = current.findIndex((step) => step.id === "model_output");
-  if (payload.step === "compress_document" && modelIndex >= 0) {
-    return [...current.slice(0, modelIndex), insertedStep, ...current.slice(modelIndex)];
+  const thinkingIndex = current.findIndex((step) => step.id === "model_thinking");
+  if ((payload.step === "compress_document" || payload.step === "parse_file") && thinkingIndex >= 0) {
+    const anchor = payload.step === "parse_file" ? current.findIndex((step) => step.id === "compress_document") : -1;
+    const at = anchor >= 0 ? anchor : thinkingIndex;
+    return [...current.slice(0, at), insertedStep, ...current.slice(at)];
   }
   return [insertedStep, ...current];
 }
@@ -3428,7 +3469,10 @@ function validateFiles(files: File[]): string {
   for (const file of files) {
     const extension = getFileExtension(file.name);
     if (!ACCEPTED_FILE_EXTENSIONS.includes(extension)) {
-      return `${file.name} 的格式暂不支持，请上传 docx、pptx、xlsx、xls、pdf、txt、md 或 html 文件`;
+      return `${file.name} 的格式暂不支持，请上传 docx、pptx、xlsx、xls、pdf、txt、md、html 或 png、jpg、webp、gif 文件`;
+    }
+    if (IMAGE_FILE_EXTENSIONS.includes(extension) && file.size > MAX_UPLOAD_IMAGE_BYTES) {
+      return `${file.name} 超过 10MB，请压缩后再上传`;
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
       return `${file.name} 超过 50MB，请压缩或拆分后再上传`;
@@ -3445,6 +3489,15 @@ function validateFiles(files: File[]): string {
 function getFileExtension(filename: string): string {
   const dotIndex = filename.lastIndexOf(".");
   return dotIndex >= 0 ? filename.slice(dotIndex).toLowerCase() : "";
+}
+
+function isDocumentName(filename: string): boolean {
+  return DOCUMENT_FILE_EXTENSIONS.includes(getFileExtension(filename));
+}
+
+/** 这些轮次里有没有传过文档：传过的轮次，进度里一定有「提取关键信息」。 */
+function roundsHaveDocument(rounds: { runs: { progressSteps: ProgressStep[] }[] }[]): boolean {
+  return rounds.some((round) => round.runs.some((run) => run.progressSteps.some((step) => step.id === "compress_document")));
 }
 
 function formatFileSize(size: number): string {

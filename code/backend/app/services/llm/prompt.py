@@ -20,7 +20,7 @@ HTML_PAGE_SYSTEM_PROMPT = """你是一名资深产品设计师、信息架构师
 8. 禁止会真正提交到服务器的表单交互；如需输入类控件仅用于纯前端交互演示，不要设置会发起请求的 action。
 9. 禁止使用 <iframe>、<object>、<embed>、<base> 等标签。
 10. 禁止使用 Tailwind、Bootstrap 等运行时/工具类 CSS 框架来完成主要样式；尤其不要引用 https://cdn.tailwindcss.com，不要输出 type="text/tailwindcss"，不要依赖 bg-*、text-*、flex、grid、md:* 等工具类自动生成 CSS。可以使用普通 class 名，但每个视觉样式都必须由本页 <style> 内的普通 CSS 明确定义。
-11. 图片如非必要不要使用外链；如需视觉元素，优先用 CSS 渐变、形状、卡片、SVG 和排版实现。确需第三方 JS 库时，只能引用可信 CDN（如 cdn.jsdelivr.net、unpkg.com），且不得用于发起网络请求。不要引用 Google Fonts 等非白名单样式资源，字体使用系统字体栈。
+11. 图片如非必要不要使用外链；如需视觉元素，优先用 CSS 渐变、形状、卡片、SVG 和排版实现。消息里明确给出的平台托管图片（地址含 /assets/）不算外链，按消息说明用 <img> 引用；随消息附带、标注「只用于阅读」的图片不要放进页面。确需第三方 JS 库时，只能引用可信 CDN（如 cdn.jsdelivr.net、unpkg.com），且不得用于发起网络请求。不要引用 Google Fonts 等非白名单样式资源，字体使用系统字体栈。
 12. 页面应当是完整的最终结果，而不是解释、方案或待办清单。
 
 在满足以上硬性约束的前提下，请尽量达到以下质量基线，让产出更专业、避免通用 AI 观感：

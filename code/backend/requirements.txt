@@ -8,7 +8,12 @@ httpx
 oss2
 beautifulsoup4
 python-dotenv
-markitdown[docx,pptx,xlsx,xls,pdf]
+pdfplumber
+pypdfium2
+python-pptx
+python-docx>=1.1
+python-calamine>=0.3
+lxml
 pyyaml
 alibabacloud_dysmsapi20170525
 alibabacloud_credentials

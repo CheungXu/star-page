@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from json import JSONDecodeError
 
 import httpx
@@ -21,8 +22,10 @@ class OpenAICompatibleClient:
 
     async def stream_text(self, messages: list[LlmMessage]) -> AsyncIterator[LlmStreamChunk]:
         attempts = self._retry_attempts()
+        images_dropped = False
+        attempt = 1
 
-        for attempt in range(1, attempts + 1):
+        while True:
             yielded_chunk = False
             try:
                 async for chunk in self._stream_text_once(messages):
@@ -30,9 +33,15 @@ class OpenAICompatibleClient:
                     yield chunk
                 return
             except Exception as exc:
+                # 带图请求在吐字前被拒（模型实际不收图、图片格式不被接受），去掉图片再试一次，不占重试次数。
+                if not yielded_chunk and not images_dropped and _has_images(messages) and _is_bad_request(exc):
+                    images_dropped = True
+                    messages = drop_images(messages)
+                    continue
                 if yielded_chunk or attempt >= attempts or not _is_retryable_exception(exc):
                     raise
                 await self._sleep_before_retry(attempt)
+                attempt += 1
 
     async def complete_text(self, messages: list[LlmMessage], *, require_content: bool = True) -> LlmCompletionResult:
         attempts = self._retry_attempts()
@@ -69,7 +78,7 @@ class OpenAICompatibleClient:
     async def _stream_text_once(self, messages: list[LlmMessage]) -> AsyncIterator[LlmStreamChunk]:
         body = {
             "model": self.model.model,
-            "messages": [{"role": message.role, "content": message.content} for message in messages],
+            "messages": [_serialize_message(message, self.model.supports_vision) for message in messages],
             "stream": True,
             "stream_options": {"include_usage": True},
             # 参数三层覆盖：defaults+params 已 resolved（仅非 None），extra_body 厂商专有最后合并。
@@ -157,6 +166,27 @@ class OpenAICompatibleClient:
             self.settings.llm_retry_initial_delay_ms * (2 ** max(0, attempt - 1)),
         )
         await asyncio.sleep(delay_ms / 1000)
+
+
+def _serialize_message(message: LlmMessage, supports_vision: bool) -> dict:
+    """有图且模型能读图时用 OpenAI 多模态内容块，否则只发文字。"""
+    if not message.images or not supports_vision:
+        return {"role": message.role, "content": message.content}
+    parts: list[dict] = [{"type": "text", "text": message.content}]
+    parts.extend({"type": "image_url", "image_url": {"url": image.data_url}} for image in message.images)
+    return {"role": message.role, "content": parts}
+
+
+def _has_images(messages: list[LlmMessage]) -> bool:
+    return any(message.images for message in messages)
+
+
+def drop_images(messages: list[LlmMessage]) -> list[LlmMessage]:
+    return [replace(message, images=()) if message.images else message for message in messages]
+
+
+def _is_bad_request(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 400
 
 
 def _is_retryable_exception(exc: Exception) -> bool:

@@ -107,6 +107,12 @@ pkill -f preview-logo/serve.py
 python3 script/probe-llm-models.py
 ```
 
+加 `--capabilities` 改为实测每个模型能否读图（问一张纯色图的颜色）以及哪种写法能关闭思考（按候选写法依次试，思考量为零才算），结果用来填 `llm.models.json` 的 `supports_vision` 和 `extraction_extra_body`。可用 `--only=key` 只测一个模型：
+
+```bash
+python3 script/probe-llm-models.py --capabilities --only=doubao
+```
+
 探测结果直接输出到终端。换代时的判断顺序见 `wiki/llm-provider-abstraction.md` 的「模型换代检查清单」。2026-10 的结果见 `doc/20261010/llm-model-catalog-update.md`，2026-11 的结果见 `doc/20261110/llm-model-catalog-update.md`。
 
 ## 多端口衔接动画方案对比预览：`preview-transition/`

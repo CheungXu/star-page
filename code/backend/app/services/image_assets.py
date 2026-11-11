@@ -1,4 +1,7 @@
-"""把用户上传的图片存进对象存储，供生成页通过 /assets/{id} 引用。"""
+"""把用户上传的图片存进对象存储，供生成页通过 /assets/{id} 引用。
+
+两个入口：场景槽位图（头像、二维码等，有角色名）和通用上传口的图片（与文档一起提交）。
+"""
 
 from __future__ import annotations
 
@@ -8,17 +11,12 @@ from dataclasses import dataclass
 from fastapi import HTTPException, status
 from starlette.datastructures import UploadFile
 
+from app.services.document_parser.images import image_size, sniff_image
+from app.services.document_parser.types import UploadedImage
 from app.services.storage.factory import create_storage_provider
 
 MAX_IMAGE_COUNT = 3
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
-_ALLOWED_TYPES = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/jpg": ".jpg",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
 
 
 @dataclass(frozen=True)
@@ -29,6 +27,9 @@ class StoredImage:
     filename: str
     role: str
     byte_size: int
+    source_kind: str = "scene_slot"
+    width: int | None = None
+    height: int | None = None
 
 
 async def store_uploaded_images(
@@ -36,29 +37,46 @@ async def store_uploaded_images(
     roles: list[str],
     slot_labels: dict[str, str],
 ) -> list[StoredImage]:
-    """校验并保存最多 3 张图片。角色名优先用调用方传入的 image_roles。"""
+    """校验并保存最多 3 张场景槽位图。角色名优先用调用方传入的 image_roles。"""
     if len(files) > MAX_IMAGE_COUNT:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"最多上传 {MAX_IMAGE_COUNT} 张图片")
 
-    prepared: list[tuple[bytes, str, str, str, str]] = []
+    prepared: list[tuple[bytes, str, str, str, str, int | None, int | None]] = []
     for index, upload in enumerate(files):
         data = await upload.read()
         if not data:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="有一张图片是空的，请重新选择")
         if len(data) > MAX_IMAGE_BYTES:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="单张图片不能超过 2MB")
-        detected = _detect_image(data, (upload.content_type or "").split(";")[0].strip().lower())
+        detected = sniff_image(data)
         if detected is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="图片仅支持 PNG、JPEG、WEBP、GIF")
         content_type, extension = detected
+        try:
+            width, height = image_size(data)
+        except Exception:  # noqa: BLE001 - 尺寸只用于提示，读不到不拦截
+            width = height = None
         role = roles[index].strip() if index < len(roles) and roles[index].strip() else "image"
         filename = (upload.filename or "image").rsplit("/", 1)[-1][:200]
-        prepared.append((data, content_type, extension, role[:32], filename))
+        prepared.append((data, content_type, extension, role[:32], filename, width, height))
 
+    return await _store(
+        [(data, content_type, extension, role, filename, "scene_slot", width, height) for data, content_type, extension, role, filename, width, height in prepared]
+    )
+
+
+async def store_general_images(images: list[UploadedImage]) -> list[StoredImage]:
+    """通用上传口的图片：已在预检里校验过格式、大小和像素。"""
+    return await _store(
+        [(image.data, image.content_type, image.extension, "image", image.filename, "user_upload", image.width, image.height) for image in images]
+    )
+
+
+async def _store(items: list[tuple[bytes, str, str, str, str, str, int | None, int | None]]) -> list[StoredImage]:
     storage = create_storage_provider()
     stored: list[StoredImage] = []
     try:
-        for data, content_type, extension, role, filename in prepared:
+        for data, content_type, extension, role, filename, source_kind, width, height in items:
             asset_id = uuid.uuid4()
             storage_key = f"page-assets/{asset_id}{extension}"
             await storage.put_bytes(storage_key, data, content_type)
@@ -68,31 +86,17 @@ async def store_uploaded_images(
                     storage_key=storage_key,
                     content_type=content_type,
                     filename=filename,
-                    role=role if role in slot_labels or role == "image" else role,
+                    role=role,
                     byte_size=len(data),
+                    source_kind=source_kind,
+                    width=width,
+                    height=height,
                 )
             )
     except Exception:
         await discard_stored_images(stored)
         raise
     return stored
-
-
-def _detect_image(data: bytes, content_type: str) -> tuple[str, str] | None:
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png", ".png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg", ".jpg"
-    if data.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif", ".gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "image/webp", ".webp"
-    if content_type == "image/jpg":
-        content_type = "image/jpeg"
-    extension = _ALLOWED_TYPES.get(content_type)
-    if extension is None:
-        return None
-    return content_type, extension
 
 
 async def discard_stored_images(images: list[StoredImage]) -> None:

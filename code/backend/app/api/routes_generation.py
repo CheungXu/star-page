@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -18,11 +19,12 @@ from app.schemas.conversations import ConversationForkSource
 from app.schemas.generation import GenerationCreateRequest, GenerationCreateResponse, GenerationRunItem
 from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
 from app.services.consent_service import training_consent_for
-from app.services.document_extractor import prepare_generation_input
+from app.services.document_parser.pipeline import discard_staged, stage_documents
+from app.services.document_parser.precheck import precheck_uploads
 from app.services.generation_events import HEARTBEAT, stream_task_events
 from app.services.generation_runner import CANCELLED_ERROR_MESSAGE, generation_runner, user_concurrency_limit
 from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_STATUSES, GenerationService
-from app.services.image_assets import discard_stored_images, store_uploaded_images
+from app.services.image_assets import discard_stored_images, store_general_images, store_uploaded_images
 from app.services.scenes.catalog import compose_scene_prompt, format_image_block, get_scene, normalize_utm_source, parse_guide
 from app.services.sse import SseEvent, format_sse, format_sse_comment
 
@@ -67,34 +69,42 @@ async def create_generation(request: Request, response: Response) -> GenerationC
         if len(composed_prompt.strip()) < 3:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="prompt 不能为空")
 
-        generation_input = await prepare_generation_input(composed_prompt, parsed.files)
-        model_prompt = generation_input.model_prompt
-        stored_images = []
-        if parsed.images:
-            slot_labels = {slot.key: slot.label for slot in scene.image_slots} if scene else {}
-            stored_images = await store_uploaded_images(parsed.images, parsed.image_roles, slot_labels)
-            labels = []
-            base = get_settings().public_base_url.rstrip("/")
-            for image in stored_images:
-                label = slot_labels.get(image.role, "图片")
-                labels.append((label, f"{base}/assets/{image.asset_id}", image.filename))
-            image_block = format_image_block(labels)
-            if image_block:
-                model_prompt = f"{model_prompt}\n\n{image_block}"
+        # 预检只做便宜的检查，坏文件在这里直接 4xx；完整解析放到后台，创建请求立即返回。
+        uploads = [(item.filename or "", await item.read()) for item in parsed.files if item.filename]
+        documents, general_images = await asyncio.to_thread(precheck_uploads, uploads)
+        input_file_names = [name for name, _data in uploads]
 
+        model_prompt = composed_prompt
+        stored_images = []
+        staged: list[dict] = []
         service = GenerationService(session)
         owner_id = user.id
         asset_consent = training_consent_for(user)
         created_ok = False
         try:
+            slot_labels = {slot.key: slot.label for slot in scene.image_slots} if scene else {}
+            if parsed.images:
+                stored_images = await store_uploaded_images(parsed.images, parsed.image_roles, slot_labels)
+            if general_images:
+                stored_images += await store_general_images(general_images)
+            if stored_images:
+                base = get_settings().public_base_url.rstrip("/")
+                labels = []
+                for image in stored_images:
+                    label = slot_labels.get(image.role, "图片") if image.source_kind == "scene_slot" else f"上传的图片「{image.filename}」"
+                    labels.append((label, f"{base}/assets/{image.asset_id}", image.filename))
+                image_block = format_image_block(labels)
+                if image_block:
+                    model_prompt = f"{model_prompt}\n\n{image_block}"
+            staged = await stage_documents(documents)
+
             creation = await service.create_batch(
                 prompt=model_prompt,
                 selected_model_keys=parsed.models,
                 title_prompt=composed_prompt,
-                user_prompt=generation_input.user_prompt,
-                input_file_names=generation_input.input_file_names,
-                extracted_file_text=generation_input.extracted_file_text,
-                compression_prompt=generation_input.compression_prompt,
+                user_prompt=composed_prompt,
+                input_file_names=input_file_names,
+                staged_uploads=staged,
                 conversation_id=parsed.conversation_id,
                 base_page_id=parsed.base_page_id,
                 scene_key=scene.key if scene else None,
@@ -115,6 +125,10 @@ async def create_generation(request: Request, response: Response) -> GenerationC
                             role=image.role,
                             byte_size=image.byte_size,
                             training_consent=asset_consent,
+                            source_kind=image.source_kind,
+                            width=image.width,
+                            height=image.height,
+                            source_label=image.filename,
                         )
                     )
                 await session.commit()
@@ -137,8 +151,9 @@ async def create_generation(request: Request, response: Response) -> GenerationC
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         finally:
-            if stored_images and not created_ok:
+            if not created_ok:
                 await discard_stored_images(stored_images)
+                await discard_staged(staged)
 
         # 批次和图片都已提交，交给后台跑；浏览器之后只订阅事件，断开也不影响生成。
         generation_runner.start(

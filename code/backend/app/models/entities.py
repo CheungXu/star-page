@@ -228,6 +228,16 @@ class GenerationBatch(Base):
     compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 后台解析：staged_uploads 是待解析原件（私有存储），解析完清空并删文件。
+    staged_uploads: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    # none（没有文档或老数据）/ pending / running / succeeded / failed
+    parse_status: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
+    parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 整页快照只给模型看，存私有键，不进 page_assets，/assets 读不到。
+    visual_snapshots: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    # 每个文件的内容哈希及其在 extracted_file_text 里的起止位置，多轮按文件去重用。
+    parsed_documents: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    free_trial_refunded: Mapped[bool] = mapped_column(default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -252,6 +262,8 @@ class GenerationTask(Base):
     input_file_names: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     extracted_file_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     compression_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 本轮从资料里提取出的内容；空串表示本轮需求和资料无关，None 表示没做过提取。
+    extracted_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     skill_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     extra_skill_keys: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -480,7 +492,7 @@ class RetentionCohort(Base):
 
 
 class PageAsset(Base):
-    """用户上传的图片素材。页面通过 /assets/{id} 引用，不暴露存储键。"""
+    """托管图片：用户上传的和从文档里取出的配图。页面通过 /assets/{id} 引用，不暴露存储键。"""
 
     __tablename__ = "page_assets"
 
@@ -492,6 +504,13 @@ class PageAsset(Base):
     filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(32), default="image", nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # scene_slot（场景槽位）/ user_upload（通用上传口）/ doc_embedded（文档里取出的配图）
+    source_kind: Mapped[str] = mapped_column(String(24), default="user_upload", nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.entities import GenerationEvent, GenerationTask, Page, User
+from app.models.entities import GenerationBatch, GenerationEvent, GenerationTask, Page, User
 from app.services.generation_service import CANCELLED_USER_MESSAGE, GenerationService
 
 # 协作式停止的宽限：超过这个时间模型还没吐出下一个 chunk，就直接取消协程。
@@ -369,6 +369,7 @@ class GenerationRunner:
         settings = get_settings()
         window = timedelta(minutes=max(0, settings.generation_resume_window_minutes))
         async with self._session() as session:
+            await _reset_interrupted_parses(session)
             items = await _load_unfinished(session)
             plan = plan_sweep(items, now=datetime.now(UTC), window=window)
             await _reset_for_rerun(session, plan.rerun)
@@ -382,6 +383,7 @@ class GenerationRunner:
                 )
             for batch_id in {item.batch_id for item in plan.rerun}:
                 await service.recompute_batch_status(batch_id)
+            await _discard_orphan_staging(session)
             resume = sorted([*plan.start, *plan.rerun], key=lambda item: item.created_at)
             limits = await _load_user_limits(session, {item.user_id for item in resume if item.user_id})
 
@@ -440,6 +442,34 @@ async def _load_user_limits(session: AsyncSession, user_ids: set[uuid.UUID]) -> 
     return limits
 
 
+async def _reset_interrupted_parses(session: AsyncSession) -> None:
+    """上个进程解析到一半退出：原件还在暂存区，状态退回 pending，重跑的任务会重新解析。"""
+    await session.execute(
+        update(GenerationBatch).where(GenerationBatch.parse_status == "running").values(parse_status="pending")
+    )
+    await session.commit()
+
+
+async def _discard_orphan_staging(session: AsyncSession) -> None:
+    """还没解析、但批次里已经没有要跑的任务了（扫尾标了失败）：删掉暂存原件，状态记为失败。"""
+    from app.services.document_parser.pipeline import discard_staged
+
+    live = select(GenerationTask.id).where(
+        GenerationTask.batch_id == GenerationBatch.id, GenerationTask.status.in_(("pending", "running"))
+    )
+    result = await session.execute(
+        select(GenerationBatch).where(GenerationBatch.parse_status == "pending", ~live.exists())
+    )
+    orphans = list(result.scalars())
+    staged = [item for batch in orphans for item in (batch.staged_uploads or [])]
+    for batch in orphans:
+        batch.parse_status = "failed"
+        batch.parse_error = INTERRUPTED_USER_MESSAGE
+        batch.staged_uploads = []
+    await session.commit()
+    await discard_staged(staged)
+
+
 async def _reset_for_rerun(session: AsyncSession, items: Sequence[InterruptedTask]) -> None:
     """清掉上次的事件和半成品，任务回到 pending，记一条 restarted 让前端清空旧进度。"""
     if not items:
@@ -457,6 +487,7 @@ async def _reset_for_rerun(session: AsyncSession, items: Sequence[InterruptedTas
         task.error_message = None
         task.model_output_text = None
         task.output_html_storage_key = None
+        task.extracted_context = None
         page = await session.get(Page, task.page_id)
         if page is not None and page.deleted_at is None:
             page.status = "generating"

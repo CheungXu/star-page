@@ -416,6 +416,8 @@ def get_model_registry() -> LlmModelRegistry:
             extra_body=dict(entry.get("extra_body") or {}),
             pricing=dict(entry.get("pricing") or {}) or None,
             available=bool(api_key and entry.get("model")),
+            supports_vision=bool(entry.get("supports_vision")),
+            extraction_extra_body=dict(entry.get("extraction_extra_body") or {}),
         )
 
     if not models:

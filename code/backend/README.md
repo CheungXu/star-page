@@ -1,6 +1,6 @@
 # FastAPI 后端
 
-后端负责页面生成主流程：手机号用户系统、数据库、LLM 流式调用、OSS 存取、HTML 清洗、SSE 事件、上传文件内容抽取和 `/p/{conversation_id}/{page_id}` 页面访问网关。
+后端负责页面生成主流程：手机号用户系统、数据库、LLM 流式调用、OSS 存取、HTML 清洗、SSE 事件、上传资料解析与信息提取和 `/p/{conversation_id}/{page_id}` 页面访问网关。
 
 生成页现已支持展示型 CSS/JS：安全采用"隔离优先"——`/p` 网关统一下发 `Content-Security-Policy: sandbox allow-scripts ...; connect-src 'none'`，把页面关进无主站凭证、无外部网络的不透明 origin；`html_sanitizer` 放行内联脚本/事件/表单控件，移除 iframe/object/embed/base 与 meta refresh，外链 `<script src>` 仅留可信 CDN（`GENERATED_PAGE_CDN_ALLOWLIST`）。当前生成策略要求模型输出普通内联 CSS，不支持 Tailwind Play CDN；若检测到 `cdn.tailwindcss.com` 或 `type="text/tailwindcss"`，页面生成会自动要求模型改写为普通 CSS 并重试一次。原理详见 `wiki/generated-page-js-sandbox-and-security.md`。
 
@@ -69,7 +69,7 @@ journalctl -u star-page-backend.service -f
 - `POST /api/publications`、`GET /u/{slug}`：把某个已完成节点发布成固定链接。重新发布只切换版本。同路径下有 `og.png`、`poster.png`、`qr.png`。返回里除链接外还带分享卡片的生效值 `title` / `subtitle` / `align` 与默认值 `default_title`（生成页 `<title>`）/ `default_subtitle`（场景标语或「由星页 StarPage 生成」）。
 - `PATCH /api/publications/{slug}`（仅本人）：改写分享卡片的 `title` / `subtitle` / `align`（`left` / `center` / `right`），只改请求里带上的字段，传 `null` 或空串恢复默认；保存后重画 `poster.png` 与 `og.png`。用户改写的值存在 `page_publications.custom_title` / `custom_subtitle` / `card_align`（迁移 `020_share_card_custom.sql`），重新发布另一个版本时保留；`title` / `og_description` 存生效值。自定义了标题时，`/u/{slug}` 连页面 `<title>` 一起替换（微信等只读 `<title>` 的地方也显示用户写的标题）。
 - 朋友圈海报（`app/services/share_card.py`）与前端 `share-poster.ts` 同一版式（前端 720×1080，后端 1080×1620）：标题用 Noto Sans CJK SC 粗体，副标题 / 标签随对齐方式左中右排，二维码卡放在文字下沿与底部落款正中。测试：`tests/test_share_card.py`（纯逻辑）、`tests/test_share_card_db.py`（需 `TEST_DATABASE_URL` 与 `OBJECT_STORAGE_PROVIDER=local`）。
-- `GET /assets/{id}`：用户上传的头像、二维码等图片，供生成页引用。
+- `GET /assets/{id}`：用户上传的图片和从文档里取出的配图，供生成页引用。整页快照不在这里，外部读不到。
 - `GET /api/pages/{page_id}/stats`：作者查看该会话的外部访问次数。
 - `GET /api/admin/scenes/funnel`、`POST /api/admin/scenes/showcases`：分场景漏斗，以及把公开页标成案例。
 
@@ -143,9 +143,20 @@ journalctl -u star-page-backend.service -f
 
 - `prompt`：用户页面需求。
 - `models`：勾选的并行模型 key（可重复字段或单个 JSON 数组字符串）。
-- `files`：当前最多允许 3 个文件，单文件和单次总大小均不超过 50MB，支持 `docx`、`pptx`、`xlsx`、`xls`、`pdf`、`txt`、`md`、`html`。后端会抽取为 Markdown/文本并合并到 LLM 上下文；PDF 仅保证可复制文本内容的抽取，扫描版图片 PDF 或加密 PDF 可能解析失败。
+- `files`：文档和图片一起，最多 3 个文件，单文件和单次总大小不超过 50MB，图片单张不超过 10MB。文档支持 `docx`、`pptx`、`xlsx`、`xls`、`pdf`、`txt`、`md`、`html`；图片支持 `png`、`jpg`、`webp`、`gif`。
+- `images` / `image_roles`：场景槽位图（头像、二维码等），单张不超过 2MB。
 
-如果抽取文本超过 5000 字符，`POST /api/generations` 只保存原文并立即返回任务。压缩发生在后台生成流程里：同一批次只调用一次，优先用 `qwen-plus`（通义 Flash）且关闭思考，多段同时压缩，整次总超时 120 秒。压缩结果写回该批次的全部分支后再进入页面生成；原来 prompt 里的图片地址会保留。短文本仍在创建时直接拼进 prompt。匿名用户若压缩失败，这次免费次数会退回。
+上传资料的处理分三段，细节见 `app/services/document_parser/README.md`：
+
+1. **创建请求只做预检**：文件头、能否打开、是否加密、PDF 不超过 30 页、PPTX 不超过 40 页、DOCX 不超过 2000 段、Office 文件解压后不超过 150MB。不合格直接 4xx，不建批次、不扣免费次数。图片直接入 `page_assets`，文档原件暂存私有存储，接口立即返回。
+2. **后台解析一次，全批共用**：第一个开跑的模型拉起解析任务，同批其他模型等同一个结果；停掉某个模型不会打断解析。PDF 用 pdfplumber + pypdfium2，PPTX / DOCX / Excel 各有专门解析器。文档配图（每个文档最多 20 张）进 `page_assets`；少字大图页、扫描页渲染成整页快照，存私有键，`/assets` 读不到。原件解析完即删。
+3. **每轮同模型提取**：会话线上只要有文档，每一轮、每个模型都用自己（关闭思考、纯文本、不附图）结合「全部资料 + 历次需求 + 本轮需求」提取本轮用得上的内容；与资料无关时输出 `<EMPTY/>`，这一轮不塞资料。提取用量并入该模型这次生成的用量计费。
+
+写码阶段的图片走两个通道：文档配图在消息里列出 `/assets/{id}` 供页面使用（快照从不列地址）；能读图的模型在本轮新上传了图片、或提取结果点名了某些资料图片时，会收到缩小后的原图（最多 6 张），续写轮次不重复附历史图片。不能读图的模型只收到文字和地址，进度里提示一句。
+
+整批都失败在资料阶段（解析或提取）时，退回一次匿名免费次数（`generation_batches.free_trial_refunded` 保证只退一次）。
+
+测试：`tests/test_document_parsers.py`（各格式解析与预检上限，现场生成样例文件，见 `tests/doc_fixtures.py`）、`tests/test_document_extraction.py`（提取协议、适配层附图与降级、配图决策、共享解析任务）都是纯逻辑；`tests/test_document_flow_db.py` 用真实数据库、本地存储和真实解析器跑完整流程（两个模型只解析一次、两个图片通道、第二轮重新提取且无关时不塞资料、解析失败只退一次免费次数、停一个模型不打断解析），需要 `TEST_DATABASE_URL`。
 
 Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client_max_body_size 60m`，用于覆盖 50MB 单次上传和 multipart 开销。
 
@@ -153,13 +164,13 @@ Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client
 
 - 用户原始 prompt。
 - 上传文件名列表。
-- 文件抽取文本。
-- 触发压缩时使用的压缩 prompt 说明。
-- 最终输入页面生成模型的 prompt。
+- 文件抽取文本（带图片锚点，批次和任务上都有）。
+- 本轮从资料里提取出的内容（`extracted_context`，空串表示本轮与资料无关）和提取 prompt 说明（`compression_prompt`）。
+- 最终输入页面生成模型的 prompt（附图只记说明，不存图片数据）。
 - 模型原始输出文本，便于排查 HTML 提取或清洗导致的内容丢失。
 - 生成 HTML 上传后的 OSS 调试定位信息。
 
-LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY_INITIAL_DELAY_MS`、`LLM_RETRY_MAX_DELAY_MS`。底层客户端会重试可恢复的网络、超时、限流和 5xx 错误；资料压缩会对“调用成功但正文为空”的情况重试；页面生成会在正式 HTML 输出开始前失败或空输出时重试。页面生成后、上传前还会检测 Tailwind 运行时依赖，首次命中时追加修正提示并自动重试一次。
+LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY_INITIAL_DELAY_MS`、`LLM_RETRY_MAX_DELAY_MS`。底层客户端会重试可恢复的网络、超时、限流和 5xx 错误；资料提取会对“调用成功但正文为空”的情况重试（「与资料无关」用 `<EMPTY/>` 表示，不会被当成空正文）；页面生成会在正式 HTML 输出开始前失败或空输出时重试；带图请求在输出前返回 400 时，去掉图片再试一次。页面生成后、上传前还会检测 Tailwind 运行时依赖，首次命中时追加修正提示并自动重试一次。
 
 ## 后台生成
 

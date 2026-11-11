@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""探测 llm.models.json 中各模型连通性与百炼/方舟模型目录中的最新版本。"""
+"""探测 llm.models.json 中各模型连通性与百炼/方舟模型目录中的最新版本。
+
+加 --capabilities 时改为实测读图能力和关闭思考的写法（可用 --only=key 只测某个模型），
+结果用于填写目录里的 supports_vision 与 extraction_extra_body。
+"""
 from __future__ import annotations
 
+import base64
 import json
 import os
+import struct
 import sys
 import time
+import zlib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -205,8 +212,138 @@ def pick_latest(candidates: list[str], current: str) -> tuple[str | None, list[s
     return None, candidates
 
 
+def _solid_png_data_url(width: int, height: int, rgb: tuple[int, int, int]) -> str:
+    """纯标准库生成一张纯色 PNG，用来探测模型是否真的看得到图片。"""
+    raw = b"".join(b"\x00" + bytes(rgb) * width for _ in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
+def stream_chat(entry: dict, api_key: str, messages: list, extra_body: dict, max_tokens: int = 256) -> dict:
+    """流式调用一次，汇总正文、思考长度和用量。思考模型在部分平台必须流式调用。"""
+    url = entry["base_url"].rstrip("/") + "/chat/completions"
+    body: dict = {
+        "model": entry["model"],
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    for k, v in (entry.get("params") or {}).items():
+        if v is not None:
+            body[k] = v
+    body.update(extra_body)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST")
+    result = {"ok": False, "status": None, "text": "", "reasoning_chars": 0, "reasoning_tokens": None, "error": ""}
+    started = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result["status"] = resp.status
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                payload = line.removeprefix("data:").strip()
+                if not payload or payload == "[DONE]":
+                    continue
+                data = json.loads(payload)
+                delta = ((data.get("choices") or [{}])[0] or {}).get("delta") or {}
+                result["text"] += delta.get("content") or ""
+                result["reasoning_chars"] += len(delta.get("reasoning_content") or "")
+                usage = data.get("usage") or {}
+                details = usage.get("completion_tokens_details") or {}
+                if details.get("reasoning_tokens") is not None:
+                    result["reasoning_tokens"] = details.get("reasoning_tokens")
+        result["ok"] = bool(result["text"].strip())
+    except urllib.error.HTTPError as exc:
+        result["status"] = exc.code
+        result["error"] = exc.read().decode("utf-8", errors="replace")[:300]
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = str(exc)[:300]
+    result["seconds"] = round(time.time() - started, 1)
+    return result
+
+
+# 关闭思考的候选写法，按顺序尝试，第一个「有正文且没有思考」的写进目录。
+# 方舟会接受 enable_thinking=false 但仍思考几十个 token，所以必须看思考量，不能只看是否报错。
+THINKING_OFF_CANDIDATES: list[dict] = [
+    {"enable_thinking": False},
+    {"thinking": {"type": "disabled"}},
+    {"reasoning_effort": "minimal"},
+    {"reasoning_effort": "low"},
+]
+
+
+def _thinking_off_body(entry: dict, candidate: dict) -> dict:
+    base = {k: v for k, v in (entry.get("extra_body") or {}).items() if k not in {"enable_thinking", "reasoning_effort", "thinking"}}
+    return {**base, **candidate}
+
+
+def probe_capabilities(models: list[dict], only: set[str] | None) -> list[dict]:
+    """实测每个模型：能否读图（问纯色图的颜色），以及哪种写法能关闭思考。"""
+    red = _solid_png_data_url(64, 64, (220, 20, 20))
+    vision_messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "图片是什么颜色？只回答一个颜色词。"},
+                {"type": "image_url", "image_url": {"url": red}},
+            ],
+        }
+    ]
+    plain_messages = [{"role": "user", "content": "1+1 等于几？只回答数字。"}]
+    report: list[dict] = []
+    for entry in models:
+        if only and entry["key"] not in only:
+            continue
+        api_key = resolve_key(entry)
+        row: dict = {"key": entry["key"], "model": entry["model"], "supports_vision": False, "extraction_extra_body": None}
+        if not api_key:
+            row["note"] = "缺少 API Key"
+            report.append(row)
+            continue
+
+        thinking_off: dict | None = None
+        for candidate in THINKING_OFF_CANDIDATES:
+            body = _thinking_off_body(entry, candidate)
+            res = stream_chat(entry, api_key, plain_messages, body, max_tokens=64)
+            quiet = res["reasoning_chars"] == 0 and not res["reasoning_tokens"]
+            print(f"  [{entry['key']}] 关思考 {candidate} -> ok={res['ok']} 思考字数={res['reasoning_chars']} "
+                  f"思考tokens={res['reasoning_tokens']} {res['seconds']}s {res['error'][:120]}")
+            if res["ok"] and quiet:
+                thinking_off = candidate
+                break
+        row["extraction_extra_body"] = thinking_off
+
+        vision_body = _thinking_off_body(entry, thinking_off) if thinking_off else dict(entry.get("extra_body") or {})
+        res = stream_chat(entry, api_key, vision_messages, vision_body, max_tokens=512)
+        answer = res["text"].strip()
+        row["supports_vision"] = res["ok"] and ("红" in answer or "red" in answer.lower())
+        row["vision_answer"] = answer[:40] or res["error"][:160]
+        print(f"  [{entry['key']}] 读图 -> {row['supports_vision']} 回答={row['vision_answer']!r}")
+        report.append(row)
+    return report
+
+
 def main() -> int:
     load_env(ENV_FILE)
+    if "--capabilities" in sys.argv:
+        only = {arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--only=")}
+        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+        report = probe_capabilities(catalog.get("models") or [], only or None)
+        print("\n" + json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
     catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
     models = catalog.get("models") or []
 

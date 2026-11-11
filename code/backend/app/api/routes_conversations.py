@@ -28,6 +28,7 @@ from app.schemas.conversations import (
 )
 from app.schemas.generation import ModelInfo
 from app.services.conversation_tree import fork_source, release_deleted_pages, view_batches
+from app.services.document_parser.pipeline import discard_snapshots
 
 router = APIRouter(tags=["conversations"])
 
@@ -125,7 +126,23 @@ async def delete_conversation(conversation_id: uuid.UUID, request: Request) -> N
         # 级联软删会话下的节点，使其分享链接 /p/{conversation_id}/{page_id} 同步失效；
         # 仍被未删除分支继承的那段历史保留。
         await release_deleted_pages(session, conversation, now)
+        snapshots = await _release_private_snapshots(session, conversation.id)
         await session.commit()
+    await discard_snapshots(snapshots)
+
+
+async def _release_private_snapshots(session: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
+    """节点全部删掉的批次，私有整页快照也随之删除。仍被分叉会话继承的批次节点还在，不会被选中。"""
+    live = select(Page.id).where(Page.batch_id == GenerationBatch.id, Page.deleted_at.is_(None))
+    result = await session.execute(
+        select(GenerationBatch).where(GenerationBatch.conversation_id == conversation_id, ~live.exists())
+    )
+    released: list[dict] = []
+    for batch in result.scalars():
+        if batch.visual_snapshots:
+            released.extend(batch.visual_snapshots)
+            batch.visual_snapshots = []
+    return released
 
 
 @router.get("/api/conversations/{conversation_id}", response_model=ConversationDetail)

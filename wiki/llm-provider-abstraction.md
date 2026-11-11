@@ -188,7 +188,7 @@ OpenAI-compatible 流式响应在 `stream_options.include_usage=true` 时，末 
 MVP 先实现非流式文本生成。后续按真实需求逐步扩展：
 
 - 更完整的流式输出协议支持。
-- 图片和多模态输入（doubao 支持 `image_url` 内容块，后续做多模态时可复用其 OpenAI 兼容格式）。
+- 图片和多模态输入：已按 OpenAI `image_url` 内容块接入（`LlmMessage.images`，data URL）。模型目录用 `supports_vision` 标明能否读图，不能读的在适配层丢图；带图请求在输出前返回 400 时去图重试一次。能力必须实测，见 `uploaded-document-ingestion-for-generation.md` 第 5 节。
 - 工具调用。
 - provider 级超时、重试、限流和熔断。
 - 延迟监控；成本已支持单次请求 token + 自算费用展示，后续可接账单对账与聚合统计。

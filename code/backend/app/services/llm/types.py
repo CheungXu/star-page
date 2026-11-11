@@ -14,6 +14,8 @@ class LlmModelConfig:
     - params：已 resolved 的标准生成参数（仅保留非 None 值），直接拼进 OpenAI body。
     - extra_body：厂商专有透传字段（如 enable_thinking / reasoning_effort），合并在 body 最后一层。
     - available：密钥是否就绪；缺失则该模型在多选中不可用。
+    - supports_vision：实测能读 image_url 内容块；为假时图片在适配层被丢弃。
+    - extraction_extra_body：资料提取时关闭思考的写法，替换 extra_body 里的思考相关字段。
     """
 
     key: str
@@ -27,12 +29,23 @@ class LlmModelConfig:
     extra_body: dict[str, Any] = field(default_factory=dict)
     pricing: dict[str, Any] | None = None
     available: bool = False
+    supports_vision: bool = False
+    extraction_extra_body: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LlmImagePart:
+    """发给模型看的一张图。data_url 只在内存里传，不落库。"""
+
+    data_url: str
+    label: str = ""
 
 
 @dataclass(frozen=True)
 class LlmMessage:
     role: LlmMessageRole
     content: str
+    images: tuple[LlmImagePart, ...] = ()
 
 
 @dataclass(frozen=True)

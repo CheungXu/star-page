@@ -27,17 +27,16 @@ from app.services.billing import BillingService
 from app.services.billing.account import SettleResult
 from app.services.consent_service import CONSENT_GRANTED, training_consent_for
 from app.services.conversation_tree import ForkSource, pick_fallback_parent, view_batches
-from app.services.document_extractor import (
-    MAX_DOCUMENT_CONTEXT_CHARS,
-    DocumentCompressionError,
-    build_prompt_with_document_context,
-    compress_document_context,
-)
+from app.services.document_parser.attachments import DocumentContext, build_document_context, load_attachments
+from app.services.document_parser.context import LineageMaterial, collect_lineage
+from app.services.document_parser.errors import DocumentStageError
+from app.services.document_parser.extractor_agent import extract_for_round
+from app.services.document_parser.pipeline import batch_needs_parse, refund_free_trial_once, wait_for_batch_parse
 from app.services.html_sanitizer import extract_html_document, find_tailwind_runtime_violation, sanitize_html
 from app.services.llm.client import create_llm_client
 from app.services.llm.cost import estimate_llm_cost, merge_llm_usage, usage_to_payload
 from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, HTML_PAGE_TAILWIND_CORRECTION_PROMPT, build_skill_system_message
-from app.services.llm.types import LlmCostBreakdown, LlmMessage, LlmUsage
+from app.services.llm.types import LlmCostBreakdown, LlmImagePart, LlmMessage, LlmUsage
 from app.services.scenes.catalog import get_scene
 from app.services.skills.registry import get_skill_registry
 from app.services.skills.selector import SkillSelectionResult, select_skill_for_prompt
@@ -51,47 +50,13 @@ TERMINAL_EVENT_TYPES = {"completed", "failed", "cancelled"}
 CANCELLED_USER_MESSAGE = "已停止生成"
 
 
+VISION_SKIPPED_MESSAGE = "该模型仅支持文本，已跳过图片视觉读取"
+# 等待解析、提取时多久检查一次停止请求。
+CANCEL_POLL_SECONDS = 0.5
+
+
 class GenerationCancelled(Exception):
     """用户主动停止。在两个模型 chunk 之间检查到停止请求时抛出，走正常收尾写成 cancelled。"""
-
-
-class _BatchCompressionGate:
-    """同一批次的压缩互斥。失败结果留给同批其他模型立刻复用，避免各压一遍。"""
-
-    def __init__(self) -> None:
-        self.lock = asyncio.Lock()
-        self.error: DocumentCompressionError | None = None
-        self.users = 0
-
-
-_compression_gates: dict[uuid.UUID, _BatchCompressionGate] = {}
-_compression_gates_guard = asyncio.Lock()
-
-
-def _needs_document_compression(task: GenerationTask) -> bool:
-    text = task.extracted_file_text or ""
-    return len(text) > MAX_DOCUMENT_CONTEXT_CHARS and not task.compression_prompt
-
-
-async def _compression_gate(batch_id: uuid.UUID) -> _BatchCompressionGate:
-    async with _compression_gates_guard:
-        gate = _compression_gates.get(batch_id)
-        if gate is None:
-            gate = _BatchCompressionGate()
-            _compression_gates[batch_id] = gate
-        gate.users += 1
-        return gate
-
-
-async def _release_compression_gate(batch_id: uuid.UUID) -> None:
-    """当前批次没有人还在等压缩时，丢掉这把锁。"""
-    async with _compression_gates_guard:
-        gate = _compression_gates.get(batch_id)
-        if gate is None:
-            return
-        gate.users -= 1
-        if gate.users <= 0:
-            _compression_gates.pop(batch_id, None)
 
 
 @dataclass
@@ -161,6 +126,7 @@ class GenerationService:
         input_file_names: list[str] | None = None,
         extracted_file_text: str | None = None,
         compression_prompt: str | None = None,
+        staged_uploads: list[dict[str, Any]] | None = None,
         conversation_id: uuid.UUID | None = None,
         base_page_id: uuid.UUID | None = None,
         scene_key: str | None = None,
@@ -269,6 +235,8 @@ class GenerationService:
             input_file_names=input_file_names or [],
             extracted_file_text=extracted_file_text or None,
             compression_prompt=compression_prompt,
+            staged_uploads=list(staged_uploads or []),
+            parse_status="pending" if staged_uploads else "none",
             scene_key=scene.key if scene else None,
             status="pending",
             training_consent=consent,
@@ -395,23 +363,34 @@ class GenerationService:
         fallback = pick_fallback_parent(pages, list(latest_batch.selected_models or []))
         return {key: ready_by_model.get(key, fallback) for key in model_keys}
 
-    async def _build_llm_messages(self, task: GenerationTask, page: Page) -> list[LlmMessage]:
+    async def _build_llm_messages(
+        self,
+        task: GenerationTask,
+        page: Page,
+        doc_context: DocumentContext | None = None,
+        images: tuple[LlmImagePart, ...] = (),
+    ) -> list[LlmMessage]:
         """构造发给模型的消息。
 
-        首轮：system(通用规则) + user(构造好的需求)。
-        续写：system + user(历次全部需求清单) + assistant(最近一版完整 HTML) + user(本轮新指令)。
+        首轮：system(通用规则) + user(构造好的需求 + 本轮资料提取)。
+        续写：system + user(历次全部需求清单) + assistant(最近一版完整 HTML) + user(本轮新指令 + 本轮资料提取)。
         策略：历次"指令"都带上（短、廉价，保留完整意图）；"答案"只保留最近一版 HTML
         （HTML 是完整快照，已包含此前全部改动，无需再带更早版本，避免上下文爆炸）。
+        资料每轮重新提取，只放进本轮最后一条 user 消息；本轮要看的图片也挂在这条消息上。
         """
         system_messages = self._build_system_messages(task)
+        extra = doc_context.prompt_block() if doc_context is not None else ""
+
+        def current(text: str) -> LlmMessage:
+            return LlmMessage(role="user", content=f"{text}\n\n{extra}" if extra else text, images=images)
 
         if page.parent_page_id is None:
-            return [*system_messages, LlmMessage(role="user", content=task.prompt)]
+            return [*system_messages, current(task.prompt)]
 
         parent_html = await self._load_node_html(page.parent_page_id)
         if not parent_html:
             # 拿不到上一版 HTML 时退化为普通生成，至少不报错。
-            return [*system_messages, LlmMessage(role="user", content=task.prompt)]
+            return [*system_messages, current(task.prompt)]
 
         instructions = await self._collect_ancestor_instructions(page.parent_page_id)
         if instructions:
@@ -427,7 +406,7 @@ class GenerationService:
             *system_messages,
             LlmMessage(role="user", content=history_text),
             LlmMessage(role="assistant", content=parent_html),
-            LlmMessage(role="user", content=continue_instruction),
+            current(continue_instruction),
         ]
 
     def _build_system_messages(self, task: GenerationTask) -> list[LlmMessage]:
@@ -529,7 +508,7 @@ class GenerationService:
             task.started_at = datetime.now(UTC)
             await self.session.commit()
 
-        needs_compression = _needs_document_compression(task)
+        batch = await self.session.get(GenerationBatch, task.batch_id) if task.batch_id else None
         if task.input_file_names:
             yield await self._record_event(
                 task.id,
@@ -541,28 +520,9 @@ class GenerationService:
                     "text": "文件已上传到服务端",
                 },
             )
-            yield await self._record_event(
-                task.id,
-                "progress",
-                {
-                    "type": "progress",
-                    "step": "parse_file",
-                    "status": "completed",
-                    "text": "文件内容已解析",
-                },
-            )
-        if needs_compression:
-            yield await self._record_event(
-                task.id,
-                "progress",
-                {
-                    "type": "progress",
-                    "step": "compress_document",
-                    "status": "running",
-                    "text": "正在把长文本压缩为页面生成简报",
-                },
-            )
 
+        doc_context = DocumentContext()
+        extraction_usage: LlmUsage | None = None
         answer_parts: list[str] = []
         answer_started = False
         model_provider: str | None = None
@@ -576,25 +536,25 @@ class GenerationService:
 
         try:
             self._raise_if_cancelled()
-            if needs_compression:
-                await self._ensure_batch_document_compressed(task)
-                if not task.compression_prompt:
-                    raise DocumentCompressionError("文件内容压缩失败，请缩短文件后重试")
-            if task.input_file_names or needs_compression:
-                if task.compression_prompt or needs_compression:
-                    compress_text = "长文本已压缩为页面生成简报"
-                else:
-                    compress_text = "内容未超过阈值，无需压缩"
-                yield await self._record_event(
-                    task.id,
-                    "progress",
-                    {
-                        "type": "progress",
-                        "step": "compress_document",
-                        "status": "completed",
-                        "text": compress_text,
-                    },
-                )
+            if batch is not None and batch.parse_status != "none":
+                if batch_needs_parse(batch):
+                    yield await self._progress(task.id, "parse_file", "running", "正在解析文件内容")
+                    await self._await_cancellable(wait_for_batch_parse(batch.id))
+                    await self.session.refresh(batch)
+                    await self.session.refresh(task)
+                elif batch.parse_status == "failed":
+                    await self._await_cancellable(wait_for_batch_parse(batch.id))
+                yield await self._progress(task.id, "parse_file", "completed", "文件内容已解析")
+
+            material = await collect_lineage(self.session, batch) if batch is not None else LineageMaterial()
+            if material.has_documents:
+                yield await self._progress(task.id, "compress_document", "running", "正在结合本轮需求提取资料里的关键信息")
+                doc_context = await self._prepare_document_context(task, page, material)
+                extraction_usage = doc_context.usage
+                task.extracted_context = doc_context.text
+                task.compression_prompt = doc_context.prompt_log or None
+                await self.session.commit()
+                yield await self._progress(task.id, "compress_document", "completed", _extraction_summary(doc_context))
 
             yield await self._record_event(task.id, "status", {"type": "status", "text": "正在理解你的页面需求..."})
 
@@ -629,7 +589,15 @@ class GenerationService:
             )
 
             llm_client = create_llm_client(task.model_key)
-            messages = await self._build_llm_messages(task, page)
+            model_config = get_model_registry().get(task.model_key or "")
+            images, vision_skipped = await load_attachments(
+                self.session, batch, doc_context, supports_vision=bool(model_config and model_config.supports_vision)
+            )
+            if vision_skipped:
+                yield await self._record_event(task.id, "status", {"type": "status", "text": VISION_SKIPPED_MESSAGE})
+            messages = await self._build_llm_messages(task, page, doc_context, images)
+            task.model_prompt = _model_prompt_record(messages, doc_context)
+            await self.session.commit()
 
             llm_attempts = max(1, self.settings.llm_retry_attempts)
             llm_attempt = 1
@@ -785,7 +753,7 @@ class GenerationService:
             model_output_text = "".join(answer_parts)
             html_document = extract_html_document(model_output_text)
 
-            usage = merge_llm_usage(router_usage, generation_usage)
+            usage = merge_llm_usage(merge_llm_usage(router_usage, extraction_usage), generation_usage)
             output_tokens = (
                 usage.output_tokens
                 if usage and usage.output_tokens is not None
@@ -900,9 +868,10 @@ class GenerationService:
         except Exception as exc:
             if answer_parts and not task.model_output_text:
                 task.model_output_text = "".join(answer_parts)
-            user_message = exc.user_message if isinstance(exc, DocumentCompressionError) else "页面生成失败，请稍后重试。"
+            document_stage = isinstance(exc, DocumentStageError)
+            user_message = exc.user_message if document_stage else "页面生成失败，请稍后重试。"
             task.status = "failed"
-            task.error_message = str(exc)[:2000]
+            task.error_message = ((DocumentStageError.ERROR_PREFIX if document_stage else "") + str(exc))[:2000]
             task.finished_at = datetime.now(UTC)
             page.status = "failed"
             failed = self._stage_event(
@@ -912,72 +881,57 @@ class GenerationService:
             )
             await self.session.commit()
             await self.recompute_batch_status(task.batch_id)
+            if document_stage:
+                await self._refund_if_batch_failed_on_documents(task.batch_id)
             yield failed
 
-    async def _ensure_batch_document_compressed(self, task: GenerationTask) -> None:
-        """超长资料在生成流里压缩。同一 batch 只压一次，结果写回该批全部分支。"""
-        if not _needs_document_compression(task):
-            return
-        batch_id = task.batch_id
+    async def _progress(self, task_id: uuid.UUID, step: str, status: str, text: str) -> SseEvent:
+        return await self._record_event(task_id, "progress", {"type": "progress", "step": step, "status": status, "text": text})
+
+    async def _await_cancellable(self, awaitable: Any) -> Any:
+        """等解析、提取这类较长的步骤时也响应停止：每隔一会儿检查一次，停止时取消等待。"""
+        waiter = asyncio.ensure_future(awaitable)
+        try:
+            while not waiter.done():
+                await asyncio.wait({waiter}, timeout=CANCEL_POLL_SECONDS)
+                if not waiter.done():
+                    self._raise_if_cancelled()
+            return waiter.result()
+        except BaseException:
+            if not waiter.done():
+                waiter.cancel()
+            raise
+
+    async def _prepare_document_context(self, task: GenerationTask, page: Page, material: LineageMaterial) -> DocumentContext:
+        """同模型、关闭思考、纯文本提取本轮用得上的资料。
+
+        纯视觉资料（几乎没有文字、主要信息在快照或大图里）在它上传的那一轮跳过提取，直接把图交给写码模型。
+        """
+        if material.visual_only and material.current_batch_has_documents:
+            return build_document_context(material, None, visual_direct=True)
+        history = await self._collect_ancestor_instructions(page.parent_page_id) if page.parent_page_id else []
+        extraction = await self._await_cancellable(
+            extract_for_round(
+                model_key=task.model_key or "",
+                document_text=material.text,
+                history=history,
+                current=task.user_prompt or task.prompt,
+            )
+        )
+        return build_document_context(material, extraction, visual_direct=False)
+
+    async def _refund_if_batch_failed_on_documents(self, batch_id: uuid.UUID | None) -> None:
+        """整批都结束、且每一路都失败在资料阶段（解析或提取）时，退回一次匿名免费次数。"""
         if batch_id is None:
-            try:
-                await self._compress_and_store(task, batch_id=None)
-            except DocumentCompressionError:
-                await self._refund_anon_compression(task)
-                raise
             return
-
-        gate = await _compression_gate(batch_id)
-        try:
-            async with gate.lock:
-                if gate.error is not None:
-                    raise gate.error
-                await self.session.refresh(task)
-                if not _needs_document_compression(task):
-                    return
-                try:
-                    await self._compress_and_store(task, batch_id=batch_id)
-                except DocumentCompressionError as exc:
-                    # 只有真正执行压缩的这一路退回免费次数，同批其他模型只复用这个失败。
-                    gate.error = exc
-                    await self._refund_anon_compression(task)
-                    raise
-        finally:
-            await _release_compression_gate(batch_id)
-
-    async def _compress_and_store(self, task: GenerationTask, batch_id: uuid.UUID | None) -> None:
-        # 压缩模型只看用户需求。拼回 prompt 时用 task.prompt，这样图片地址不会被盖掉。
-        source_prompt = task.user_prompt or task.prompt
-        base_prompt = task.prompt or source_prompt
-        extracted = task.extracted_file_text or ""
-        summary, compression_log = await compress_document_context(source_prompt, extracted)
-        model_prompt = build_prompt_with_document_context(base_prompt, summary, compressed=True)
-
-        targets = [task]
-        if batch_id is not None:
-            batch = await self.session.get(GenerationBatch, batch_id)
-            if batch is not None:
-                batch.prompt = model_prompt
-                batch.compression_prompt = compression_log
-            result = await self.session.execute(select(GenerationTask).where(GenerationTask.batch_id == batch_id))
-            targets = list(result.scalars())
-        for item in targets:
-            item.prompt = model_prompt
-            item.model_prompt = model_prompt
-            item.compression_prompt = compression_log
-        await self.session.commit()
-        await self.session.refresh(task)
-
-    async def _refund_anon_compression(self, task: GenerationTask) -> None:
-        """压缩失败时退回匿名免费次数。保存点失败只回滚退回本身，不影响随后把任务标为失败。"""
-        try:
-            async with self.session.begin_nested():
-                actor = await self.session.get(User, task.requested_by_user_id)
-                if actor is None or not actor.is_anonymous:
-                    return
-                await BillingService(self.session).refund_anon_batch_started(actor)
-        except Exception as exc:  # noqa: BLE001 - 退回失败不掩盖压缩失败本身
-            print(f"[billing] 压缩失败退回匿名免费次数失败 task={task.id}: {exc}")
+        result = await self.session.execute(
+            select(GenerationTask.status, GenerationTask.error_message).where(GenerationTask.batch_id == batch_id)
+        )
+        rows = result.all()
+        if not rows or any(status != "failed" for status, _message in rows):
+            return
+        if all((message or "").startswith(DocumentStageError.ERROR_PREFIX) for _status, message in rows):
+            await refund_free_trial_once(self.session, batch_id)
 
     async def _settle_generation_billing(
         self, task: GenerationTask, version: PageVersion, cost: LlmCostBreakdown | None
@@ -1130,6 +1084,22 @@ class GenerationService:
         await self.session.commit()
         await self.recompute_batch_status(task.batch_id)
         return True
+
+
+def _extraction_summary(context: DocumentContext) -> str:
+    if context.mode == "visual":
+        return "资料以图片为主，已直接交给模型查看"
+    if context.mode == "empty":
+        return "本轮需求与资料无关，未引用资料"
+    return "已提取与本轮需求相关的资料"
+
+
+def _model_prompt_record(messages: list[LlmMessage], context: DocumentContext) -> str:
+    """调试记录：最后一条 user 消息的文字，附图只记说明，不存图片数据。"""
+    text = messages[-1].content if messages else ""
+    if context.attached_labels:
+        text += "\n\n[本轮附图] " + "；".join(context.attached_labels)
+    return text
 
 
 def _build_page_title(prompt: str) -> str:

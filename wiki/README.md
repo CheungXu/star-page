@@ -33,7 +33,7 @@
 - `site-icp-filing-footer.md`：网站 ICP 备案号首页页脚展示——合规要点、fixed vs 静态沉底取舍、SPA idle/工作区分离策略与视觉克制原则。
 - `systemd-nextjs-fastapi-deployment.md`：Next.js + FastAPI 早期 MVP 使用 systemd 常驻运行的部署要点；含 standalone 静态资源教训、"代码更新需重启（无 `--reload`）"、SSE 长连接导致停止卡 90s 应设 `TimeoutStopSec`（强杀安全的前提是后台任务退出不改状态、靠启动扫尾）、`print` 日志在非终端下被缓冲需 `flush=True`。
 - `training-consent-discount-and-page-moderation.md`：AIGC 产品的训练授权、授权优惠与公开页举报通用做法——「用户当前开关 × 单条数据快照」双重判定、把生成产出拆成「内容许可 / 当场提取的匿名结构样本 / 去标识化原文」三层以兼顾撤回权与防薅羊毛、新用户/老用户/匿名访客三套同意路径（首页页脚只同意协议，训练授权不写在页脚）、用户侧只展示积分与优惠而隐藏真实金额成本、CSP 禁网公开页经主站 `/report` 举报与 451 下架，以及同机 worktree 预览的库与端口隔离要点。
-- `uploaded-document-ingestion-for-generation.md`：上传资料辅助页面生成时的文件抽取、长文本压缩、LLM 重试、调试记录和节点可视化原则。
+- `uploaded-document-ingestion-for-generation.md`：上传资料辅助页面生成——创建时只预检、后台批次级共享解析（与单个模型的取消解耦）、各格式解析要点（双栏 PDF、少字大图页快照、PPTX 组合形状、DOCX 浮动图与合并表格、Excel 代码算画像）、PDF 库的 AGPL 许可证坑、每轮同模型关闭思考的需求感知提取（`<EMPTY/>` 与图片锚点 `IMAGE_REFS`）、图片「让模型看到 / 让页面用上」双通道与快照不公开、读图与关闭思考必须实测。
 - `user-scoped-history-persistence.md`：用户维度历史记录持久化原则，说明跨设备历史应落数据库，浏览器本地只保存设备内临时会话状态。
 - `xhs-growth-cold-start-data-and-positioning.md`：小红书冷启动数据探测、爆款画像与避坑指南——商业数据平台误区（蝉小红关停/千瓜禁止API）、轻量按次 API（DataXAPI）与无头浏览器 MCP 双轨组合、登录态双重寿命与安全隔离铁律、求职者（网页简历）与创意生（作品集）两大高爆画像提纯、三大避坑流量陷阱，以及「收藏数远大于点赞数」的核心度量标准。
 

@@ -3,7 +3,10 @@
     "temperature": 0.7,
     "max_tokens": 65536
   },
-  "default_models": ["qwen", "doubao"],
+  "default_models": [
+    "qwen",
+    "doubao"
+  ],
   "models": [
     {
       "key": "qwen",
@@ -15,7 +18,13 @@
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
-      "extra_body": { "enable_thinking": true },
+      "extra_body": {
+        "enable_thinking": true
+      },
+      "extraction_extra_body": {
+        "enable_thinking": false
+      },
+      "supports_vision": true,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -39,7 +48,13 @@
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
-      "extra_body": { "enable_thinking": true },
+      "extra_body": {
+        "enable_thinking": true
+      },
+      "extraction_extra_body": {
+        "enable_thinking": false
+      },
+      "supports_vision": true,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -61,8 +76,18 @@
       "base_url": "https://ark.cn-beijing.volces.com/api/v3",
       "model": "doubao-seed-2-1-pro-260915",
       "api_key_env": "ARK_API_KEY",
-      "params": { "temperature": null },
-      "extra_body": { "reasoning_effort": "medium" },
+      "params": {
+        "temperature": null
+      },
+      "extra_body": {
+        "reasoning_effort": "medium"
+      },
+      "extraction_extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "supports_vision": true,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -84,8 +109,18 @@
       "base_url": "https://ark.cn-beijing.volces.com/api/v3",
       "model": "doubao-seed-2-1-turbo-260628",
       "api_key_env": "ARK_API_KEY",
-      "params": { "temperature": null },
-      "extra_body": { "reasoning_effort": "medium" },
+      "params": {
+        "temperature": null
+      },
+      "extra_body": {
+        "reasoning_effort": "medium"
+      },
+      "extraction_extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "supports_vision": true,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -109,7 +144,14 @@
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
-      "extra_body": { "enable_thinking": true, "reasoning_effort": "high" },
+      "extra_body": {
+        "enable_thinking": true,
+        "reasoning_effort": "high"
+      },
+      "extraction_extra_body": {
+        "enable_thinking": false
+      },
+      "supports_vision": true,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -133,7 +175,14 @@
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
-      "extra_body": { "enable_thinking": true, "reasoning_effort": "high" },
+      "extra_body": {
+        "enable_thinking": true,
+        "reasoning_effort": "high"
+      },
+      "extraction_extra_body": {
+        "enable_thinking": false
+      },
+      "supports_vision": false,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -157,7 +206,13 @@
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
-      "extra_body": { "enable_thinking": true },
+      "extra_body": {
+        "enable_thinking": true
+      },
+      "extraction_extra_body": {
+        "reasoning_effort": "low"
+      },
+      "supports_vision": false,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -180,7 +235,15 @@
       "model": "glm-5-3-flash-260828",
       "api_key_env": "ARK_API_KEY",
       "params": {},
-      "extra_body": { "reasoning_effort": "high" },
+      "extra_body": {
+        "reasoning_effort": "high"
+      },
+      "extraction_extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "supports_vision": true,
       "pricing": {
         "currency": "CNY",
         "tiers": [
@@ -203,8 +266,16 @@
       "model": "kimi-k3.1-pro",
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
-      "params": { "temperature": null },
-      "extra_body": { "enable_thinking": true },
+      "params": {
+        "temperature": null
+      },
+      "extra_body": {
+        "enable_thinking": true
+      },
+      "extraction_extra_body": {
+        "enable_thinking": false
+      },
+      "supports_vision": true,
       "pricing": {
         "currency": "CNY",
         "tiers": [

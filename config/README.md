@@ -120,7 +120,10 @@ WECHATPAY_NOTIFY_URL=https://stars-page.com/api/billing/wechat/notify
 
 当前支持"多模型并行生成"，配置分三层落点，做到"加模型 / 调参数互不污染、密钥不进 Git"：
 
-- 模型目录（非密钥，可提交可 review）：`config/llm.models.json`，描述 `defaults`（全局兜底参数）、`default_models`（默认勾选）、`models[]`（每模型 `key/label/provider/protocol/base_url/model/api_key_env/params/extra_body/pricing`）。
+- 模型目录（非密钥，可提交可 review）：`config/llm.models.json`，描述 `defaults`（全局兜底参数）、`default_models`（默认勾选）、`models[]`（每模型 `key/label/provider/protocol/base_url/model/api_key_env/params/extra_body/extraction_extra_body/supports_vision/pricing`）。
+  - `supports_vision`：模型能否读图（OpenAI `image_url` 内容块）。为 `false` 时附图在适配层被丢弃，只发文字和图片地址。
+  - `extraction_extra_body`：资料提取时关闭思考的写法，会替换 `extra_body` 里的 `enable_thinking` / `reasoning_effort` / `thinking`。
+  - 这两项都要实测后再写：`python3 script/probe-llm-models.py --capabilities`（可加 `--only=key`）。
 - 密钥与基建参数（敏感/运维，gitignored）：`config/llm.env`，只放各模型 API Key 与 `LLM_TIMEOUT_MS`/`LLM_RETRY_*`。模板见 `config/llm.env.example`（只保留变量名）。
 
 各模型密钥变量名由目录里的 `api_key_env` 指定，例如：
@@ -137,17 +140,19 @@ LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时百炼系模
 
 当前已接入 9 个模型（目录 key → model ID）：
 
-| key | model ID | 接入通道 |
-| --- | --- | --- |
-| `qwen` | `qwen3.8-max` | 百炼 |
-| `qwen-plus` | `qwen3.8-flash` | 百炼 |
-| `doubao` | `doubao-seed-2-1-pro-260915` | 火山方舟 |
-| `doubao-code` | `doubao-seed-2-1-turbo-260628` | 火山方舟 |
-| `deepseek-v4.1-flash` | `deepseek-v4.1-flash-1017` | 百炼（主路） |
-| `deepseek-v4-pro` | `deepseek-v4-pro` | 百炼（主路） |
-| `glm-5.3` | `glm-5.3` | 百炼（主路） |
-| `glm-5.3-flash` | `glm-5-3-flash-260828` | 火山方舟（百炼直供未开通） |
-| `kimi-k3.1-pro` | `kimi-k3.1-pro` | 百炼（主路） |
+| key | model ID | 接入通道 | 读图 | 提取时关闭思考 |
+| --- | --- | --- | --- | --- |
+| `qwen` | `qwen3.8-max` | 百炼 | 是 | `enable_thinking: false` |
+| `qwen-plus` | `qwen3.8-flash` | 百炼 | 是 | `enable_thinking: false` |
+| `doubao` | `doubao-seed-2-1-pro-260915` | 火山方舟 | 是 | `thinking: {type: disabled}` |
+| `doubao-code` | `doubao-seed-2-1-turbo-260628` | 火山方舟 | 是 | `thinking: {type: disabled}` |
+| `deepseek-v4.1-flash` | `deepseek-v4.1-flash-1017` | 百炼（主路） | 是 | `enable_thinking: false` |
+| `deepseek-v4-pro` | `deepseek-v4-pro` | 百炼（主路） | 否（不报错但看不到图） | `enable_thinking: false` |
+| `glm-5.3` | `glm-5.3` | 百炼（主路） | 否（带图返回 400） | `reasoning_effort: low`（不能关，只能调低） |
+| `glm-5.3-flash` | `glm-5-3-flash-260828` | 火山方舟（百炼直供未开通） | 是 | `thinking: {type: disabled}` |
+| `kimi-k3.1-pro` | `kimi-k3.1-pro` | 百炼（主路） | 是 | `enable_thinking: false` |
+
+读图和关闭思考是 2026-11-12 用探测脚本实测的结果。方舟会接受 `enable_thinking: false`，但仍会思考几十个 token，要用它自己的 `thinking` 开关才真正关掉。
 
 百炼上的 DeepSeek、GLM-5.3、Kimi 复用 `QWEN_API_KEY`（未配置时回退 `LLM_API_KEY`）。GLM-5.3 Flash 走方舟，用 `ARK_API_KEY`。灾备官方 API 切换方式见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
 
