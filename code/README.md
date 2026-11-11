@@ -18,7 +18,8 @@ code/
 `code/backend/` 使用 FastAPI 实现主业务流程：
 
 - `POST /api/generations` 创建一轮生成（批次）：支持 `models` 多选并行、上传文件、以及 `conversation_id`+`base_page_id` 续写；每个模型一个独立 `Page` 节点，返回 `conversation_id/batch_id/runs[]`。
-- `GET /api/generations/{task_id}/events` 通过 SSE 推送单个模型 run 的生成过程（前端为每个 run 开一路）。
+- `GET /api/generations/batches/{batch_id}/events` 一轮一条 SSE 连接，带这一轮各模型的事件（payload 带 `task_id`），支持断线按游标续传；生成由后端后台执行器跑完，连接断开不影响生成（单任务的 `/{task_id}/events` 保留只读兼容）。
+- `POST /api/generations/batches/{batch_id}/cancel` 停止这一轮还没完成的模型，已完成的保留并计费，被停的记为 `cancelled`、不计费。
 - `GET /api/models` 返回模型目录（key/label/是否默认/是否可用），供前端动态渲染多选。
 - `GET /api/conversations`、`GET /api/conversations/{id}` 会话列表（按会话一条）与会话树（批次 + 各模型节点，含 `usage`、`billing`、`duration_ms`），用于历史与多轮恢复。
 - `GET /api/pages/{page_id}` 查询页面元数据。
@@ -44,7 +45,7 @@ python -m app.db.migrate
 - 开始生成后，主区域切换为左侧对话栏、右侧结果预览区，两栏之间可通过拖拽分隔条调整宽度（记忆在 `localStorage`）。工作区组件集中在 `code/frontend/app/components/workspace/`。
 - 左侧对话栏按轮次排列，每轮由「带来源标识（新建 / 基于某结果 / 各自续改）的用户需求气泡 + 左对齐的进度回复气泡」组成。进度回复气泡收起时展示完成数、用时、tokens 与积分，展开后为轻量模型明细表（阶段、输出比例条、用时、积分、最快/最省/→第N轮标签）；点击历史轮次的回复气泡即可在右侧回看该轮结果。
 - 右侧结果区：1-2 个模型并排对比；3 个以上采用「大舞台 + 底部胶片缩略条 + 全屏轮播」（支持键盘左右键切换）。每个结果是一个"浏览器视窗"单元（固定 `1200px` 视口按单元宽度缩放），支持独立打开/复制链接、发布固定链接、以及"以此结果继续"续写；高度按单元反算，避免生成页 `100vh` 被整页高度撑大。
-- 每个模型 run 单独一路 SSE，先完成的先展示；历史与多轮会话恢复基于 `GET /api/conversations/{id}`。
+- 每轮一条 SSE 订阅全轮事件，先完成的先展示；名额已满时超出的模型显示「排队中」，生成中发送按钮变成「停止生成」；历史与多轮会话恢复基于 `GET /api/conversations/{id}`。
 - 复制链接支持 HTTP 环境下的降级复制，成功后按钮变绿并显示“复制成功”。
 - 历史创建从后端数据库读取，当前按手机号登录用户隔离；浏览器 `localStorage` 仅保留当前设备的会话细节。
 
@@ -91,12 +92,6 @@ systemctl restart star-page-backend.service star-page-frontend.service
 
 systemd 模板文件位于 `code/systemd/`，实际运行文件已复制到 `/etc/systemd/system/`。
 
-## 后台队列升级提醒
+## 后台执行与后续扩容
 
-当前 MVP 使用 SSE 长连接 + 数据库任务事件。出现以下情况时，应升级为后台队列 + Worker：
-
-- 生成任务经常超过 1-2 分钟。
-- 同时生成人数增加，FastAPI 长连接明显变多。
-- 用户刷新页面后需要可靠恢复生成进度。
-- 需要失败自动重试、任务排队、取消任务。
-- 需要多台机器横向扩容生成能力。
+生成任务已在 FastAPI 进程内由常驻后台执行器跑完（先过每用户上限 10、再过全站上限 48，重启后自动扫尾重跑近期中断的任务，详见 `code/backend/README.md` 的「后台生成」和 `wiki/sse-background-job-streaming.md`）。这一版依赖后端只跑**单个 uvicorn worker**；以后要多 worker 或多台机器横向扩容，需要给任务加 owner 与心跳，或拆成独立的任务队列 + Worker。
