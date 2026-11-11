@@ -14,11 +14,10 @@ from starlette.datastructures import FormData, UploadFile
 from app.core.auth import get_client_ip, get_optional_actor, resolve_actor
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from app.models.entities import GenerationTask, PageAsset
+from app.models.entities import GenerationTask
 from app.schemas.conversations import ConversationForkSource
 from app.schemas.generation import GenerationCreateRequest, GenerationCreateResponse, GenerationRunItem
 from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
-from app.services.consent_service import training_consent_for
 from app.services.document_parser.pipeline import discard_staged, stage_documents
 from app.services.document_parser.precheck import precheck_uploads
 from app.services.generation_events import HEARTBEAT, stream_task_events
@@ -79,7 +78,6 @@ async def create_generation(request: Request, response: Response) -> GenerationC
         staged: list[dict] = []
         service = GenerationService(session)
         owner_id = user.id
-        asset_consent = training_consent_for(user)
         created_ok = False
         try:
             slot_labels = {slot.key: slot.label for slot in scene.image_slots} if scene else {}
@@ -105,6 +103,7 @@ async def create_generation(request: Request, response: Response) -> GenerationC
                 user_prompt=composed_prompt,
                 input_file_names=input_file_names,
                 staged_uploads=staged,
+                stored_images=stored_images,
                 conversation_id=parsed.conversation_id,
                 base_page_id=parsed.base_page_id,
                 scene_key=scene.key if scene else None,
@@ -112,26 +111,6 @@ async def create_generation(request: Request, response: Response) -> GenerationC
                 user=user,
                 client_ip=get_client_ip(request),
             )
-            if stored_images:
-                for image in stored_images:
-                    session.add(
-                        PageAsset(
-                            id=image.asset_id,
-                            owner_user_id=owner_id,
-                            batch_id=creation.batch_id,
-                            storage_key=image.storage_key,
-                            content_type=image.content_type,
-                            filename=image.filename,
-                            role=image.role,
-                            byte_size=image.byte_size,
-                            training_consent=asset_consent,
-                            source_kind=image.source_kind,
-                            width=image.width,
-                            height=image.height,
-                            source_label=image.filename,
-                        )
-                    )
-                await session.commit()
             created_ok = True
         except InsufficientCreditsError as exc:
             raise HTTPException(

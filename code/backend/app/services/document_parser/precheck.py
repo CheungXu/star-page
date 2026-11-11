@@ -103,6 +103,7 @@ def _check_document(filename: str, extension: str, data: bytes) -> None:
     elif extension == ".xls":
         if not data.startswith(_OLE_MAGIC):
             raise _bad_request(f"{filename} 不是有效的 xls 文件，请另存为 xlsx 后再上传")
+        _check_workbook_opens(filename, data)
     elif b"\x00" in data[:8192]:
         raise _bad_request(f"{filename} 不是文本文件，请确认扩展名正确")
 
@@ -153,6 +154,21 @@ def _check_office_zip(filename: str, extension: str, data: bytes) -> None:
                 raise _unprocessable(f"{filename} 共 {slides} 页，当前最多支持 {PPTX_MAX_SLIDES} 页，请精简后再上传")
     if extension == ".docx":
         _check_docx_blocks(filename, data)
+    elif extension == ".xlsx":
+        _check_workbook_opens(filename, data)
+
+
+def _check_workbook_opens(filename: str, data: bytes) -> None:
+    """只读工作表目录，损坏或加密的表格在这里就拦下。"""
+    from python_calamine import CalamineWorkbook
+
+    try:
+        workbook = CalamineWorkbook.from_filelike(io.BytesIO(data))
+        names = workbook.sheet_names
+    except Exception as exc:  # noqa: BLE001 - calamine 对坏文件、加密文件抛自己的异常
+        raise _unprocessable(f"{filename} 无法打开，请确认文件未加密且没有损坏") from exc
+    if not names:
+        raise _unprocessable(f"{filename} 没有任何工作表")
 
 
 def _check_docx_blocks(filename: str, data: bytes) -> None:

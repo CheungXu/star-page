@@ -39,6 +39,34 @@ def test_pdf_two_columns_read_left_then_right_and_drop_page_number() -> None:
     assert "Page 1" not in text
 
 
+def _row_words(rows: int, spanning: int) -> list[list[dict]]:
+    """中文排版：一整行常常只是一个「词」。"""
+    from app.services.document_parser.pdf_parser import _group_lines
+
+    def word(x0, x1, top):
+        return {"x0": x0, "x1": x1, "top": top, "bottom": top + 10, "size": 10, "text": "字"}
+
+    words = [word(150, 450, 40 + 22 * index) for index in range(spanning)]
+    for row in range(rows):
+        words += [word(50, 285, 120 + row * 20), word(310, 545, 120 + row * 20)]
+    return _group_lines(words)
+
+
+def test_column_gap_tolerates_spanning_titles_and_short_cjk_pages() -> None:
+    from app.services.document_parser.pdf_parser import _column_gap
+
+    assert _column_gap(_row_words(25, 2), 595) is not None
+    assert _column_gap(_row_words(25, 3), 595) is not None
+    assert _column_gap(_row_words(12, 1), 595) is not None
+
+
+def test_column_gap_not_found_on_single_column_page() -> None:
+    from app.services.document_parser.pdf_parser import _column_gap, _group_lines
+
+    lines = _group_lines([{"x0": 50, "x1": 545, "top": 40 + 20 * row, "bottom": 50 + 20 * row, "size": 10, "text": "字"} for row in range(30)])
+    assert _column_gap(lines, 595) is None
+
+
 def test_pdf_scanned_pages_become_private_snapshots_not_public_images() -> None:
     scan = jpeg_bytes(600, 850, (90, 90, 90))
     document = parse_document("scan.pdf", ".pdf", build_pdf([{"image": (0, 0, 595, 842, scan)}] * 2))
@@ -206,6 +234,22 @@ def test_html_keeps_structure_and_drops_scripts() -> None:
     assert "alert" not in text
 
 
+def test_rotated_photo_reports_display_size() -> None:
+    from PIL import Image
+
+    from app.services.document_parser.images import image_size, normalize_image
+
+    image = Image.new("RGB", (1600, 900), (10, 100, 200))
+    exif = Image.Exif()
+    exif[0x0112] = 6  # 存成横向像素，显示时转 90°，实际是竖图
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    data = buffer.getvalue()
+    assert image_size(data) == (900, 1600)
+    normalized = normalize_image(data)
+    assert (normalized.width, normalized.height) == (900, 1600)
+
+
 # ---------- 预检 ----------
 
 
@@ -236,6 +280,18 @@ def test_precheck_rejects_encrypted_pdf_and_fake_extension() -> None:
     assert "加密" in _expect(422, [("locked.pdf", build_pdf([{"texts": [(50, 780, 10, "x")]}], encrypt=True))])
     assert "不是有效的 PDF" in _expect(400, [("fake.pdf", b"hello world")])
     assert "不是有效的" in _expect(400, [("fake.png", b"GIF8")])
+
+
+def test_precheck_rejects_corrupt_spreadsheets() -> None:
+    assert "无法打开" in _expect(422, [("bad.xls", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 600)])
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("xl/workbook.xml", "not xml")
+    assert "无法打开" in _expect(422, [("bad.xlsx", buffer.getvalue())])
+    documents, _images = precheck_uploads([("ok.xlsx", _workbook(3))])
+    assert documents[0].filename == "ok.xlsx"
 
 
 def test_precheck_rejects_zip_bomb_and_big_image() -> None:

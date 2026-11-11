@@ -25,7 +25,7 @@ if TEST_DATABASE_URL:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 
     from app.api import routes_conversations  # noqa: E402
-    from app.models.entities import Conversation, Page, User  # noqa: E402
+    from app.models.entities import Conversation, GenerationBatch, Page, User  # noqa: E402
     from app.services.billing.account import BillingService  # noqa: E402
     from app.services.conversation_tree import view_batches  # noqa: E402
     from app.services.generation_service import GenerationService  # noqa: E402
@@ -158,10 +158,24 @@ async def _run_fork_flow(session_factory, monkeypatch) -> None:
     async def deleted(creation) -> bool:
         return (await page_of(creation)).deleted_at is not None
 
+    # X 的三轮各有一张私有整页快照：节点真正删掉时快照跟着删，仍被继承的保留。
+    released: list[str] = []
+
+    async def record_discard(snapshots):
+        released.extend(item["storage_key"] for item in snapshots)
+
+    monkeypatch.setattr(routes_conversations, "discard_snapshots", record_discard)
+    async with session_factory() as session:
+        for name, creation in (("r1", r1), ("r2", r2), ("r3", r3)):
+            batch = await session.get(GenerationBatch, creation.batch_id)
+            batch.visual_snapshots = [{"snap_id": name, "storage_key": f"snap/{name}.png"}]
+        await session.commit()
+
     # 删 X：第 3 轮没人继承，删掉；第 1、2 轮仍被 X'、X'' 继承，保留。
     await routes_conversations.delete_conversation(x, None)
     assert await deleted(r3)
     assert not await deleted(r1) and not await deleted(r2)
+    assert released == ["snap/r3.png"]
     detail = await routes_conversations.get_conversation(x1, None)
     assert len(detail.batches) == 7 and detail.forked_from.available is False
 
@@ -169,10 +183,12 @@ async def _run_fork_flow(session_factory, monkeypatch) -> None:
     await routes_conversations.delete_conversation(x1, None)
     assert await deleted(r4) and await deleted(r2)
     assert not await deleted(r1)
+    assert released == ["snap/r3.png", "snap/r2.png"]
 
     # 删 X''：最后一个继承者没了，第 1 轮也删掉。
     await routes_conversations.delete_conversation(x2, None)
     assert await deleted(r5) and await deleted(r1)
+    assert released == ["snap/r3.png", "snap/r2.png", "snap/r1.png"]
 
     async with session_factory() as session:
         remaining = await session.execute(

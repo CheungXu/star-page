@@ -1,7 +1,7 @@
 """批次级后台解析：创建请求只暂存原件，第一个开跑的模型拉起解析，同批其他模型等同一个结果。
 
 - 解析是独立的 asyncio.Task，不属于任何一个模型的协程：停掉某个模型不会打断解析，
-  只有同批所有等待者都被取消时才取消解析。
+  只有同批已经没有排队或在跑的任务时才取消解析。
 - 单进程假设与 generation_runner 一致：任务登记表在内存里，状态用 parse_status 原子更新兜底。
 - 原件只在解析期间存在：成功、失败、取消都会删掉。整页快照存私有键，不进 page_assets。
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select, update
@@ -95,9 +95,12 @@ def anchor_for_snapshot(snap_id: str, filename: str, page_no: int, reason: str) 
 class _ParseJob:
     task: asyncio.Task[None]
     waiters: int = 0
+    # 等待中被停掉的任务。它们的终态可能还没写进库，判断「批次是否还有人要」时要排除。
+    abandoned_by: set[uuid.UUID] = field(default_factory=set)
 
 
 _jobs: dict[uuid.UUID, _ParseJob] = {}
+_background: set[asyncio.Task[None]] = set()
 _session_factory: Callable[[], AsyncSession] | None = None
 
 
@@ -119,26 +122,61 @@ def batch_needs_parse(batch: GenerationBatch | None) -> bool:
     return batch is not None and batch.parse_status in {"pending", "running"}
 
 
-async def wait_for_batch_parse(batch_id: uuid.UUID) -> None:
-    """等本批解析完成。失败抛 DocumentParseError；同批所有等待者都被取消时才取消解析。"""
-    job = _jobs.get(batch_id)
-    if job is None or job.task.done():
-        job = _ParseJob(task=asyncio.create_task(_run_parse(batch_id), name=f"parse-{batch_id}"))
-        _jobs[batch_id] = job
+def _start_job(batch_id: uuid.UUID) -> _ParseJob:
+    job = _ParseJob(task=asyncio.create_task(_run_parse(batch_id), name=f"parse-{batch_id}"))
+    _jobs[batch_id] = job
+
+    def done(task: asyncio.Task[None]) -> None:
+        # 解析结束才注销，期间后到的模型复用同一个任务，不会重复解析。
+        if _jobs.get(batch_id) is job:
+            _jobs.pop(batch_id, None)
+        if not task.cancelled():
+            task.exception()  # 没人等的时候也取走异常，免得事件循环报未读取
+
+    job.task.add_done_callback(done)
+    return job
+
+
+async def wait_for_batch_parse(batch_id: uuid.UUID, task_id: uuid.UUID | None = None) -> None:
+    """等本批解析完成。失败抛 DocumentParseError。
+
+    等待者被停掉不会直接取消解析：同批还有排队或在跑的任务（例如个人上限下还没轮到的模型）时，
+    解析继续跑完供它们使用；只有整批都没人要了才取消。
+    """
+    job = _jobs.get(batch_id) or _start_job(batch_id)
     job.waiters += 1
-    cancelled = False
     try:
         await asyncio.shield(job.task)
     except asyncio.CancelledError:
-        cancelled = True
+        if task_id is not None:
+            job.abandoned_by.add(task_id)
+        if job.waiters <= 1 and not job.task.done():
+            checker = asyncio.create_task(_cancel_if_abandoned(batch_id, job))
+            _background.add(checker)
+            checker.add_done_callback(_background.discard)
         raise
     finally:
         job.waiters -= 1
-        if job.waiters <= 0:
-            if cancelled and not job.task.done():
-                job.task.cancel()
-            if _jobs.get(batch_id) is job:
-                _jobs.pop(batch_id, None)
+
+
+async def _cancel_if_abandoned(batch_id: uuid.UUID, job: _ParseJob) -> None:
+    try:
+        others_live = await _batch_has_live_tasks(batch_id, exclude=job.abandoned_by)
+    except Exception as exc:  # noqa: BLE001 - 查不到就不取消，最坏是多解析一次
+        print(f"[parse] 判断批次是否还有任务失败 batch={batch_id}: {exc!r}")
+        return
+    if not others_live and job.waiters <= 0 and not job.task.done():
+        job.task.cancel()
+
+
+async def _batch_has_live_tasks(batch_id: uuid.UUID, *, exclude: set[uuid.UUID]) -> bool:
+    async with _new_session() as session:
+        query = select(GenerationTask.id).where(
+            GenerationTask.batch_id == batch_id, GenerationTask.status.in_(("pending", "running"))
+        )
+        if exclude:
+            query = query.where(GenerationTask.id.not_in(exclude))
+        return (await session.execute(query.limit(1))).first() is not None
 
 
 async def _run_parse(batch_id: uuid.UUID) -> None:
@@ -227,7 +265,8 @@ async def _store_outputs(
 ) -> tuple[str, list[dict[str, Any]]]:
     """配图写 page_assets，快照写私有键，占位换成锚点，拼出带锚点的合并原文。"""
     storage = create_storage_provider()
-    seen_hashes: set[str] = set()
+    # 同一批里多份文档出现同一张图：只存一份，后面的文档复用这个资源 ID 写锚点。
+    stored_by_hash: dict[str, uuid.UUID] = {}
     blocks: list[str] = []
     documents_meta: list[dict[str, Any]] = []
     cursor = 0
@@ -236,11 +275,12 @@ async def _store_outputs(
         text = document.text
         for index, image in enumerate(document.images):
             placeholder = IMAGE_PLACEHOLDER.format(index=index)
-            if image.sha256 in seen_hashes:
-                text = text.replace(placeholder, "")
+            existing = stored_by_hash.get(image.sha256)
+            if existing is not None:
+                text = text.replace(placeholder, anchor_for_image(existing, image.label, image.width, image.height, image.core))
                 continue
-            seen_hashes.add(image.sha256)
             asset_id = uuid.uuid4()
+            stored_by_hash[image.sha256] = asset_id
             key = f"page-assets/{asset_id}{image.extension}"
             await storage.put_bytes(key, image.data, image.content_type)
             asset = PageAsset(

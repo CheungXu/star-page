@@ -29,6 +29,9 @@ SCANNED_DOC_CHARS = 100
 # 少字页上占版面七成以上的图就是扫描底图，交给整页快照，不当配图公开。
 SCAN_IMAGE_RATIO = 0.7
 HEADER_FOOTER_BAND = 0.08
+# 双栏判断：至少这么多行才判断；最多容忍这个比例的行横跨中缝。
+MIN_COLUMN_ROWS = 8
+SPANNING_ROW_RATIO = 0.15
 
 
 @dataclass
@@ -152,7 +155,7 @@ def _page_blocks(page) -> list[_Block]:
         if not _inside_any(word, table_boxes)
     ]
     lines = _group_lines(words)
-    gap = _column_gap(words, float(page.width))
+    gap = _column_gap(lines, float(page.width))
     blocks: list[_Block] = []
     for line_words in lines:
         blocks.extend(_split_line(line_words, gap))
@@ -191,22 +194,29 @@ def _group_lines(words: list[dict]) -> list[list[dict]]:
     return [sorted(line, key=lambda item: item["x0"]) for line in lines]
 
 
-def _column_gap(words: list[dict], width: float) -> float | None:
-    """在页面中段找一条几乎没有文字经过的竖缝，找到就按双栏处理。"""
-    if len(words) < 40 or width <= 0:
+def _column_gap(lines: list[list[dict]], width: float) -> float | None:
+    """在页面中段找一条几乎没有文字行经过的竖缝，找到就按双栏处理。
+
+    按「行」计数而不是按「词」：中文一整行常常只是一个词，按词计数时行数少的双栏页会漏判。
+    允许约 15% 的行横跨中缝（标题、导语、通栏图注）。
+    """
+    if len(lines) < MIN_COLUMN_ROWS or width <= 0:
         return None
     bins = 100
     counts = [0] * bins
-    for word in words:
-        start = max(0, int(word["x0"] / width * bins))
-        end = min(bins - 1, int(word["x1"] / width * bins))
-        for index in range(start, end + 1):
+    for line in lines:
+        covered: set[int] = set()
+        for word in line:
+            start = max(0, int(word["x0"] / width * bins))
+            end = min(bins - 1, int(word["x1"] / width * bins))
+            covered.update(range(start, end + 1))
+        for index in covered:
             counts[index] += 1
     left_mass = sum(counts[:25])
     right_mass = sum(counts[75:])
     if left_mass == 0 or right_mass == 0:
         return None
-    threshold = max(1, int(len(words) * 0.03))
+    threshold = max(1, int(len(lines) * SPANNING_ROW_RATIO))
     best: tuple[int, int] | None = None
     run_start: int | None = None
     for index in range(25, 76):

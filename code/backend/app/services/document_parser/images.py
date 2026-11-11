@@ -39,14 +39,28 @@ def sniff_image(data: bytes) -> tuple[str, str] | None:
     return None
 
 
+_ROTATED_ORIENTATIONS = {5, 6, 7, 8}
+
+
+def _display_size(image: Image.Image) -> tuple[int, int]:
+    """按 EXIF 方向换算成显示时的宽高。手机竖拍常存成横向像素加「旋转 90°」标记，浏览器按标记显示。"""
+    width, height = image.size
+    try:
+        orientation = image.getexif().get(0x0112)
+    except Exception:  # noqa: BLE001 - EXIF 损坏时按原始尺寸
+        orientation = None
+    return (height, width) if orientation in _ROTATED_ORIENTATIONS else (width, height)
+
+
 def image_size(data: bytes) -> tuple[int, int]:
-    """读宽高并校验像素上限。像素炸弹会抛 Image.DecompressionBombError。"""
+    """读显示宽高并校验像素上限。像素炸弹会抛 Image.DecompressionBombError。"""
     with Image.open(io.BytesIO(data)) as image:
-        width, height = image.size
-        if width * height > MAX_IMAGE_PIXELS:
+        if image.width * image.height > MAX_IMAGE_PIXELS:
             raise Image.DecompressionBombError("图片像素过大")
         image.verify()
-    return width, height
+    # verify 之后对象不能再用，读 EXIF 要重新打开。
+    with Image.open(io.BytesIO(data)) as image:
+        return _display_size(image)
 
 
 def normalize_image(data: bytes, *, max_edge: int = STORED_IMAGE_MAX_EDGE) -> NormalizedImage | None:
@@ -61,7 +75,8 @@ def normalize_image(data: bytes, *, max_edge: int = STORED_IMAGE_MAX_EDGE) -> No
             fmt = (image.format or "").upper()
             if fmt in WEB_FORMATS and max(image.size) <= max_edge:
                 content_type, extension = WEB_FORMATS[fmt]
-                return NormalizedImage(data, content_type, extension, image.width, image.height, digest)
+                width, height = _display_size(image)
+                return NormalizedImage(data, content_type, extension, width, height, digest)
             return _reencode(image, max_edge, digest)
     except (Image.DecompressionBombError, OSError, ValueError, SyntaxError):
         return None

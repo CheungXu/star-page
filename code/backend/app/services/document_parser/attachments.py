@@ -59,6 +59,8 @@ class DocumentContext:
                 else "以下是从用户上传资料中提取的、与本轮需求相关的内容。请据此组织页面的内容、数据和结构，不要编造资料里没有的信息。"
             )
             parts.append(f"{intro}\n\n# 资料提取内容\n{self.text}")
+        elif self.mode == "extracted" and self.doc_visuals:
+            parts.append("本轮需求用到的资料内容在图片里，请结合随消息附上的资料图片理解，不要编造图片里没有的信息。")
         if self.listed_assets:
             base = get_settings().public_base_url.rstrip("/")
             lines = [

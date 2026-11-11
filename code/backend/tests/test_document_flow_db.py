@@ -175,18 +175,10 @@ async def _create(factory, user, models, files, *, conversation_id=None, prompt=
             user_prompt=prompt,
             input_file_names=[name for name, _data in files],
             staged_uploads=staged,
+            stored_images=stored,
             conversation_id=conversation_id,
             user=user,
         )
-        for image in stored:
-            session.add(
-                PageAsset(
-                    id=image.asset_id, owner_user_id=user.id, batch_id=creation.batch_id, storage_key=image.storage_key,
-                    content_type=image.content_type, filename=image.filename, role=image.role, byte_size=image.byte_size,
-                    source_kind=image.source_kind, width=image.width, height=image.height,
-                )
-            )
-        await session.commit()
     return creation, staged
 
 
@@ -270,6 +262,27 @@ def test_first_round_parses_once_and_feeds_both_channels(env):
     _run(flow)
 
 
+def test_same_image_in_two_documents_stored_once_and_anchored_in_both(env):
+    async def flow(factory, runner):
+        user = await _user(factory)
+        logo = jpeg_bytes(400, 240, (200, 30, 30))
+        first = build_pdf([{"texts": [(50, 780, 10, "First document body " * 8)], "image": (60, 300, 200, 120, logo)}])
+        second = build_pdf([{"texts": [(50, 780, 10, "Second document body " * 8)], "image": (60, 300, 200, 120, logo)}])
+        creation, _staged = await _create(factory, user, ["vis-a"], [("a.pdf", first), ("b.pdf", second)])
+        runner.start([creation.runs[0].task_id], creation.batch_id, user_id=user.id, user_limit=10)
+        await _wait_idle(runner)
+        async with factory() as session:
+            batch = await session.get(GenerationBatch, creation.batch_id)
+            assets = list((await session.execute(select(PageAsset).where(PageAsset.batch_id == batch.id))).scalars())
+        assert len(assets) == 1
+        anchor = f"img:{assets[0].id}"
+        documents = batch.parsed_documents
+        assert anchor in batch.extracted_file_text[documents[0]["start"] : documents[0]["end"]]
+        assert anchor in batch.extracted_file_text[documents[1]["start"] : documents[1]["end"]]
+
+    _run(flow)
+
+
 def test_parse_failure_fails_batch_and_refunds_free_trial_once(env):
     async def flow(factory, runner):
         user = await _user(factory, anonymous=True)
@@ -296,6 +309,67 @@ def test_parse_failure_fails_batch_and_refunds_free_trial_once(env):
         assert not (env.root / staged[0]["storage_key"]).exists()
         failed = [payload for kind, payload in await _events(factory, tasks[0].id) if kind == "failed"]
         assert "broken.pdf 解析失败" in failed[0]["message"]
+
+    _run(flow)
+
+
+def test_stopping_running_model_keeps_parse_for_queued_sibling(env):
+    """个人上限为 1：A 在解析时被停，B 还在排队。解析不能被取消，B 轮到后照常完成。"""
+
+    async def flow(factory, runner):
+        user = await _user(factory)
+        creation, staged = await _create(factory, user, ["vis-a", "vis-b"], [("slow-report.pdf", _report_pdf())])
+        ids = {run.model_key: run.task_id for run in creation.runs}
+        runner.start([ids["vis-a"], ids["vis-b"]], creation.batch_id, user_id=user.id, user_limit=1)
+
+        async def parsing() -> bool:
+            return any(kind == "progress" and payload["step"] == "parse_file" for kind, payload in await _events(factory, ids["vis-a"]))
+
+        deadline = asyncio.get_running_loop().time() + 10
+        while not await parsing():
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.02)
+        assert await runner.cancel(ids["vis-a"]) is True
+        await _wait_idle(runner)
+
+        async with factory() as session:
+            batch = await session.get(GenerationBatch, creation.batch_id)
+            stopped = await session.get(GenerationTask, ids["vis-a"])
+            queued = await session.get(GenerationTask, ids["vis-b"])
+        assert stopped.status == "cancelled"
+        assert queued.status == "succeeded", queued.error_message
+        assert batch.parse_status == "succeeded"
+        assert env.recorder.parses == 1
+        assert not (env.root / staged[0]["storage_key"]).exists()
+
+    _run(flow)
+
+
+def test_parse_cancelled_when_whole_batch_stopped(env):
+    async def flow(factory, runner):
+        user = await _user(factory)
+        creation, staged = await _create(factory, user, ["vis-a"], [("slow-report.pdf", _report_pdf())])
+        task_id = creation.runs[0].task_id
+        runner.start([task_id], creation.batch_id, user_id=user.id, user_limit=10)
+
+        async def parsing() -> bool:
+            return any(kind == "progress" and payload["step"] == "parse_file" for kind, payload in await _events(factory, task_id))
+
+        deadline = asyncio.get_running_loop().time() + 10
+        while not await parsing():
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.02)
+        assert await runner.cancel(task_id) is True
+        await _wait_idle(runner)
+        deadline = asyncio.get_running_loop().time() + 5
+        while creation.batch_id in pipeline._jobs:
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.05)
+
+        async with factory() as session:
+            batch = await session.get(GenerationBatch, creation.batch_id)
+        assert batch.parse_status == "failed"
+        assert not (env.root / staged[0]["storage_key"]).exists()
 
     _run(flow)
 

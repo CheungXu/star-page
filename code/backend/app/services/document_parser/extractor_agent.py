@@ -63,7 +63,8 @@ class ExtractionResult:
 
     @property
     def empty(self) -> bool:
-        return not self.text.strip()
+        # 只点名了图片、没有正文（如扫描件续写时没字可摘）也算与资料相关。
+        return not self.text.strip() and not self.image_refs
 
 
 def parse_extraction_output(raw: str) -> tuple[str, list[str]]:

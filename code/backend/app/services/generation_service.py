@@ -18,6 +18,7 @@ from app.models.entities import (
     GenerationEvent,
     GenerationTask,
     Page,
+    PageAsset,
     PagePermission,
     PageVersion,
     User,
@@ -33,6 +34,7 @@ from app.services.document_parser.errors import DocumentStageError
 from app.services.document_parser.extractor_agent import extract_for_round
 from app.services.document_parser.pipeline import batch_needs_parse, refund_free_trial_once, wait_for_batch_parse
 from app.services.html_sanitizer import extract_html_document, find_tailwind_runtime_violation, sanitize_html
+from app.services.image_assets import StoredImage
 from app.services.llm.client import create_llm_client
 from app.services.llm.cost import estimate_llm_cost, merge_llm_usage, usage_to_payload
 from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, HTML_PAGE_TAILWIND_CORRECTION_PROMPT, build_skill_system_message
@@ -127,6 +129,7 @@ class GenerationService:
         extracted_file_text: str | None = None,
         compression_prompt: str | None = None,
         staged_uploads: list[dict[str, Any]] | None = None,
+        stored_images: list[StoredImage] | None = None,
         conversation_id: uuid.UUID | None = None,
         base_page_id: uuid.UUID | None = None,
         scene_key: str | None = None,
@@ -302,6 +305,26 @@ class GenerationService:
 
         # 匿名批次启动计一次免费额度（按批次计，非按模型）。
         await billing.record_anon_batch_started(user)
+
+        # 上传的图片和批次同一个事务提交：不会出现任务已建好、图片记录却没写进去的情况。
+        for image in stored_images or []:
+            self.session.add(
+                PageAsset(
+                    id=image.asset_id,
+                    owner_user_id=user.id,
+                    batch_id=batch.id,
+                    storage_key=image.storage_key,
+                    content_type=image.content_type,
+                    filename=image.filename,
+                    role=image.role,
+                    byte_size=image.byte_size,
+                    training_consent=consent,
+                    source_kind=image.source_kind,
+                    width=image.width,
+                    height=image.height,
+                    source_label=image.filename,
+                )
+            )
 
         await self.session.commit()
         return BatchCreation(
@@ -539,11 +562,11 @@ class GenerationService:
             if batch is not None and batch.parse_status != "none":
                 if batch_needs_parse(batch):
                     yield await self._progress(task.id, "parse_file", "running", "正在解析文件内容")
-                    await self._await_cancellable(wait_for_batch_parse(batch.id))
+                    await self._await_cancellable(wait_for_batch_parse(batch.id, task.id))
                     await self.session.refresh(batch)
                     await self.session.refresh(task)
                 elif batch.parse_status == "failed":
-                    await self._await_cancellable(wait_for_batch_parse(batch.id))
+                    await self._await_cancellable(wait_for_batch_parse(batch.id, task.id))
                 yield await self._progress(task.id, "parse_file", "completed", "文件内容已解析")
 
             material = await collect_lineage(self.session, batch) if batch is not None else LineageMaterial()

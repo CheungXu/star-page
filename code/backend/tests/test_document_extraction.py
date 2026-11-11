@@ -188,6 +188,17 @@ def test_empty_extraction_adds_nothing() -> None:
     assert context.mode == "empty" and context.prompt_block() == "" and context.doc_visuals == []
 
 
+def test_refs_without_text_still_count_as_related() -> None:
+    """扫描件续写时提取模型没字可摘，只点名了快照：不能当成「与资料无关」。"""
+    body, refs = parse_extraction_output("IMAGE_REFS: snap:abcd1234-1")
+    extraction = ExtractionResult(text=body, image_refs=refs)
+    assert not extraction.empty
+    material, _assets = _material(current_has_docs=False)
+    context = build_document_context(material, extraction, visual_direct=False)
+    assert context.mode == "extracted"
+    assert [visual.kind for visual in context.doc_visuals] == ["snapshot"]
+
+
 def test_follow_up_round_lists_only_referenced_old_images() -> None:
     material, assets = _material(current_has_docs=False)
     extraction = ExtractionResult(text="架构说明", image_refs=[str(assets[0].id), "abcd1234-1"])
@@ -265,6 +276,11 @@ def test_parse_job_cancelled_when_every_waiter_leaves(monkeypatch) -> None:
 
     monkeypatch.setattr(pipeline, "_run_parse", fake_run)
 
+    async def no_live_tasks(batch_id, *, exclude):
+        return False
+
+    monkeypatch.setattr(pipeline, "_batch_has_live_tasks", no_live_tasks)
+
     async def flow():
         waiter = asyncio.create_task(pipeline.wait_for_batch_parse(uuid.uuid4()))
         await asyncio.sleep(0.05)
@@ -274,6 +290,34 @@ def test_parse_job_cancelled_when_every_waiter_leaves(monkeypatch) -> None:
 
     asyncio.run(flow())
     assert state["cancelled"] is True
+
+
+def test_parse_job_kept_when_batch_still_has_queued_tasks(monkeypatch) -> None:
+    state = {"finished": False, "starts": 0}
+
+    async def fake_run(batch_id):
+        state["starts"] += 1
+        await asyncio.sleep(0.2)
+        state["finished"] = True
+
+    async def still_live(batch_id, *, exclude):
+        return True
+
+    monkeypatch.setattr(pipeline, "_run_parse", fake_run)
+    monkeypatch.setattr(pipeline, "_batch_has_live_tasks", still_live)
+
+    async def flow():
+        batch_id = uuid.uuid4()
+        first = asyncio.create_task(pipeline.wait_for_batch_parse(batch_id, uuid.uuid4()))
+        await asyncio.sleep(0.05)
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        # 排队的兄弟任务后到，复用同一个解析任务。
+        await pipeline.wait_for_batch_parse(batch_id, uuid.uuid4())
+        assert batch_id not in pipeline._jobs
+
+    asyncio.run(flow())
+    assert state == {"finished": True, "starts": 1}
 
 
 def test_catalog_capability_fields_are_loaded() -> None:

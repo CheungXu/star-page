@@ -126,16 +126,27 @@ async def delete_conversation(conversation_id: uuid.UUID, request: Request) -> N
         # 级联软删会话下的节点，使其分享链接 /p/{conversation_id}/{page_id} 同步失效；
         # 仍被未删除分支继承的那段历史保留。
         await release_deleted_pages(session, conversation, now)
-        snapshots = await _release_private_snapshots(session, conversation.id)
+        snapshots = await _release_private_snapshots(session, user.id)
         await session.commit()
     await discard_snapshots(snapshots)
 
 
-async def _release_private_snapshots(session: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
-    """节点全部删掉的批次，私有整页快照也随之删除。仍被分叉会话继承的批次节点还在，不会被选中。"""
+async def _release_private_snapshots(session: AsyncSession, owner_id: uuid.UUID) -> list[dict]:
+    """已删除会话里节点全部删掉的批次，私有整页快照也随之删除。
+
+    删除分叉会话时，release_deleted_pages 会顺带释放早已删除的来源会话的节点，所以要扫这个用户
+    所有已删除的会话，不只是当前这条。仍被未删除分支继承的批次节点还在，不会被选中。
+    """
     live = select(Page.id).where(Page.batch_id == GenerationBatch.id, Page.deleted_at.is_(None))
     result = await session.execute(
-        select(GenerationBatch).where(GenerationBatch.conversation_id == conversation_id, ~live.exists())
+        select(GenerationBatch)
+        .join(Conversation, Conversation.id == GenerationBatch.conversation_id)
+        .where(
+            Conversation.owner_user_id == owner_id,
+            Conversation.deleted_at.is_not(None),
+            GenerationBatch.visual_snapshots != [],
+            ~live.exists(),
+        )
     )
     released: list[dict] = []
     for batch in result.scalars():
