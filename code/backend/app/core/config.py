@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     pgdatabase: str | None = Field(default=None, alias="PGDATABASE")
     pguser: str | None = Field(default=None, alias="PGUSER")
     pgpassword: str | None = Field(default=None, alias="PGPASSWORD")
+    # 单进程同时可借出的连接 = pool_size + max_overflow。连接在事务 commit 后归还，
+    # 不是一条生成占一条。30+40 是为多路生成同时提交事件时的突发，不是为了撑满 RDS 的 max_connections。
+    db_pool_size: int = Field(default=30, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=40, alias="DB_MAX_OVERFLOW")
+    db_pool_timeout_seconds: int = Field(default=30, alias="DB_POOL_TIMEOUT_SECONDS")
 
     default_user_name: str = Field(default="default_test", alias="DEFAULT_USER_NAME")
     default_user_email: str = Field(default="default_test@example.local", alias="DEFAULT_USER_EMAIL")
@@ -90,7 +95,8 @@ class Settings(BaseSettings):
 
     # 后台生成：模型调用由进程内常驻任务跑完，与浏览器的事件流连接无关。
     # 同时调用模型的任务上限，超出的保持 pending 按先来后到排队。上限是全局的，一次大批量生成会让后来的用户排队，
-    # 所以要明显高于单个用户可能的突发量（9 个模型连发 4 轮 = 36）。数据库写入每次提交很快，48 路实测连接池无压力。
+    # 所以要明显高于单个用户可能的突发量（9 个模型连发 4 轮 = 36）。
+    # 每条进度事件 commit 后连接会归还；48 路同时提交时，突发借出量由 DB_POOL_SIZE + DB_MAX_OVERFLOW 限制。
     generation_max_concurrency: int = Field(default=48, alias="GENERATION_MAX_CONCURRENCY")
     # 每个用户同时生成的模型数默认上限，超出的排队；用户表 generation_concurrency 有值时以它为准。
     generation_user_concurrency: int = Field(default=10, alias="GENERATION_USER_CONCURRENCY")
@@ -98,6 +104,12 @@ class Settings(BaseSettings):
     generation_startup_sweep: bool = Field(default=True, alias="GENERATION_STARTUP_SWEEP")
     # 最近活动在这个窗口内、且还没自动重跑过的中断任务从头重跑一次，其余标失败。
     generation_resume_window_minutes: int = Field(default=120, alias="GENERATION_RESUME_WINDOW_MINUTES")
+    # 思考碎片先攒在本进程：该任务第一段马上落库（卡片据此切到思考中），之后距上次写入满这么多秒，
+    # 或缓冲满 GENERATION_REASONING_FLUSH_CHARS，再写一行。只在收到新碎片时检查，不另开定时器。
+    generation_reasoning_flush_seconds: float = Field(default=5, alias="GENERATION_REASONING_FLUSH_SECONDS")
+    generation_reasoning_flush_chars: int = Field(default=8000, alias="GENERATION_REASONING_FLUSH_CHARS")
+    # 输出阶段每 50 token 的运行中进度，还要距上次进度满这么多秒才写。首条 0 token 和完成时的真实用量不节流。
+    generation_progress_flush_seconds: float = Field(default=2, alias="GENERATION_PROGRESS_FLUSH_SECONDS")
 
     object_storage_provider: str = Field(default="aliyun", alias="OBJECT_STORAGE_PROVIDER")
     object_storage_bucket: str = Field(default="", alias="OBJECT_STORAGE_BUCKET")

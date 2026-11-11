@@ -176,24 +176,26 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 
 模型调用由进程内的后台执行器跑完，和浏览器的事件流连接无关。用户新建对话、切到别的历史、刷新或关掉页面，生成都会继续，回来时从数据库回放进度再跟进实时事件。
 
+- **连接池**：`create_async_engine` 默认 `DB_POOL_SIZE=30`、`DB_MAX_OVERFLOW=40`（本进程最多同时借出 70 条，等 30 秒）。SQLAlchemy 在事务 `commit` 后把连接还回池，流式等待模型吐字期间不占连接。改这些值写在 `config/db.env`，重启 `star-page-backend` 后生效。
 - **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后立即 `start`，每个任务一个 `asyncio.Task`、各自一个数据库会话。名额分两层，都按先来后到排队：先过**个人上限**（每个用户同时生成的模型数，默认 `GENERATION_USER_CONCURRENCY=10`，`users.generation_concurrency` 有值时以它为准，会员放宽限制时写这一列或改 `user_concurrency_limit`），再过**全站上限** `GENERATION_MAX_CONCURRENCY`（默认 48）。个人名额没轮到的任务不占全站名额，一个人提交再多也挤不到别人。排队时写一条 `queued` 事件（`reason` 为 `user_limit` 或 `global_limit`，`message` 是给用户看的说明），轮到后写 `started`，任务在库里一直是 `pending`。同一用户的任务按提交顺序开始；每次提交都会按最新上限调整，调大后排队的立即补上。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
 - **停止**：先协作式中止，在两个模型 chunk 之间检查，写成 `cancelled`；3 秒内模型没吐下一个 chunk 就直接取消协程，再由兜底写库。模型已经完整输出后不再响应停止，页面照常发布。
 - **终态与收尾事件同事务**：`completed` / `failed` / `cancelled` 事件和任务终态在同一个事务里提交。事件流据此判断「任务结束」，不会出现状态已结束却漏掉 `completed` 的情况。
-- **事件流**（`app/services/generation_events.py`）：只读数据库，每个任务各有一个游标。原因是 `sequence` 全局递增，多个任务并发写入时提交顺序和 `sequence` 顺序不一致，用一个全局游标会永久漏掉晚提交的小号事件。续传 id 是按任务 id 排序后各任务游标用点连接的字符串。回放时把同一任务连续的 `reasoning_delta` 合成一条；执行器每写一条事件就唤醒订阅者，唤醒后等 0.2 秒合批再读库；空闲时每 15 秒发一行 `: ping`，避开 nginx 420 秒读超时。响应头带 `Cache-Control: no-cache, no-transform`，防止中间层压缩把实时事件攒住。
+- **事件流**（`app/services/generation_events.py`）：只读数据库，每个任务各有一个游标。原因是 `sequence` 全局递增，多个任务并发写入时提交顺序和 `sequence` 顺序不一致，用一个全局游标会永久漏掉晚提交的小号事件。续传 id 是按任务 id 排序后各任务游标用点连接的字符串。一次提交可以包含多行，同一任务内的行序就是序号顺序。思考碎片先在进程里合并再落库：该任务第一段立即写入，之后满 `GENERATION_REASONING_FLUSH_SECONDS`（默认 5 秒）或缓冲满 `GENERATION_REASONING_FLUSH_CHARS`（默认 8000 字）再写一行；其它事件写入前会把缓冲放进同一个事务。硬取消不刷缓冲。输出中每 50 token 的进度另受 `GENERATION_PROGRESS_FLUSH_SECONDS`（默认 2 秒）限制，开始时的 0 token 和完成时的真实用量不限制。回放时仍把同一任务连续的 `reasoning_delta` 合成一条。执行器每次提交后唤醒订阅者，唤醒后等 0.2 秒合批再读库；空闲时每 15 秒发一行 `: ping`，避开 nginx 420 秒读超时。响应头带 `Cache-Control: no-cache, no-transform`，防止中间层压缩把实时事件攒住。
 - **启动扫尾**（lifespan，受 `GENERATION_STARTUP_SWEEP` 控制，默认开）：处理上一个进程留下的 `pending` / `running` 任务。最近活动时间（最后一条事件、`started_at`、`created_at` 取最晚）在 `GENERATION_RESUME_WINDOW_MINUTES`（默认 120）内的：没开始过的直接排队；中途被打断且 `retry_count < 1` 的清掉旧事件、写一条 `restarted`、从头重跑一次；其余标 `failed`（「服务重启中断」，不扣积分）。进程退出时不改任务状态，全部留给下次启动处理。
 - **单 worker 约束**：任务登记表在内存里，后端必须只跑一个 uvicorn worker。以后要多 worker 或多机，需要给任务加 owner 与心跳字段，再改扫尾逻辑。
 - **预览实例注意**：在 worktree 里起后端预览时，如果连的是线上库，必须设 `GENERATION_STARTUP_SWEEP=false`，否则一启动就会去重跑或标记线上的任务。最好连独立测试库。
 - **补救卡住的任务**：`script/requeue_stuck_generations.py --batch <id>` 给指定批次没完成的任务刷新最近活动时间，随后在窗口内重启后端，由扫尾重跑（见 `script/README.md`）。
 - **重启耗时**：有 SSE 连接时 uvicorn 会等连接关闭，systemd 到 `TimeoutStopSec=10s` 才强杀。强杀不影响正确性，被打断的任务由下次启动扫尾处理。
 - **改某个用户的上限**：暂无管理界面，直接改库，例如 `UPDATE users SET generation_concurrency = 30 WHERE phone = '...'`；改回默认设为 `NULL`。下次提交生效（迁移 `021_user_generation_concurrency.sql`）。
-- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器、名额闸门、个人上限取值）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾、个人上限排队与补位、调大上限立即补上、全站上限排队原因），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。
+- **历史事件**：`script/compact_generation_events.py` 把已结束超过 10 分钟的任务收短。连续思考行合并成一行，文本保留；同一阶段、同一状态的连续进度（输出中每 50 token 一条）收成最后一行。序号都留在这段的最后一行（续传只会多发、不会漏发）。默认只统计，`--apply` 才写入，写完执行 `VACUUM (ANALYZE)`。不要在有人还在看这条任务的事件时合并，所以留了 10 分钟。
+- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器、名额闸门、个人上限取值）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾、个人上限排队与补位、调大上限立即补上、全站上限排队原因、思考碎片合并后序号仍在正式输出之前、历史思考行合并且不碰还在跑的任务），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。
 
 ## 生成过程事件
 
 批次事件流和单任务事件流使用同一组 SSE 事件，批次流的每条 payload 带 `task_id`：
 
 - `status`：普通状态文案。
-- `reasoning_delta`：模型流式返回的 `reasoning_content`（回放时同一任务连续的几段会合成一条）。
+- `reasoning_delta`：模型流式返回的 `reasoning_content`。写入前已按上面的间隔合并；回放时同一任务连续的几段还会再合成一条。
 - `answer_started`：模型进入正式 HTML 输出阶段，前端开始展示“页面创建中”。
 - `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。`model_output` 完成时携带真实 `input_tokens`/`output_tokens`。
 - `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；携带 `usage` 与 `billing`（扣掉的积分和授权优惠）。

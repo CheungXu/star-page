@@ -239,6 +239,15 @@ systemctl restart star-page-backend.service   # 必须在 120 分钟内
 
 批次 id 可写前 8 位。已经自动重跑过一次的 `running` 任务会被提示，扫尾仍会把它标失败。重跑会再消耗一次模型 token。
 
+## 合并历史思考碎片
+
+`compact_generation_events.py` 把已经结束、并且结束时间早于 10 分钟的任务收短。连续的思考记录合成一行，文字按原顺序保留。输出过程中连着记的「正在输出」进度收成最后一行，带上最后一次的 token 数；思考完成、输出完成、上传完成这些节点因为状态不同，各自保留。默认只打印会删掉多少行，加上 `--apply` 才改库，改完做一次 `VACUUM (ANALYZE)`，不锁死整张表。还在跑、或刚结束不到 10 分钟的任务不动。
+
+```bash
+code/backend/.venv/bin/python script/compact_generation_events.py
+code/backend/.venv/bin/python script/compact_generation_events.py --apply
+```
+
 ## 在脚本进程里补跑（备用）
 
 `resume_stuck_generations.py` 在脚本进程里直接调用模型，把某个批次里仍是 `running`、还没写完页面的任务再跑一遍，结果写回原来的任务和页面。只在后端没法接手时用，不要对后端正在跑的任务用。

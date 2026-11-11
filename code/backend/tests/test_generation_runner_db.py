@@ -56,6 +56,11 @@ class FakeClient:
                 await asyncio.sleep(0.02)
                 yield LlmStreamChunk(type="reasoning_delta", provider="fake", model="fake", reasoning_text=str(index))
             return
+        if self.mode == "burst":
+            for index in range(500):
+                yield LlmStreamChunk(type="reasoning_delta", provider="fake", model="fake", reasoning_text=f"{index:03d}")
+            yield LlmStreamChunk(type="text_delta", provider="fake", model="fake", text=HTML)
+            return
         yield LlmStreamChunk(type="reasoning_delta", provider="fake", model="fake", reasoning_text="开始")
         await asyncio.sleep(3600)
 
@@ -82,6 +87,12 @@ def _fakes(monkeypatch):
     monkeypatch.setattr(GenerationService, "_settle_generation_billing", _noop)
     monkeypatch.setattr(service_module, "create_llm_client", lambda model_key: FakeClient(model_key))
     monkeypatch.setattr(runner_module, "HARD_CANCEL_GRACE_SECONDS", 0.2)
+    # 线上默认 5 秒 / 2 秒，慢速假模型要在取消用例的等待时间内写出多行思考。
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "generation_reasoning_flush_seconds", 0.05)
+    monkeypatch.setattr(settings, "generation_progress_flush_seconds", 0.05)
 
 
 def _run(flow) -> None:
@@ -227,6 +238,145 @@ def test_live_stream_follows_running_task():
         received = await asyncio.wait_for(consumer, timeout=10)
         events = [item.event for item in received if item is not HEARTBEAT]
         assert "completed" in events and events[-1] == "batch_done"
+
+    _run(flow)
+
+
+def test_burst_reasoning_merges_before_answer(monkeypatch):
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "generation_reasoning_flush_seconds", 3600)
+    monkeypatch.setattr(settings, "generation_reasoning_flush_chars", 1_000_000)
+
+    async def flow(factory, runner):
+        creation = await _create_batch(factory, ["burst"])
+        task_id = creation.runs[0].task_id
+        await _start(runner, factory, creation, [task_id])
+        await _wait_idle(runner)
+
+        async with factory() as session:
+            result = await session.execute(
+                select(GenerationEvent.sequence, GenerationEvent.event_type, GenerationEvent.payload)
+                .where(GenerationEvent.task_id == task_id)
+                .order_by(GenerationEvent.sequence)
+            )
+            rows = list(result.all())
+        reasoning = [row for row in rows if row.event_type == "reasoning_delta"]
+        answer = next(row for row in rows if row.event_type == "answer_started")
+        assert len(reasoning) <= 2
+        assert "".join(row.payload["text"] for row in reasoning) == "".join(f"{index:03d}" for index in range(500))
+        assert reasoning[-1].sequence < answer.sequence
+
+    _run(flow)
+
+
+def test_compact_merges_finished_reasoning_only():
+    async def flow(factory, _runner):
+        import importlib.util
+
+        script = Path(__file__).resolve().parents[3] / "script" / "compact_generation_events.py"
+        spec = importlib.util.spec_from_file_location("compact_generation_events", script)
+        assert spec is not None and spec.loader is not None
+        compact = importlib.util.module_from_spec(spec)
+        sys.modules["compact_generation_events"] = compact
+        spec.loader.exec_module(compact)
+
+        finished = await _create_batch(factory, ["done"])
+        recent = await _create_batch(factory, ["recent"])
+        running = await _create_batch(factory, ["live"])
+        finished_id = finished.runs[0].task_id
+        recent_id = recent.runs[0].task_id
+        running_id = running.runs[0].task_id
+        now = datetime.now(UTC)
+
+        def add_events(session, task_id: uuid.UUID) -> None:
+            pieces = [
+                ("reasoning_delta", {"type": "reasoning_delta", "text": "甲"}),
+                ("reasoning_delta", {"type": "reasoning_delta", "text": "乙"}),
+                ("progress", {"type": "progress", "step": "model_thinking", "status": "completed", "text": "模型思考完成"}),
+                ("reasoning_delta", {"type": "reasoning_delta", "text": "丙"}),
+                ("status", {"type": "status", "text": "页面创建中..."}),
+                ("reasoning_delta", {"type": "reasoning_delta", "text": "丁"}),
+                ("reasoning_delta", {"type": "reasoning_delta", "text": "戊"}),
+                ("progress", {"type": "progress", "step": "model_output", "status": "running", "text": "输出中", "output_tokens": 50}),
+                ("progress", {"type": "progress", "step": "model_output", "status": "running", "text": "输出中", "output_tokens": 100}),
+                (
+                    "progress",
+                    {
+                        "type": "progress",
+                        "step": "model_output",
+                        "status": "completed",
+                        "text": "模型答案输出完成",
+                        "output_tokens": 160,
+                        "token_source": "actual",
+                    },
+                ),
+                ("completed", {"type": "completed", "url": "/p/x"}),
+            ]
+            for event_type, payload in pieces:
+                session.add(GenerationEvent(task_id=task_id, event_type=event_type, payload=payload))
+
+        async with factory() as session:
+            for task_id, status, finished_at in (
+                (finished_id, "succeeded", now - timedelta(minutes=11)),
+                (recent_id, "succeeded", now - timedelta(minutes=1)),
+                (running_id, "running", None),
+            ):
+                task = await session.get(GenerationTask, task_id)
+                task.status = status
+                task.finished_at = finished_at
+                add_events(session, task_id)
+            await session.commit()
+
+        async def snapshot(task_id):
+            async with factory() as session:
+                result = await session.execute(
+                    select(GenerationEvent.sequence, GenerationEvent.event_type, GenerationEvent.payload)
+                    .where(GenerationEvent.task_id == task_id)
+                    .order_by(GenerationEvent.sequence)
+                )
+                return [(row.sequence, row.event_type, dict(row.payload)) for row in result.all()]
+
+        before = await snapshot(finished_id)
+        by_text = {row[2].get("text"): row[0] for row in before}
+        recent_before = await snapshot(recent_id)
+        running_before = await snapshot(running_id)
+
+        stats = await compact.compact_generation_events(factory, apply=True)
+        assert stats.tasks_changed >= 1
+        assert stats.rows_removed >= 2
+
+        merged = await snapshot(finished_id)
+        assert [(row[1], row[2].get("text")) for row in merged] == [
+            ("reasoning_delta", "甲乙"),
+            ("progress", "模型思考完成"),
+            ("reasoning_delta", "丙"),
+            ("status", "页面创建中..."),
+            ("reasoning_delta", "丁戊"),
+            ("progress", "输出中"),
+            ("progress", "模型答案输出完成"),
+            ("completed", None),
+        ]
+        assert merged[0][0] == by_text["乙"]
+        assert merged[2][0] == by_text["丙"]
+        assert merged[4][0] == by_text["戊"]
+        assert merged[1][2]["step"] == "model_thinking"
+        assert merged[5][0] == by_text["输出中"] and merged[5][2]["output_tokens"] == 100
+        assert merged[6][2]["output_tokens"] == 160 and merged[6][2]["token_source"] == "actual"
+        assert await snapshot(recent_id) == recent_before
+        assert await snapshot(running_id) == running_before
+
+        again = await compact.compact_generation_events(factory, apply=True)
+        assert again.tasks_changed == 0
+        assert again.rows_removed == 0
+        assert await snapshot(finished_id) == merged
+
+        async with factory() as session:
+            task = await session.get(GenerationTask, running_id)
+            task.status = "cancelled"
+            task.finished_at = datetime.now(UTC)
+            await session.commit()
 
     _run(flow)
 

@@ -88,4 +88,3 @@ CREATE TABLE IF NOT EXISTS generation_events (
 CREATE INDEX IF NOT EXISTS idx_pages_owner ON pages(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_page_versions_page ON page_versions(page_id);
 CREATE INDEX IF NOT EXISTS idx_generation_tasks_status ON generation_tasks(status);
-CREATE INDEX IF NOT EXISTS idx_generation_events_task_sequence ON generation_events(task_id, sequence);

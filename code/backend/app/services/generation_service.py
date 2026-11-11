@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -88,6 +89,11 @@ class GenerationService:
         self.settings = get_settings()
         # 后台执行器传入：返回 True 表示用户已请求停止这个任务。
         self._cancel_check = cancel_check
+        # 本任务还没落库的思考碎片。硬取消时直接丢掉，不在 finally 里刷。
+        self._reasoning_parts: list[str] = []
+        self._reasoning_chars = 0
+        self._reasoning_flushed_at: float | None = None
+        self._progress_flushed_at: float | None = None
 
     def _raise_if_cancelled(self) -> None:
         if self._cancel_check is not None and self._cancel_check():
@@ -634,11 +640,11 @@ class GenerationService:
                         model_name = chunk.model or model_name
 
                         if chunk.type == "reasoning_delta" and chunk.reasoning_text:
-                            yield await self._record_event(
-                                task.id,
-                                "reasoning_delta",
-                                {"type": "reasoning_delta", "text": chunk.reasoning_text},
-                            )
+                            self._buffer_reasoning(chunk.reasoning_text)
+                            if self._reasoning_due():
+                                payload = self._take_reasoning_payload()
+                                if payload is not None:
+                                    yield await self._record_event(task.id, "reasoning_delta", payload)
 
                         if chunk.type == "text_delta" and chunk.text:
                             if not answer_started:
@@ -659,6 +665,7 @@ class GenerationService:
                                     "status",
                                     {"type": "status", "text": "页面创建中..."},
                                 )
+                                self._note_progress_written()
                                 yield await self._record_event(
                                     task.id,
                                     "progress",
@@ -674,9 +681,10 @@ class GenerationService:
                             answer_parts.append(chunk.text)
                             answer_text_length += len(chunk.text)
                             estimated_output_tokens = _estimate_output_tokens(answer_text_length)
-                            if estimated_output_tokens >= next_token_report:
+                            if estimated_output_tokens >= next_token_report and self._running_progress_due():
                                 reported_output_tokens = estimated_output_tokens
-                                next_token_report += 50
+                                next_token_report = estimated_output_tokens + 50
+                                self._note_progress_written()
                                 yield await self._record_event(
                                     task.id,
                                     "progress",
@@ -715,6 +723,7 @@ class GenerationService:
                                 "status",
                                 {"type": "status", "text": f"{violation.message}，正在要求模型改用普通内联 CSS..."},
                             )
+                            self._note_progress_written()
                             yield await self._record_event(
                                 task.id,
                                 "progress",
@@ -1075,6 +1084,43 @@ class GenerationService:
 
         await self.session.commit()
 
+    def _buffer_reasoning(self, text: str) -> None:
+        self._reasoning_parts.append(text)
+        self._reasoning_chars += len(text)
+
+    def _reasoning_due(self) -> bool:
+        if not self._reasoning_parts:
+            return False
+        # 本任务第一段马上写，卡片据此切到思考中。之后只看间隔和字数，没有定时器。
+        if self._reasoning_flushed_at is None:
+            return True
+        if time.monotonic() - self._reasoning_flushed_at >= self.settings.generation_reasoning_flush_seconds:
+            return True
+        return self._reasoning_chars >= self.settings.generation_reasoning_flush_chars
+
+    def _take_reasoning_payload(self) -> dict[str, Any] | None:
+        if not self._reasoning_parts:
+            return None
+        text = "".join(self._reasoning_parts)
+        self._reasoning_parts.clear()
+        self._reasoning_chars = 0
+        self._reasoning_flushed_at = time.monotonic()
+        return {"type": "reasoning_delta", "text": text}
+
+    def _stage_buffered_reasoning(self, task_id: uuid.UUID) -> None:
+        payload = self._take_reasoning_payload()
+        if payload is None:
+            return
+        self.session.add(GenerationEvent(task_id=task_id, event_type="reasoning_delta", payload=payload))
+
+    def _running_progress_due(self) -> bool:
+        if self._progress_flushed_at is None:
+            return True
+        return time.monotonic() - self._progress_flushed_at >= self.settings.generation_progress_flush_seconds
+
+    def _note_progress_written(self) -> None:
+        self._progress_flushed_at = time.monotonic()
+
     async def _record_event(self, task_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> SseEvent:
         event = self._stage_event(task_id, event_type, payload)
         await self.session.commit()
@@ -1085,7 +1131,12 @@ class GenerationService:
         return await self._record_event(task_id, event_type, payload)
 
     def _stage_event(self, task_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> SseEvent:
-        """只加入会话不提交，用来和状态变更放进同一个事务。"""
+        """只加入会话不提交，用来和状态变更放进同一个事务。
+
+        非思考事件先把本任务还没落库的思考放进同一事务，保证任务内序号顺序不变。
+        """
+        if event_type != "reasoning_delta":
+            self._stage_buffered_reasoning(task_id)
         self.session.add(GenerationEvent(task_id=task_id, event_type=event_type, payload=payload))
         return SseEvent(event_type, payload)
 
