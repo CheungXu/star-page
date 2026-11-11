@@ -89,8 +89,9 @@ class Settings(BaseSettings):
     llm_retry_max_delay_ms: int = Field(default=5000, alias="LLM_RETRY_MAX_DELAY_MS")
 
     # 后台生成：模型调用由进程内常驻任务跑完，与浏览器的事件流连接无关。
-    # 同时调用模型的任务上限，超出的保持 pending 排队。
-    generation_max_concurrency: int = Field(default=24, alias="GENERATION_MAX_CONCURRENCY")
+    # 同时调用模型的任务上限，超出的保持 pending 按先来后到排队。上限是全局的，一次大批量生成会让后来的用户排队，
+    # 所以要明显高于单个用户可能的突发量（9 个模型连发 4 轮 = 36）。数据库写入每次提交很快，48 路实测连接池无压力。
+    generation_max_concurrency: int = Field(default=48, alias="GENERATION_MAX_CONCURRENCY")
     # 启动扫尾：把上次进程留下的 pending/running 任务收尾。共用线上库的非生产实例必须关掉。
     generation_startup_sweep: bool = Field(default=True, alias="GENERATION_STARTUP_SWEEP")
     # 最近活动在这个窗口内、且还没自动重跑过的中断任务从头重跑一次，其余标失败。

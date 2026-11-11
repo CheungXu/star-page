@@ -165,7 +165,7 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 
 模型调用由进程内的后台执行器跑完，和浏览器的事件流连接无关。用户新建对话、切到别的历史、刷新或关掉页面，生成都会继续，回来时从数据库回放进度再跟进实时事件。
 
-- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后立即 `start`，每个任务一个 `asyncio.Task`、各自一个数据库会话。`GENERATION_MAX_CONCURRENCY`（默认 24）限制同时调用模型的任务数，超出的保持 `pending` 排队。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
+- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后立即 `start`，每个任务一个 `asyncio.Task`、各自一个数据库会话。`GENERATION_MAX_CONCURRENCY`（默认 48）限制同时调用模型的任务数，超出的保持 `pending` 按先来后到排队。上限是全局的：一次大批量生成占满名额时，后来的用户要等前面有任务完成，所以上限要明显高于单个用户的突发量（9 模型连发 4 轮 = 36）。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
 - **停止**：先协作式中止，在两个模型 chunk 之间检查，写成 `cancelled`；3 秒内模型没吐下一个 chunk 就直接取消协程，再由兜底写库。模型已经完整输出后不再响应停止，页面照常发布。
 - **终态与收尾事件同事务**：`completed` / `failed` / `cancelled` 事件和任务终态在同一个事务里提交。事件流据此判断「任务结束」，不会出现状态已结束却漏掉 `completed` 的情况。
 - **事件流**（`app/services/generation_events.py`）：只读数据库，每个任务各有一个游标。原因是 `sequence` 全局递增，多个任务并发写入时提交顺序和 `sequence` 顺序不一致，用一个全局游标会永久漏掉晚提交的小号事件。续传 id 是按任务 id 排序后各任务游标用点连接的字符串。回放时把同一任务连续的 `reasoning_delta` 合成一条；执行器每写一条事件就唤醒订阅者，唤醒后等 0.2 秒合批再读库；空闲时每 15 秒发一行 `: ping`，避开 nginx 420 秒读超时。响应头带 `Cache-Control: no-cache, no-transform`，防止中间层压缩把实时事件攒住。
