@@ -37,6 +37,8 @@ docker push "$ACR:backend-latest"
 
 如果迁移时报 `permission denied for schema public`，说明当前 RDS 应用账号只有连接权限、没有建表权限。请先用高权限账号参考 `script/prepare_rds_database.sql` 创建业务库并授权，再重新执行迁移。
 
+`python -m app.db.migrate` 每次都按文件名重跑全部 SQL，语句必须能重复执行。要删掉某张表上的索引时，除了新增 `DROP INDEX IF EXISTS`，还得删掉最初那份迁移里的 `CREATE INDEX`，否则下次迁移会先把索引建回来。`generation_events` 的 `(task_id, sequence)` 已有唯一约束，不要再加一条同样列的普通索引。
+
 服务器上已通过 `star-page-backend.service` 常驻运行：
 
 ```bash
