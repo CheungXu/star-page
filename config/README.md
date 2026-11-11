@@ -135,7 +135,7 @@ LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时百炼系模
 
 密钥从 `api_key_env` 解析，缺失的模型自动不可用（前端多选里不出现，不崩）。协议当前后端支持 OpenAI-compatible；百炼系与 doubao 均按此接入，流式响应中可收到 `reasoning_content` 和正式回复内容。
 
-当前已接入模型（目录 key → model ID）：
+当前已接入 9 个模型（目录 key → model ID）：
 
 | key | model ID | 接入通道 |
 | --- | --- | --- |
@@ -143,12 +143,13 @@ LLM_API_KEY=    # 兼容旧单模型变量：未配 QWEN_API_KEY 时百炼系模
 | `qwen-plus` | `qwen3.8-flash` | 百炼 |
 | `doubao` | `doubao-seed-2-1-pro-260915` | 火山方舟 |
 | `doubao-code` | `doubao-seed-2-1-turbo-260628` | 火山方舟 |
-| `deepseek-v4.1-flash` | `deepseek-v4.1-flash` | 百炼（主路） |
+| `deepseek-v4.1-flash` | `deepseek-v4.1-flash-1017` | 百炼（主路） |
 | `deepseek-v4-pro` | `deepseek-v4-pro` | 百炼（主路） |
 | `glm-5.3` | `glm-5.3` | 百炼（主路） |
-| `kimi-k3` | `kimi-k3` | 百炼（主路） |
+| `glm-5.3-flash` | `glm-5-3-flash-260828` | 火山方舟（百炼直供未开通） |
+| `kimi-k3.1-pro` | `kimi-k3.1-pro` | 百炼（主路） |
 
-新增五款模型均复用 `QWEN_API_KEY`；灾备官方 API 切换方式见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
+百炼上的 DeepSeek、GLM-5.3、Kimi 复用 `QWEN_API_KEY`（未配置时回退 `LLM_API_KEY`）。GLM-5.3 Flash 走方舟，用 `ARK_API_KEY`。灾备官方 API 切换方式见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
 
 费用：`pricing.tiers[]` 维护各模型分段单价（元/百万 tokens），后端按 API 返回的 `usage` 自算（接口不返回 cost）。详见 `wiki/llm-provider-abstraction.md`。
 

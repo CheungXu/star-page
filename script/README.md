@@ -107,7 +107,7 @@ pkill -f preview-logo/serve.py
 python3 script/probe-llm-models.py
 ```
 
-探测结果直接输出到终端。换代时的判断顺序见 `wiki/llm-provider-abstraction.md` 的「模型换代检查清单」。2026-10 这次的结果见 `doc/20261010/llm-model-catalog-update.md`。
+探测结果直接输出到终端。换代时的判断顺序见 `wiki/llm-provider-abstraction.md` 的「模型换代检查清单」。2026-10 的结果见 `doc/20261010/llm-model-catalog-update.md`，2026-11 的结果见 `doc/20261110/llm-model-catalog-update.md`。
 
 ## 多端口衔接动画方案对比预览：`preview-transition/`
 
@@ -190,6 +190,14 @@ python ../../script/scene-showcase/shoot_variants.py --variants /tmp/scene-audit
 ```bash
 set -a && . config/db.env && set +a
 code/backend/.venv/bin/python script/sync_preview_showcases.py
+```
+
+## 宣传物料包
+
+`pack_promo_kits.py` 把五套图文打成推广人可直接发的压缩包，输出到 `data/文案/202610/发包/`。视频不放进去。压缩包已 gitignore。
+
+```bash
+python3 script/pack_promo_kits.py
 ```
 
 ## 宣传素材：真实界面截图

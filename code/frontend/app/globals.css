@@ -230,19 +230,6 @@ button {
   gap: 2px 8px;
 }
 
-.site-footer-inline {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--color-text-tertiary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.site-footer-inline:hover {
-  text-decoration: underline;
-}
-
 /* ===== 协议页 ===== */
 .legal-page {
   max-width: 820px;
@@ -613,8 +600,9 @@ h1 {
   transition: margin-top 0.18s ease;
 }
 
+/* 9 个模型的浮层约 400px，下沿会盖住场景芯片。打开时把芯片推到浮层下面，留出约 16px 空隙。 */
 .hero-wrap.model-menu-open .prompt-inspirations {
-  margin-top: 230px;
+  margin-top: 410px;
 }
 
 /* 入场错峰浮现：引导词「试试」+ 四个灵感 chip 依次自下而上淡入，
@@ -862,8 +850,8 @@ h1 {
   left: 0;
   top: calc(100% + 10px);
   z-index: 30;
-  width: 264px;
-  max-width: min(80vw, 320px);
+  width: 300px;
+  max-width: min(80vw, 340px);
   padding: 8px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: var(--radius-lg);
@@ -1131,19 +1119,19 @@ h1 {
   line-height: 1.6;
 }
 
-/* 首屏输入区：文档区承担主入口，输入框收为一行补充说明；输入增多时自动撑高 */
+/* 首屏输入区：书写区只比上传条略高，空态约两行；输入增多时自动撑高 */
 .hero-prompt textarea {
-  min-height: 44px;
+  min-height: 74px;
 }
 
 @media (max-width: 720px) {
   .hero-prompt textarea {
-    min-height: 72px;
+    min-height: 70px;
   }
 }
 
 /* ==========================================================================
-   首屏文档投放区：卡片内的主入口，左右与 textarea 文字起笔对齐
+   首屏文档投放区：强调入口，但高度让给下方输入框。左右与 textarea 文字起笔对齐
    ========================================================================== */
 .hero-dropzone {
   position: relative;
@@ -1170,9 +1158,9 @@ h1 {
 .hero-dropzone-empty {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 74px;
-  padding: 0 16px 0 12px;
+  gap: 10px;
+  min-height: 64px;
+  padding: 0 12px 0 10px;
   cursor: pointer;
   text-align: left;
 }
@@ -1181,14 +1169,14 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   border: 1px solid rgba(53, 99, 233, 0.18);
   border-radius: var(--radius-md);
   background: #fff;
   color: var(--color-primary);
-  font-size: 19px;
+  font-size: 17px;
   box-shadow: 0 4px 12px -6px rgba(53, 99, 233, 0.45);
 }
 
@@ -1214,9 +1202,9 @@ h1 {
 .hero-dropzone-cta {
   display: inline-flex;
   align-items: center;
-  height: 32px;
+  height: 30px;
   flex-shrink: 0;
-  padding: 0 14px;
+  padding: 0 13px;
   border: 1px solid rgba(53, 99, 233, 0.28);
   border-radius: 999px;
   background: #fff;
@@ -1237,8 +1225,8 @@ h1 {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 64px;
-  padding: 10px 12px;
+  min-height: 52px;
+  padding: 8px 12px;
   border-style: solid;
   border-color: rgba(53, 99, 233, 0.22);
 }
@@ -1319,6 +1307,10 @@ h1 {
 }
 
 @media (max-width: 640px) {
+  .hero-dropzone-empty {
+    min-height: 52px;
+  }
+
   .hero-dropzone-cta,
   .hero-dropzone-text small {
     display: none;

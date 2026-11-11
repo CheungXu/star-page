@@ -4,22 +4,13 @@ import { SITE_ICP_FILING } from "../site-config";
 
 const REPORT_MAILTO = `mailto:${LEGAL_CONTACT_EMAIL}?subject=${encodeURIComponent("星页违规内容举报")}`;
 
-/** 首页底部：使用即同意提示（覆盖未登录试用用户）+ 数据设置 + 举报 + 协议链接 + 备案号，仅 idle 首屏展示 */
-export function SiteFooter({ onOpenDataSettings }: { onOpenDataSettings?: () => void }) {
+/** 首页底部：使用即同意提示（覆盖未登录试用用户）+ 举报 + 协议链接 + 备案号，仅 idle 首屏展示 */
+export function SiteFooter() {
   return (
     <footer className="site-footer" aria-label="网站协议与备案信息">
       <p className="site-footer-consent">
         使用星页即表示你同意<Link href={LEGAL_DOCS.terms.href}>《用户服务协议》</Link>和
-        <Link href={LEGAL_DOCS.privacy.href}>《隐私政策》</Link>，并授权在去标识化后使用生成内容改进模型
-        {onOpenDataSettings && (
-          <>
-            （可在
-            <button type="button" className="site-footer-inline" onClick={onOpenDataSettings}>
-              数据设置
-            </button>
-            中关闭）
-          </>
-        )}
+        <Link href={LEGAL_DOCS.privacy.href}>《隐私政策》</Link>。
       </p>
       <p className="site-footer-links">
         <Link href={LEGAL_DOCS.terms.href}>用户服务协议</Link>

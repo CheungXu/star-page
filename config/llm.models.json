@@ -105,7 +105,7 @@
       "provider": "deepseek",
       "protocol": "openai",
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "model": "deepseek-v4.1-flash",
+      "model": "deepseek-v4.1-flash-1017",
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": {},
@@ -172,12 +172,35 @@
       }
     },
     {
-      "key": "kimi-k3",
-      "label": "Kimi K3",
+      "key": "glm-5.3-flash",
+      "label": "智谱 GLM-5.3 Flash",
+      "provider": "zhipu",
+      "protocol": "openai",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "glm-5-3-flash-260828",
+      "api_key_env": "ARK_API_KEY",
+      "params": {},
+      "extra_body": { "reasoning_effort": "high" },
+      "pricing": {
+        "currency": "CNY",
+        "tiers": [
+          {
+            "label": "默认",
+            "max_input_tokens": null,
+            "input_per_million": 0.8,
+            "output_per_million": 2.8,
+            "cache_input_per_million": 0.23
+          }
+        ]
+      }
+    },
+    {
+      "key": "kimi-k3.1-pro",
+      "label": "Kimi K3.1 Pro",
       "provider": "moonshot",
       "protocol": "openai",
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "model": "kimi-k3",
+      "model": "kimi-k3.1-pro",
       "api_key_env": "QWEN_API_KEY",
       "api_key_fallback_env": "LLM_API_KEY",
       "params": { "temperature": null },
@@ -188,9 +211,9 @@
           {
             "label": "默认",
             "max_input_tokens": null,
-            "input_per_million": 20,
-            "output_per_million": 100,
-            "cache_input_per_million": 2
+            "input_per_million": 13,
+            "output_per_million": 68,
+            "cache_input_per_million": 1.3
           }
         ]
       }

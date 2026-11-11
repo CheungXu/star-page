@@ -16,7 +16,7 @@ from pathlib import Path
 
 import httpx
 
-MODELS = ["qwen", "doubao", "glm-5.3", "kimi-k3"]
+MODELS = ["qwen", "doubao", "glm-5.3", "kimi-k3.1-pro"]
 
 SCENES: dict[str, dict] = {
     "resume": {

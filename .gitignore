@@ -21,3 +21,6 @@ data/growth/xhs/login-qr.png
 
 # 小红书登录态，含账号会话，严禁入库
 cookies.json
+
+# 发给推广人的图文压缩包，可再打包，不入库
+data/文案/202610/发包/*.zip

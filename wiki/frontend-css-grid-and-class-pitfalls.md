@@ -63,6 +63,18 @@ grid 容器的 `align-content` 默认是 `normal`（对 grid 等同 `stretch`）
 
 - 定式：在底部紧凑输入卡下给 `.picker` 改 `position: static`，让浮层跳过按钮，直接以整张输入卡（`position: relative`）为定位基准：`top: auto; bottom: calc(100% + 8px); left: 0; right: 0; width: auto`，自然向上弹出且与输入卡同宽。
 
+## 10. 页面被窄屏子项撑宽时，`position: fixed; inset: 0` 遮罩会比屏幕还宽
+
+移动端视口（如 390px）下，如果页面里某个容器带了未适配窄屏的最小宽度（如对话栏 `340px` + 侧栏 `72px` = `432px`），整个文档的布局视口（`window.innerWidth` / `documentElement.scrollWidth`）会被撑到 432px，而真实可视视口（`visualViewport.width`）仍是 390px。此时写 `position: fixed; inset: 0` 的弹窗遮罩会按 432px 铺开，导致底部抽屉或居中弹窗右侧约 40px 超出屏幕被裁掉。
+
+- 定式：从根本上要修掉撑宽文档的子项；若弹窗本身需要先独立兜底，在窄屏媒体查询里写 `right: auto; width: 100vw`（或按 `min(420px, calc(100vw - 24px))` 定宽），不要完全依赖 `inset: 0` 的 `right: 0`。
+
+## 11. `<label>` 里不要同时包输入框和其它操作按钮
+
+用 `<label>` 包住整块表单项（标题文字 + 右上角「恢复默认 / 左中右对齐」小按钮 + `<input>`）时，按 HTML 规范点击 `<label>` 内的空白或标题都会把激活事件转发给里面的第一个表单控件，内嵌多个 `<button>` 时容易误触或抢焦。
+
+- 定式：只要字段标题行里有额外按钮，外层改用 `<div>`，只给「标题」文字本身用 `<label htmlFor={id}>` 关联 `<input id={id}>`（配合 `useId()` 生成唯一 id）。
+
 ## 通用经验
 
 - 这类 bug 多由"CSS 默认值 + 边界数据/视口"触发，写完要用**少量数据、空状态、中间视口宽度**专门过一遍。

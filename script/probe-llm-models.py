@@ -177,7 +177,7 @@ LATEST_HINTS: dict[str, dict] = {
         "note": "智谱 GLM 系列",
     },
     "kimi": {
-        "prefixes": ["kimi-k2", "kimi/"],
+        "prefixes": ["kimi-k3", "kimi-k2", "kimi/"],
         "note": "Kimi 系列",
     },
     "minimax": {

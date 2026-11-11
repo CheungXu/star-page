@@ -2787,7 +2787,7 @@ export default function HomePage() {
 
               {renderPromptForm()}
             </div>
-            <SiteFooter onOpenDataSettings={() => setIsPrivacyModalOpen(true)} />
+            <SiteFooter />
           </section>
         </main>
       ) : (

@@ -23,7 +23,7 @@
 - **登录拦截**：匿名免费次数用尽（后端 402 `need_login`）或复制分享链接时弹登录框；登录用户余额不足（402 `insufficient_credits`）跳转 `/pricing`。生成成功与登录后会刷新账户余额。
 - **`app/pricing`**：mock 套餐卡（基础/赠送/折扣标注），建单 + mock 支付闭环，展示积分流水；正式上线接入微信/支付宝。
 - **协议页**：`/terms`、`/privacy`、`/recharge-terms` 共用 `app/legal/LegalDocument.tsx`，正文在 `content/legal/{key}.md`，构建时读取并静态渲染（只支持标题、段落、列表、表格、加粗、行内代码）。修改协议只需改 md 文件，与 `doc/20261013/user-agreement-and-privacy-policy-v2.md` 保持一致。同意入口共三处：首页页脚「使用即同意」提示（覆盖未登录用户）；登录弹窗必须勾选才能获取验证码或登录；充值页说明点击充值即同意《积分充值服务协议》。登录请求带 `agreement_version`（`app/legal/docs.ts` 的 `LEGAL_POLICY_VERSION`，与后端 `POLICY_VERSION` 同步）。
-- **训练授权与举报**：登录后点侧边栏账号（或页脚「数据设置」）打开 `components/DataPrivacyModal.tsx`（设置 → 数据与隐私，训练开关，未登录也可用）；老用户 `needs_policy_notice` 时底部显示 `components/PolicyNoticeBar.tsx`，点「知道了」或直接发起生成都会调用 `notice-ack`。生成完成的用量摘要只显示「花费 N 积分 · 优惠 -M」，不再显示人民币成本；前台与协议文案统一写「积分优惠」，不写死折数。`/report` 是公开页「举报」浮标的落点；`/ops` 的「举报审核」Tab 处理下架、驳回和恢复。
+- **训练授权与举报**：登录后点侧边栏账号打开 `components/DataPrivacyModal.tsx`（设置 → 数据与隐私，训练开关，未登录也可用）；首页页脚只保留「使用即同意」协议提示，不再写训练授权。老用户 `needs_policy_notice` 时底部显示 `components/PolicyNoticeBar.tsx`，点「知道了」或直接发起生成都会调用 `notice-ack`。生成完成的用量摘要只显示「花费 N 积分 · 优惠 -M」，不再显示人民币成本；前台与协议文案统一写「积分优惠」，不写死折数。`/report` 是公开页「举报」浮标的落点；`/ops` 的「举报审核」Tab 处理下架、驳回和恢复。
 - **`app/admin`**：财务仪表盘（收入/成本/毛利/赠送负债/科目余额、积分流水、记账凭证、用户对账）；后端 `require_admin` 鉴权，前端对 401/403 兜底显示「需要管理员权限」。
 - **场景与案例库（所见即所得）**：
   - 首页输入框下方展示「试试」快捷场景药丸（网页简历、博主主页、产品落地页、活动邀请函），以及「别人做的页面」真实案例展示区。
@@ -43,10 +43,10 @@
 - **背景光晕（Hero Aurora）**：固定层叠 3 个 `radial-gradient` 色块（品牌蓝/紫罗兰/天蓝）+ 极淡网格 `mask-image`，搭配缓慢的 `aurora-float-*` 动画，营造专业的空间感；网格通过 `mask-image` 在视觉焦点向外淡出，避免画面"飘"。受 `prefers-reduced-motion` 控制。
 - **Prompt Card 与首屏文档主舱（v1.1 升级）**：
   - 自上而下微渐变白底 + `backdrop-filter: blur(18px) saturate(150%)` 玻璃质感；阴影升级为「1px 描边 + 近/中/远三层弥散投影 + 顶部 inset 高光」四层体系；focus / drag 态切换为「品牌色描边 + 柔光环 + 品牌色投影」。
-  - **首屏文档投放主舱（`hero-dropzone`）**：位于 `textarea` 上方，垂直基线与输入文字绝对齐平。空态高度 74px，浅蓝弱底细虚线，呈现「上传文档，一键转为网页」核心主标、副信息「支持 Word · Excel · PDF · PPT」与「选择文件」药丸；支持全局与就地拖入；挂载后就地展示文件卡片并支持重新选择与清空。
-  - **微调输入框**：首屏 `textarea` 设为单行 `min-height: 44px`，无文档时引导直接打字（敲字即点亮发送键），有文档时引导输入选填微调（有文档无需打字直接可点生成）；输入增多时平滑自适应撑高。
+  - **首屏文档投放条（`hero-dropzone`）**：位于 `textarea` 上方，垂直基线与输入文字绝对齐平。空态高度 64px，略低于输入框，浅蓝弱底细虚线，呈现「上传文档，一键转为网页」核心主标、副信息「支持 Word · Excel · PDF · PPT」与「选择文件」药丸；支持全局与就地拖入；挂载后就地展示文件卡片并支持重新选择与清空。
+  - **主输入框**：首屏 `textarea` 空态 `min-height: 74px`（窄屏 70px），只比上传条略高；无文档时引导直接打字（敲字即点亮发送键），有文档时引导输入选填微调（有文档无需打字直接可点生成）；输入增多时平滑自适应撑高。
   - **底栏工具栏**：首屏左下角原上传小按钮上移至主舱，底栏只保留模型选择器 + 右侧圆形发送钮，空间极度清爽；工作区 compact 态续写仍保留紧凑上传入口。
-- **模型选择器（`model-picker` 弹出浮层）**：常态只占一个紧凑 pill（叠放的品牌色彩点 + 「N 个模型 / 模型名」+ caret），点击**向下**弹出毛玻璃浮层（`model-menu`，`top: 100%`，多层阴影 + `model-menu-in` 入场缩放动效）多选。**之所以向下弹**：工具栏在卡片底部，向上弹会遮挡输入框。浮层项带品牌色圆点 + 选中细勾，选中态品牌浅蓝底；点击外部 / Esc 关闭。**注意**：浮层需溢出卡片展开，Prompt Card 不能用 `overflow: hidden`；下方紧邻灵感 chips 时，菜单打开会给 `hero-wrap` 加 `model-menu-open`，让 chips 下移预留空间，避免与浮层重叠。
+- **模型选择器（`model-picker` 弹出浮层）**：常态只占一个紧凑 pill（叠放的品牌色彩点 + 「N 个模型 / 模型名」+ caret），点击**向下**弹出毛玻璃浮层（`model-menu`，`top: 100%`，多层阴影 + `model-menu-in` 入场缩放动效）多选。**之所以向下弹**：工具栏在卡片底部，向上弹会遮挡输入框。浮层项带品牌色圆点 + 选中细勾，选中态品牌浅蓝底；点击外部 / Esc 关闭。**注意**：浮层需溢出卡片展开，Prompt Card 不能用 `overflow: hidden`；下方紧邻灵感 chips 时，菜单打开会给 `hero-wrap` 加 `model-menu-open`，让 chips 下移预留空间，避免与浮层重叠。当前目录 9 个模型，浮层约 400px 宽 300px（长名字加「登录可用」不截断），chips 的 `margin-top` 为 410px。模型数量再变时要按浮层实高重调这个间距。
 - **圆形发送钮（`composer-send`）**：极简圆钮替代文字按钮——品牌蓝 `135deg` 渐变 + 品牌色投影 + 顶部内高光，hover 上浮放大 1.04×、active 回弹 0.98×。空态灰禁用（`is-empty`）、工作区续写次级浅蓝（`is-secondary`）、生成中 spinner（`is-loading`）。作为全页唯一主焦点。
 - **侧边栏导航**：首页 idle 仅「新对话」Active（收起浅底 / 展开柔光环）；品牌 logo 始终中性，不做 Tab 选中。
 - **文件类型提示对比度**：`.file-hint` 颜色从 `--color-text-tertiary` 提到 `--color-text-secondary` (#475569)，强光环境下也清晰可读，达到 WCAG AA。
@@ -56,7 +56,7 @@
 - **滚动条 hover 反馈**：webkit 滑块 6px 宽 + `padding-box` 圆角 + `border: 1px solid transparent`，hover 时 alpha `0.22 → 0.42` 加深一倍，明确"可拖拽"反馈。`.history-list padding-right: 4px / margin-right: -2px` 让 thumb 不紧贴右边。
 - **ICP 备案页脚（`SiteFooter`）**：仅在 idle 首屏 Hero 下方展示 `粤ICP备2026071100号`，链接工信部 `https://beian.miit.gov.cn`；工作区不展示。配置在 `app/site-config.ts`，`.page-shell` 用 flex 列 + `margin-top: auto` 沉底，不用 fixed。设计原则见 `wiki/site-icp-filing-footer.md`。
 
-跨项目复用的设计原则与代码片段沉淀在 `wiki/frontend-design-tokens-and-prompt-card.md`（设计 token / Prompt Card / Header Logo / 侧边栏 / 多层阴影 / Chip Hover / 双语品牌 / 副标题品牌词 / 视觉节奏 / 滚动条 hover 共 11 节）。
+跨项目复用的设计原则与代码片段沉淀在 `wiki/frontend-design-tokens-and-prompt-card.md`（设计 token / Prompt Card / Header Logo / 侧边栏 / 多层阴影 / Chip Hover / 双语品牌 / 副标题品牌词 / 视觉节奏 / 滚动条 hover / 模型浮层与下方 chips 的让位）。输入区与上传条的高度关系见 `wiki/document-first-ai-input-card-design.md`。
 
 右侧预览采用固定 `1200px` 桌面视口宽度渲染 iframe，再整体缩放到预览区域。iframe 高度按预览区域可用高度反算，避免读取生成页整页 `scrollHeight` 导致页面内 `100vh` 被撑大，同时尽量铺满预览卡片。预览容器做成"真实浏览器视窗"：`.preview-window` 外层 1px 细边框 + 弥散阴影，顶部 `.preview-window-bar` 极简控制栏（红黄绿三圆点 + 弱化地址条），缩放舞台用干净浅灰底（去棋盘格）；控制栏在缩放舞台之外，不参与 `scale` 计算。
 

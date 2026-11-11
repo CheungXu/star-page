@@ -464,9 +464,10 @@ textarea → presets（空态）→ .prompt-card-footer（border-top + space-bet
 可复用处理：
 
 1. **保持向下弹**：向上弹会挡 textarea，优先保证主输入路径。
-2. **状态驱动预留空间**：菜单打开时给外层容器加状态类（如 `hero-wrap.model-menu-open`），给下方 chips 增加 `margin-top`（约等于浮层高度，StarPage 当前约 `230px`）。
-3. **过渡要短**：`margin-top` 加 `transition: margin-top 0.18s ease`，避免 chips 突然跳动。
-4. **备选方案**（未采用）：改为向上弹、Portal 到 body、或菜单打开时隐藏 chips——都会牺牲输入体验或可发现性。
+2. **状态驱动预留空间**：菜单打开时给外层容器加状态类（如 `hero-wrap.model-menu-open`），给下方 chips 增加 `margin-top`。这个像素等于浮层下沿到卡片底边的距离再加约 16px 空隙，必须按当前模型数量实量。StarPage 在 9 个模型、浮层实高约 397px 时用 `410px`；沿用旧的 `230px` 会压住场景芯片大约 160px。
+3. **宽度按最长名字加状态标签量**：浮层 264px 时，「智谱 GLM-5.3 Flash」旁边再放「登录可用」会截断。加宽到 300px 后，`scrollWidth` 不再大于 `clientWidth`。模型换名或标签变长时要再量一次。
+4. **过渡要短**：`margin-top` 加 `transition: margin-top 0.18s ease`，避免 chips 突然跳动。
+5. **备选方案**（未采用）：改为向上弹、Portal 到 body、或菜单打开时隐藏 chips——都会牺牲输入体验或可发现性。
 
 ```css
 .prompt-inspirations {
@@ -474,7 +475,11 @@ textarea → presets（空态）→ .prompt-card-footer（border-top + space-bet
 }
 
 .hero-wrap.model-menu-open .prompt-inspirations {
-  margin-top: 230px;
+  margin-top: 410px; /* 9 个模型时浮层约 397px，再留约 16px */
+}
+
+.model-menu {
+  width: 300px; /* 最长模型名 + 「登录可用」不截断 */
 }
 ```
 

@@ -103,14 +103,15 @@ Qwen Max 用裸名最新版；Doubao 仍要带日期后缀。方舟开放无后�
 
 ### DeepSeek / GLM / Kimi（百炼主路，2026-10 更新）
 
-星页新增五款国内旗舰模型，**生产主路统一走阿里云百炼**（与 Qwen 共用 `QWEN_API_KEY`），完整定价与灾备见 `doc/20260614/domestic-llm-pricing-and-integration.md`。
+DeepSeek、GLM 旗舰、Kimi 的生产主路走阿里云百炼（与 Qwen 共用 `QWEN_API_KEY`）。2026-11 的 GLM-5.3 Flash 是例外：百炼原厂直供未开通，改走方舟。完整定价与灾备见 `doc/20260614/domestic-llm-pricing-and-integration.md`，当次换代见 `doc/20261110/llm-model-catalog-update.md`。
 
 | 目录 key | model ID | extra_body 要点 |
 | --- | --- | --- |
-| `deepseek-v4.1-flash` | `deepseek-v4.1-flash` | `enable_thinking` + `reasoning_effort: high` |
-| `deepseek-v4-pro` | `deepseek-v4-pro` | 同上；2026-10 无 V4.1 Pro |
+| `deepseek-v4.1-flash` | `deepseek-v4.1-flash-1017` | `enable_thinking` + `reasoning_effort: high`。2026-11 起用 1017 快照，目录 key 仍是 `deepseek-v4.1-flash` |
+| `deepseek-v4-pro` | `deepseek-v4-pro` | 同上；百炼裸名与 `deepseek-v4-pro-0813` 是两个在售 ID，价格不同，槽位继续用裸名 |
 | `glm-5.3` | `glm-5.3` | `enable_thinking: true` |
-| `kimi-k3` | `kimi-k3` | `enable_thinking: true` |
+| `glm-5.3-flash` | `glm-5-3-flash-260828` | 方舟。`reasoning_effort: high`。百炼 `ZHIPU/GLM-5.3-Flash` 产品未开通，不要写进目录 |
+| `kimi-k3.1-pro` | `kimi-k3.1-pro` | `enable_thinking: true`，且 `temperature` 必须省略。2026-11 从 `kimi-k3` 换代，旧 key 只留在计费倍率里 |
 
 百炼控制台需分别开通各模型服务。流式 `reasoning_content` 仍由现有 OpenAI 适配层解析，无需改代码。
 
@@ -124,9 +125,9 @@ Qwen Max 用裸名最新版；Doubao 仍要带日期后缀。方舟开放无后�
 
 | 模型 | ❌ 易错 ID | ✅ 推荐 ID |
 | --- | --- | --- |
-| Kimi | `kimi/kimi-k2.8-preview`（未开通）、`kimi-k2.8-preview`（404） | `kimi-k3` |
-| GLM | — | `glm-5.3`（或 `ZHIPU/GLM-5.3`） |
-| DeepSeek | — | `deepseek-v4.1-flash` / `deepseek-v4-pro` |
+| Kimi | `kimi/kimi-k3.1-pro`（厂名前缀，和裸名可能开通状态不同） | `kimi-k3.1-pro` |
+| GLM | `ZHIPU/GLM-5.3-Flash`（产品未开通）、`glm-5.3-flash`（Access denied） | 旗舰 `glm-5.3`；Flash 走方舟 `glm-5-3-flash-260828` |
+| DeepSeek | 把 `deepseek-v4.1-flash` 当成 1017 | Flash 用 `deepseek-v4.1-flash-1017`；Pro 槽位仍是 `deepseek-v4-pro` |
 | MiniMax | `MiniMax-M3`（404） | `MiniMax/MiniMax-M3`（需先控制台开通产品） |
 
 接入后务必用 `script/probe-llm-models.py` 或最小 chat 请求验证，勿凭文档前缀猜测。
@@ -135,15 +136,15 @@ Qwen Max 用裸名最新版；Doubao 仍要带日期后缀。方舟开放无后�
 
 换一代模型时，先对清单再改生产目录。价格和开通状态以当时接口为准，不要沿用上一季文档里的 ID。
 
-1. **列目录再探活。** 百炼 `GET /api/v1/models` 同时给 ID 和 `prices`；方舟 `GET /api/v3/models` 只有 ID 和状态（如 `Retiring` / `Shutdown`），**不返回价格**，单价要另查官方价目。
-2. **两种 404 不要混。** `has not activated the model` 表示 ID 存在但账号未开通，此时不要把该 ID 写进生产，否则默认模型会整段失败。`does not exist` 才是 ID 写错或已下架。开通后要再探一次，同系列里取日期更新的那个。
+1. **列目录再探活。** 百炼 `GET /api/v1/models` 的成功包在 `output.models`，不在 OpenAI 风格的 `data`；单价在每条的 `prices[].prices[]`。方舟 `GET /api/v3/models` 只有 ID 和状态（如 `Retiring` / `Shutdown`），**不返回价格**，单价要另查官方价目。列表里的 `inference_provider` 能区分平台托管（`aliyun-bailian`）和原厂直供（如 `zhipu-ai`）。
+2. **未开通有两层，不要和 404 混。** `does not exist` 才是 ID 写错或已下架。`The product is not activated` 是商品未开通；`Access denied` 是另一类拒绝。业务空间授权 `POST /api/v1/models/permissions` 返回 success，只表示空间权限写上了，**不等于商品已开通**，必须再探一次最小对话。未开通的 ID 不要写进生产。原厂直供开不通、方舟又有同款且探活能吐出正文时，可以改走方舟。
 3. **思考模型的空正文。** 探活若把 `max_tokens` 压到十几，模型可能把额度用在思考上，HTTP 200 但正文为空。加大额度再确认能吐出正文，才算探活通过。
 4. **key 与展示名分开。** 版本写在目录 key 里（如 `glm-5.2`）就随版本改 key，并在计费倍率里暂时保留旧 key，避免更新瞬间未结算的调用找不到倍率；浏览器里勾过旧 key 的需要重选。槽位角色不变（更便宜的那一档、第二个豆包）就保留 key，只改 `label` 和 `model`，已勾选的用户会自动跟上。
 5. **高峰 / 低峰。** 厂商给两套单价、计费引擎又没有时段时，按高峰写入 `pricing`，避免高峰少计成本。档位 `label` 写明「低峰减半」，方便以后对账。
-6. **裸名与日期快照。** `qwen3.8-max` 这类裸名是滚动最新版，带日期的是快照，不要把快照当成更新。豆包必须带日期后缀，同名系列取较新日期。脚本若按字典序猜「更新 ID」，会把 omni、带厂名前缀的 ID误报成更新，以探活和产品档位为准。
-7. **生效范围。** 目录在后端启动时加载，改完重启后端即可。展示名来自模型列表接口，前端不用重新构建。
+6. **裸名与日期快照。** `qwen3.8-max` 这类裸名是滚动最新版，带日期的是快照，不要把快照当成更新。豆包必须带日期后缀，同名系列取较新日期。百炼上若裸名和日期快照**同时在售且单价不同**，它们是两个商品，不要把快照当成裸名已经滚过去的版本，也不要反过来把裸名当成那个快照。2026-11 的例子：`deepseek-v4-pro` 是 12 / 24 / 1，`deepseek-v4-pro-0813` 高峰是 9 / 27 / 0.9。脚本若按字典序猜「更新 ID」，会把 omni、带厂名前缀的 ID误报成更新，以探活和产品档位为准。
+7. **生效范围。** 目录在后端启动时加载，改完重启后端即可。展示名来自模型列表接口，前端不用重新构建。现网以公网 `/api/models` 和本机 `127.0.0.1:8000/api/models` 一致为准。key 没变的档，已勾选用户会自动跟上；版本写进 key 的档，旧勾选不会迁移。
 8. **思考/推理模型的参数禁忌（如 Kimi K3 不接受 temperature）。**
-   部分开启深度思考的新一代模型（如百炼托管的 `kimi-k3`、o1 类模型），供应商上游严格禁止传通用参数 `temperature`（传入默认的 0.7 即报 `400 InvalidParameter: Parameter 'temperature'=0.7 is not supported for kimi-k3 model`）。必须在模型目录中配置 `"params": { "temperature": null }` 显式由适配层丢弃该参数，不能直接依赖默认模板参数。
+   部分开启深度思考的新一代模型（如百炼托管的 `kimi-k3.1-pro`，报错文案仍写 `kimi-k3`），供应商上游严格禁止传通用参数 `temperature`（传入默认的 0.7 即报 `400 InvalidParameter: Parameter 'temperature'=0.7 is not supported`）。必须在模型目录中配置 `"params": { "temperature": null }` 显式由适配层丢弃该参数，不能直接依赖默认模板参数。
 
 ### 模型列表与官方定价 API（2026-06 实测）
 
