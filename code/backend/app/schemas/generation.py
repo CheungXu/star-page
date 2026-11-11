@@ -45,6 +45,10 @@ class ModelInfo(BaseModel):
     available: bool
     anon_allowed: bool = True
     anon_default: bool = False
+    tier: str = "standard"
+    hold_credits: int = 150
+    discounted_hold_credits: int = 138
+    requires_paid_or_trial: bool = False
 
 
 class GenerationEventPayload(BaseModel):

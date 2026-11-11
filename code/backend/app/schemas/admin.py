@@ -48,6 +48,8 @@ class AdminOverview(BaseModel):
     prepaid_cloud_topup_cny: float
     total_paid_balance_credits: int
     total_gift_balance_credits: int
+    total_frozen_balance_credits: int = 0
+    total_debt_credits: int = 0
     user_count: int
     accounts: list[LedgerAccountStat]
 
@@ -215,5 +217,7 @@ class AdminUserItem(BaseModel):
     is_anonymous: bool
     paid_balance: int
     gift_balance: int
+    frozen_balance: int = 0
+    debt_credits: int = 0
     total_recharged_credits: int
     total_spent_credits: int

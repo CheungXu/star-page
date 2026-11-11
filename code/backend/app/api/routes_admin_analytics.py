@@ -777,7 +777,8 @@ async def users(
                 text(
                     f"""
                     SELECT u.id, u.phone, u.display_name, u.is_anonymous, u.created_at, u.last_login_at,
-                           COALESCE(ca.paid_balance, 0), COALESCE(ca.gift_balance, 0),
+                           COALESCE(ca.paid_balance, 0) + COALESCE(ca.frozen_paid_balance, 0),
+                           COALESCE(ca.gift_balance, 0) + COALESCE(ca.frozen_gift_balance, 0),
                            COALESCE(ca.total_recharged_credits, 0), COALESCE(ca.total_spent_credits, 0),
                            (SELECT count(*) FROM generation_tasks gt WHERE gt.requested_by_user_id = u.id) AS generations,
                            (SELECT count(*) FROM generation_tasks gt
@@ -822,7 +823,8 @@ async def user_profile(user_id: uuid.UUID, request: Request) -> OpsUserProfile:
                 text(
                     """
                     SELECT u.id, u.phone, u.display_name, u.is_anonymous, u.created_at, u.last_login_at,
-                           COALESCE(ca.paid_balance, 0), COALESCE(ca.gift_balance, 0),
+                           COALESCE(ca.paid_balance, 0) + COALESCE(ca.frozen_paid_balance, 0),
+                           COALESCE(ca.gift_balance, 0) + COALESCE(ca.frozen_gift_balance, 0),
                            COALESCE(ca.total_recharged_credits, 0), COALESCE(ca.total_spent_credits, 0)
                     FROM users u LEFT JOIN credit_accounts ca ON ca.user_id = u.id
                     WHERE u.id = :uid

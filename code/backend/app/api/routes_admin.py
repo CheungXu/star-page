@@ -108,26 +108,29 @@ async def overview(request: Request) -> AdminOverview:
         prepaid_cloud_topup = debit_sum("1102")
         prepaid_cloud_balance = debit_net("1102")
 
-        # 按 paid/gift 拆分收入与成本：收入由消费流水的 paid_delta/gift_delta 决定，
-        # 成本按该次消费中 paid/gift 占比对原始成本做归集；用尽=0(匿名/未回收)单列为试用获客成本。
+        # 按 paid/gift 拆分收入与成本：收入由消费与欠费冲抵流水的 paid_delta/gift_delta 决定，
+        # 成本按该次消费中 paid/gift 占比对原始成本做归集；用尽=0(匿名/未回收或待冲抵)先归入未回收桶，冲抵时收入回到 paid/gift。
         consume_rows = await session.execute(
             select(
+                CreditTransaction.type,
                 CreditTransaction.paid_delta,
                 CreditTransaction.gift_delta,
                 CreditTransaction.raw_cost_cny,
-            ).where(CreditTransaction.type == "consume")
+            ).where(CreditTransaction.type.in_(("consume", "debt_settle")))
         )
         paid_revenue = Decimal("0")
         gift_revenue = Decimal("0")
         paid_cogs = Decimal("0")
         gift_cogs = Decimal("0")
         trial_cogs = Decimal("0")
-        for paid_delta, gift_delta, raw_cost in consume_rows.all():
+        for txn_type, paid_delta, gift_delta, raw_cost in consume_rows.all():
             paid_used = Decimal(str(-(paid_delta or 0)))
             gift_used = Decimal(str(-(gift_delta or 0)))
             cost = Decimal(str(raw_cost)) if raw_cost is not None else Decimal("0")
             paid_revenue += paid_used / Decimal("100")
             gift_revenue += gift_used / Decimal("100")
+            if txn_type == "debt_settle":
+                continue
             used = paid_used + gift_used
             if used <= 0:
                 trial_cogs += cost
@@ -144,13 +147,16 @@ async def overview(request: Request) -> AdminOverview:
         paid_margin = float(paid_gross / paid_revenue) if paid_revenue > 0 else None
         total_margin = float(total_gross / total_revenue) if total_revenue > 0 else None
 
+        # 全站积分负债口径：可用余额 + 在途冻结余额（与总账 2001 / 2002 未核销余额对齐）
         balances = await session.execute(
             select(
-                func.coalesce(func.sum(CreditAccount.paid_balance), 0),
-                func.coalesce(func.sum(CreditAccount.gift_balance), 0),
+                func.coalesce(func.sum(CreditAccount.paid_balance + CreditAccount.frozen_paid_balance), 0),
+                func.coalesce(func.sum(CreditAccount.gift_balance + CreditAccount.frozen_gift_balance), 0),
+                func.coalesce(func.sum(CreditAccount.frozen_paid_balance + CreditAccount.frozen_gift_balance), 0),
+                func.coalesce(func.sum(CreditAccount.debt_credits), 0),
             )
         )
-        paid_sum, gift_sum = balances.one()
+        paid_sum, gift_sum, frozen_sum, debt_sum = balances.one()
 
         user_count = int(
             (await session.execute(select(func.count(User.id)).where(User.is_anonymous.is_(False)))).scalar_one()
@@ -194,6 +200,8 @@ async def overview(request: Request) -> AdminOverview:
             prepaid_cloud_topup_cny=float(prepaid_cloud_topup),
             total_paid_balance_credits=int(paid_sum),
             total_gift_balance_credits=int(gift_sum),
+            total_frozen_balance_credits=int(frozen_sum),
+            total_debt_credits=int(debt_sum),
             user_count=user_count,
             accounts=account_stats,
         )
@@ -292,8 +300,10 @@ async def users(request: Request, limit: int = Query(default=100, ge=1, le=500))
                     phone=user.phone,
                     display_name=user.display_name,
                     is_anonymous=user.is_anonymous,
-                    paid_balance=account.paid_balance,
-                    gift_balance=account.gift_balance,
+                    paid_balance=int(account.paid_balance + account.frozen_paid_balance),
+                    gift_balance=int(account.gift_balance + account.frozen_gift_balance),
+                    frozen_balance=int(account.frozen_paid_balance + account.frozen_gift_balance),
+                    debt_credits=int(account.debt_credits),
                     total_recharged_credits=account.total_recharged_credits,
                     total_spent_credits=account.total_spent_credits,
                 )

@@ -115,11 +115,12 @@ export default function PricingPage() {
         <Link className="pricing-back" href="/">← 返回首页</Link>
         <div className="pricing-balance">
           {isAnon ? (
-            <span>未登录 · 登录后赠送 1000 积分</span>
+            <span>未登录 · 注册即赠 450 积分 + 1 次旗舰体验</span>
           ) : (
             <span>
-              当前积分 <strong>{formatCredits(account!.total_balance)}</strong>（≈¥
+              可用积分 <strong>{formatCredits(account!.total_balance)}</strong>（≈¥
               {creditsToYuan(account!.total_balance)}）
+              {(account!.frozen_balance ?? 0) > 0 && ` · 生成预留中 ${formatCredits(account!.frozen_balance!)}`}
             </span>
           )}
         </div>
@@ -135,16 +136,22 @@ export default function PricingPage() {
         <p className="pricing-loading">正在加载套餐…</p>
       ) : (
         <section className="pricing-grid">
-          {packages.map((pkg, index) => {
+          {packages.map((pkg) => {
             const discount = packageDiscountLabel(pkg);
-            const recommended = index === 2;
+            const isFirstPack = pkg.key === "first_19_9";
+            const recommended = pkg.key === "basic_50" || isFirstPack;
+            const amountText = Number.isInteger(pkg.amount_cny) ? pkg.amount_cny.toFixed(0) : pkg.amount_cny.toFixed(1);
             return (
               <article key={pkg.key} className={`pricing-card ${recommended ? "is-recommended" : ""}`}>
-                {recommended && <span className="pricing-badge">热门</span>}
+                {isFirstPack ? (
+                  <span className="pricing-badge">首充专享</span>
+                ) : pkg.key === "basic_50" ? (
+                  <span className="pricing-badge">热门</span>
+                ) : null}
                 <h2>{pkg.title}</h2>
                 <div className="pricing-amount">
                   <span className="pricing-currency">¥</span>
-                  <span className="pricing-value">{pkg.amount_cny.toFixed(0)}</span>
+                  <span className="pricing-value">{amountText}</span>
                 </div>
                 <ul className="pricing-detail">
                   <li>

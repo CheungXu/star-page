@@ -9,7 +9,7 @@ import { DataPrivacyModal } from "./components/DataPrivacyModal";
 import { PolicyNoticeBar } from "./components/PolicyNoticeBar";
 import { SiteFooter } from "./components/SiteFooter";
 import { LEGAL_POLICY_VERSION } from "./legal/docs";
-import { apiFetch, readBillingError, readErrorMessage } from "./lib/api";
+import { apiFetch, readBillingError, readErrorMessage, type BillingErrorDetail } from "./lib/api";
 import { track } from "./lib/analytics";
 import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from "./lib/billing";
 import { toAbsoluteUrl } from "./lib/links";
@@ -31,6 +31,10 @@ type ModelInfo = {
   available: boolean;
   anon_allowed?: boolean;
   anon_default?: boolean;
+  tier?: string;
+  hold_credits?: number;
+  discounted_hold_credits?: number;
+  requires_paid_or_trial?: boolean;
 };
 
 type AuthUser = {
@@ -109,7 +113,13 @@ type SsePayload = {
   reasoning_tokens?: number;
   token_source?: "actual" | "estimated";
   usage?: ApiUsagePayload;
-  billing?: { training_consent?: string; credits_charged?: number; discount_credits?: number };
+  billing?: {
+    training_consent?: string;
+    credits_charged?: number;
+    discount_credits?: number;
+    reserved_credits?: number;
+    refunded_credits?: number;
+  };
 };
 
 type UsageCostSummary = {
@@ -315,6 +325,8 @@ const PREVIEW_DEFAULT_HEIGHT = 900;
 const CURRENT_SESSION_KEY = "star-page-current-session";
 const SELECTED_MODELS_KEY = "star-page-selected-models";
 const ANON_MAX_MODELS = 2;
+// 首秀券用完且从未充值时的默认勾选，与匿名默认、后端 suggest_light_pair 一致。
+const UNPAID_LIGHT_MODEL_KEYS = ["qwen-plus", "doubao-code"];
 // 事件流被彻底关闭后的手动重连次数上限（退避 1s 起、最长 30s，合计约 2 分钟），用完后以服务端状态为准。
 const MAX_STREAM_RECONNECTS = 8;
 const DOCUMENT_FILE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".xls", ".pdf", ".txt", ".md", ".markdown", ".html", ".htm"];
@@ -1202,6 +1214,69 @@ function PasswordPromptModal({
   );
 }
 
+function PreauthUpgradeModal({
+  detail,
+  models,
+  onClose,
+  onGoRecharge,
+  onSwitchModels,
+}: {
+  detail: BillingErrorDetail;
+  models: ModelInfo[];
+  onClose: () => void;
+  onGoRecharge: () => void;
+  onSwitchModels: (modelKeys: string[]) => void;
+}) {
+  const singleKey = detail.suggestSingleModel ?? null;
+  const singleLabel = singleKey ? models.find((m) => m.key === singleKey)?.label ?? singleKey : null;
+  const pairKeys = detail.suggestLightPair ?? [];
+  const canSuggestPair = pairKeys.length >= 2;
+  const isFirstRecharge = detail.isPaidUser === false;
+
+  return (
+    <div className="auth-modal-backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="auth-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="preauth-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button className="auth-modal-close" type="button" onClick={onClose} aria-label="关闭">
+          <CloseIcon />
+        </button>
+        <h2 id="preauth-modal-title">
+          {detail.code === "flagship_requires_recharge" ? "解锁旗舰模型" : "可用积分不足本轮预留"}
+        </h2>
+        <p>{detail.message || "当前可用积分不足以并行运行所选模型，可立即充值解锁，或切换模型继续创建。"}</p>
+        <div className="preauth-choice-list">
+          <button className="auth-primary-button preauth-choice-primary" type="button" onClick={onGoRecharge}>
+            {isFirstRecharge ? "首充 ¥19.9 立即解锁全部旗舰模型" : "前往充值积分"}
+          </button>
+          {singleKey && singleLabel && (
+            <button
+              className="auth-secondary-button preauth-choice-alt"
+              type="button"
+              onClick={() => onSwitchModels([singleKey])}
+            >
+              仅用「{singleLabel}」立即生成
+            </button>
+          )}
+          {canSuggestPair && (
+            <button
+              className="auth-secondary-button preauth-choice-alt"
+              type="button"
+              onClick={() => onSwitchModels(pairKeys)}
+            >
+              切换极速双模型立即对比生成
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -1241,6 +1316,7 @@ export default function HomePage() {
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const [account, setAccount] = useState<BillingAccount | null>(null);
+  const [preauthPrompt, setPreauthPrompt] = useState<BillingErrorDetail | null>(null);
   const [notice, setNotice] = useState("");
   const noticeTimerRef = useRef<number | null>(null);
   const [scenes, setScenes] = useState<SceneDefinition[]>(FALLBACK_SCENES);
@@ -1423,7 +1499,11 @@ export default function HomePage() {
     localStorage.removeItem(CURRENT_SESSION_KEY);
     startNewChat();
     void loadHistory(historyScope, historySearch, user);
-    void refreshAccount();
+    void (async () => {
+      const nextAccount = await fetchAccount();
+      setAccount(nextAccount);
+      applyChosenModels(availableModels, user, nextAccount);
+    })();
     if (!user.has_password) setShowPasswordPrompt(true);
   }
 
@@ -1488,14 +1568,22 @@ export default function HomePage() {
     }
   }
 
-  async function loadModels(user: AuthUser | null): Promise<void> {
+  function applyChosenModels(models: ModelInfo[], user: AuthUser | null, nextAccount: BillingAccount | null) {
+    if (!models.length) return;
+    const next = chooseSelectedModelKeys(models, user, nextAccount);
+    if (!next.length) return;
+    setSelectedModelKeys(next);
+    // 只在「未充值且首秀券已用完」时回写，避免匿名访问把登录用户存下的勾选覆盖掉。
+    if (isUnpaidWithoutFlagshipTrial(user, nextAccount)) writeSelectedModels(next);
+  }
+
+  async function loadModels(user: AuthUser | null, nextAccount: BillingAccount | null): Promise<void> {
     try {
       const response = await apiFetch("/api/models");
       if (!response.ok) throw new Error(await readErrorMessage(response));
       const data = (await response.json()) as ModelInfo[];
       setAvailableModels(data);
-      const next = chooseSelectedModelKeys(data, user);
-      if (next.length) setSelectedModelKeys(next);
+      applyChosenModels(data, user, nextAccount);
     } catch {
       setAvailableModels([]);
     }
@@ -1514,8 +1602,9 @@ export default function HomePage() {
     const timer = window.setTimeout(() => {
       void (async () => {
         const user = await initializeAuthState();
-        await loadModels(user);
-        await refreshAccount();
+        const nextAccount = await fetchAccount();
+        setAccount(nextAccount);
+        await loadModels(user, nextAccount);
       })();
     }, 0);
     return () => window.clearTimeout(timer);
@@ -1570,9 +1659,14 @@ export default function HomePage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await runGenerationSubmit();
+  }
+
+  async function runGenerationSubmit(overrideModelKeys?: string[], overridePromptText?: string) {
     const submitFiles = selectedFiles.length > 0 ? selectedFiles : Array.from(fileInputRef.current?.files ?? []);
     const inConversation = phase === "active" && Boolean(conversationId);
-    const trimmedPrompt = prompt.trim();
+    const trimmedPrompt = (overridePromptText ?? prompt).trim();
+    const effectiveModelKeys = overrideModelKeys ?? selectedModelKeys;
     const effectivePrompt =
       trimmedPrompt ||
       (!inConversation && activeScene ? activeScene.prompt_template : "") ||
@@ -1588,7 +1682,7 @@ export default function HomePage() {
     }
     // 运营埋点：点击生成（捕获意图，含后续被登录/付费拦截的情况）。
     track("generate_click", {
-      model_count: selectedModelKeys.length,
+      model_count: effectiveModelKeys.length,
       has_file: submitFiles.length > 0,
       in_conversation: inConversation,
       scene_key: inConversation ? undefined : activeSceneKey ?? undefined,
@@ -1598,7 +1692,7 @@ export default function HomePage() {
       setFileError(validationError);
       return;
     }
-    if (selectedModelKeys.length === 0) {
+    if (effectiveModelKeys.length === 0) {
       setFileError("请至少选择一个模型");
       return;
     }
@@ -1608,15 +1702,15 @@ export default function HomePage() {
     // 告知仍在显示时继续生成，视为已知悉；先记下再建批次，这次生成才按新协议记授权。
     if (authUser?.needs_policy_notice) await acknowledgePolicyNotice();
 
-    // 计费前置预判（后端仍为权威）：匿名免费次数用尽引导登录，登录用户余额不足引导充值。
+    // 计费前置预判（后端仍为权威）：匿名免费次数用尽引导登录；登录用户完全无余额且无免费降级空间时直接去充值。
     if (account) {
       if (account.is_anonymous && account.free_generations_remaining <= 0) {
-        showNotice("免费体验已用完，登录后赠送 1000 积分");
+        showNotice("免费体验已用完，注册即赠 450 积分");
         setIsAuthModalOpen(true);
         return;
       }
-      if (!account.is_anonymous && account.total_balance <= 0) {
-        showNotice("积分不足，正在前往充值…");
+      if (!account.is_anonymous && account.total_balance <= 0 && (account.debt_credits ?? 0) === 0) {
+        showNotice("积分已用完，正在前往充值…");
         router.push("/pricing");
         return;
       }
@@ -1650,7 +1744,7 @@ export default function HomePage() {
       hasDocument: fileNames.some(isDocumentName),
       hasEarlierDocument: roundsHaveDocument(lineageRounds),
     };
-    const pendingRuns: RunState[] = selectedModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), fileFlags));
+    const pendingRuns: RunState[] = effectiveModelKeys.map((key) => makePendingRun(key, labelForModel(key, availableModels), fileFlags));
 
     playTransition(() => {
       if (forkRoundIndex !== null) {
@@ -1678,7 +1772,7 @@ export default function HomePage() {
       const formData = new FormData();
       formData.append("prompt", effectivePrompt);
       submitFiles.forEach((file) => formData.append("files", file));
-      selectedModelKeys.forEach((key) => formData.append("models", key));
+      effectiveModelKeys.forEach((key) => formData.append("models", key));
       if (inConversation) {
         formData.append("conversation_id", conversationId);
         if (continueBase) formData.append("base_page_id", continueBase.pageId);
@@ -1701,17 +1795,29 @@ export default function HomePage() {
         const err = await readBillingError(response);
         const failMsg = err.message || "额度不足，无法创建";
         playTransition(() => {
-          setPhase("idle");
-          setRuns([]);
-          setPrompt(effectivePrompt);
+          if (inConversation) {
+            setPastRounds(pastRounds);
+            setRuns(runs);
+            setCurrentBasedOn(currentBasedOn);
+            setRoundIndex(roundIndex);
+          } else {
+            setPhase("idle");
+            setRuns([]);
+          }
+          setPrompt(trimmedPrompt || effectivePrompt);
         });
-        showNotice(failMsg);
         if (err.needLogin) {
+          showNotice(failMsg);
           setIsAuthModalOpen(true);
-        } else if (err.code === "insufficient_credits") {
-          window.setTimeout(() => {
-            router.push("/pricing");
-          }, 900);
+        } else if (
+          err.code === "insufficient_preauth_credits" ||
+          err.code === "flagship_requires_recharge" ||
+          err.code === "debt_repayment_required" ||
+          err.code === "insufficient_credits"
+        ) {
+          setPreauthPrompt(err);
+        } else {
+          showNotice(failMsg);
         }
         void refreshAccount();
         return;
@@ -2311,12 +2417,18 @@ export default function HomePage() {
   function renderModelPicker(compact = false) {
     if (availableModels.length === 0) return null;
     const selected = availableModels.filter((model) => selectedModelKeys.includes(model.key));
+    const trainingGranted = authUser ? authUser.allow_training !== false : true;
+    const holdFor = (m: ModelInfo) =>
+      trainingGranted ? (m.discounted_hold_credits ?? m.hold_credits ?? 0) : (m.hold_credits ?? 0);
+    const estHold = selected.reduce((sum, m) => sum + holdFor(m), 0);
+    const showHoldHint = Boolean(authUser && estHold > 0);
     const triggerLabel = selected.length === 1 ? selected[0].label : `${selected.length} 个模型`;
-    const menuHint = !compact
+    const baseMenuHint = !compact
       ? "可多选 · 并排生成便于对比"
       : continueBase
         ? `每轮可换 · 都基于「${continueBase.modelLabel}」的结果修改`
         : "每轮可换 · 新加入的模型接着上一轮的结果修改";
+    const menuHint = showHoldHint ? `预计预留 ${estHold} 积分（多退）` : baseMenuHint;
     return (
       <div className={`model-picker ${isModelMenuOpen ? "is-open" : ""}`} ref={modelMenuRef}>
         <button
@@ -2348,6 +2460,7 @@ export default function HomePage() {
                 const active = selectedModelKeys.includes(model.key);
                 // 匿名：高价模型可见但置灰（不隐藏），点击轻提示引导注册。
                 const anonLocked = !authUser && model.anon_allowed === false;
+                const modelHold = holdFor(model);
                 return (
                   <button
                     key={model.key}
@@ -2369,6 +2482,9 @@ export default function HomePage() {
                     <span className="model-menu-item-label">{model.label}</span>
                     {!model.available && <span className="model-unavailable">未配置</span>}
                     {model.available && anonLocked && <span className="model-unavailable">登录可用</span>}
+                    {model.available && !anonLocked && authUser && modelHold > 0 && (
+                      <span className="model-unavailable">~{modelHold}</span>
+                    )}
                     <span className="model-menu-check" aria-hidden="true">{active && <CheckIcon />}</span>
                   </button>
                 );
@@ -2548,18 +2664,22 @@ export default function HomePage() {
                       {account.free_generations_remaining}
                       <span className="billing-amount-unit">/{account.free_generations_limit} 次</span>
                     </span>
-                    <span className="billing-sub">登录后赠送 1000 积分</span>
+                    <span className="billing-sub">注册即赠 450 积分</span>
                   </>
                 ) : (
                   <>
-                    <span className="billing-label">当前积分</span>
+                    <span className="billing-label">可用积分</span>
                     <span
                       className="billing-amount"
-                      title={`充值积分 ${formatCredits(account.paid_balance)} · 赠送积分 ${formatCredits(account.gift_balance)}`}
+                      title={`充值积分 ${formatCredits(account.paid_balance)} · 赠送积分 ${formatCredits(account.gift_balance)}${(account.frozen_balance ?? 0) > 0 ? ` · 预留中 ${formatCredits(account.frozen_balance!)}` : ""}`}
                     >
                       {formatCredits(account.total_balance)}
                     </span>
-                    <span className="billing-sub">≈ ¥{creditsToYuan(account.total_balance)}</span>
+                    <span className="billing-sub">
+                      {(account.frozen_balance ?? 0) > 0
+                        ? `预留中 ${formatCredits(account.frozen_balance!)}`
+                        : `≈ ¥${creditsToYuan(account.total_balance)}`}
+                    </span>
                   </>
                 )}
               </div>
@@ -2803,7 +2923,7 @@ export default function HomePage() {
                 onClick={() => void stopGeneration()}
                 disabled={isStopping}
                 aria-label="停止生成"
-                title="停止生成：已完成的保留，没完成的不扣积分"
+                title="停止生成"
               >
                 {isStopping ? <SpinnerIcon /> : <StopIcon />}
               </button>
@@ -3125,6 +3245,23 @@ export default function HomePage() {
       {notice && <div className="app-toast" role="status">{notice}</div>}
       {fullscreenPreviewRun && <FullscreenPreviewModal run={fullscreenPreviewRun} onClose={() => setFullscreenRun(null)} />}
       {isAuthModalOpen && <AuthModal onClose={() => setIsAuthModalOpen(false)} onLogin={handleLogin} />}
+      {preauthPrompt && (
+        <PreauthUpgradeModal
+          detail={preauthPrompt}
+          models={availableModels}
+          onClose={() => setPreauthPrompt(null)}
+          onGoRecharge={() => {
+            setPreauthPrompt(null);
+            router.push("/pricing");
+          }}
+          onSwitchModels={(nextKeys) => {
+            setPreauthPrompt(null);
+            setSelectedModelKeys(nextKeys);
+            writeSelectedModels(nextKeys);
+            void runGenerationSubmit(nextKeys);
+          }}
+        />
+      )}
       {isPrivacyModalOpen && (
         <DataPrivacyModal
           onClose={() => setIsPrivacyModalOpen(false)}
@@ -3199,7 +3336,17 @@ function writeCurrentSession(session: StoredSession): void {
   localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(session));
 }
 
-function chooseSelectedModelKeys(data: ModelInfo[], user: AuthUser | null): string[] {
+function isUnpaidWithoutFlagshipTrial(user: AuthUser | null, account: BillingAccount | null): boolean {
+  if (!user || !account || account.is_anonymous) return false;
+  if (account.is_paid_user !== false) return false;
+  return typeof account.free_flagship_batches_remaining === "number" && account.free_flagship_batches_remaining <= 0;
+}
+
+function chooseSelectedModelKeys(
+  data: ModelInfo[],
+  user: AuthUser | null,
+  account: BillingAccount | null = null,
+): string[] {
   const availableKeys = new Set(data.filter((model) => model.available).map((model) => model.key));
   const restored = (readSelectedModels() ?? []).filter((key) => availableKeys.has(key));
   // 未登录：本机记录里只要混有注册后才可用的模型，就改用匿名默认，而不是留下半套勾选。
@@ -3213,6 +3360,18 @@ function chooseSelectedModelKeys(data: ModelInfo[], user: AuthUser | null): stri
     }
     const anonDefaults = data.filter((model) => model.available && model.anon_default).map((model) => model.key);
     if (anonDefaults.length) return anonDefaults;
+  }
+  // 首秀券用完且从未充值：不能再默认旗舰。本机若存着旗舰勾选，整组改回两个轻量模型。
+  if (isUnpaidWithoutFlagshipTrial(user, account)) {
+    const allowed = new Set(
+      data.filter((model) => model.available && model.requires_paid_or_trial !== true).map((model) => model.key),
+    );
+    const lightRestored = restored.filter((key) => allowed.has(key));
+    if (restored.length > 0 && lightRestored.length === restored.length) return lightRestored;
+    const preferred = UNPAID_LIGHT_MODEL_KEYS.filter((key) => allowed.has(key));
+    if (preferred.length) return preferred;
+    const lightTier = data.filter((model) => model.available && model.tier === "light").map((model) => model.key);
+    if (lightTier.length) return lightTier.slice(0, 2);
   }
   if (restored.length) return restored;
   const defaults = data.filter((model) => model.available && model.is_default).map((model) => model.key);

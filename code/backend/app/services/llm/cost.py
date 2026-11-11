@@ -77,6 +77,34 @@ def merge_llm_usage(left: LlmUsage | None, right: LlmUsage | None) -> LlmUsage |
     )
 
 
+def merge_cost_breakdowns(
+    left: LlmCostBreakdown | None, right: LlmCostBreakdown | None
+) -> LlmCostBreakdown | None:
+    """合并两段不同模型或不同轮次的成本（如 qwen-plus 技能路由成本 + 写码旗舰模型成本）。"""
+    if left is None:
+        return right
+    if right is None:
+        return left
+
+    in_cost = Decimal(str(left.input_cost_cny)) + Decimal(str(right.input_cost_cny))
+    out_cost = Decimal(str(left.output_cost_cny)) + Decimal(str(right.output_cost_cny))
+    tot_cost = in_cost + out_cost
+    return LlmCostBreakdown(
+        currency=right.currency or left.currency,
+        tier_label=right.tier_label or left.tier_label,
+        input_tokens=int(left.input_tokens) + int(right.input_tokens),
+        output_tokens=int(left.output_tokens) + int(right.output_tokens),
+        cached_input_tokens=int(left.cached_input_tokens) + int(right.cached_input_tokens),
+        reasoning_tokens=int(left.reasoning_tokens) + int(right.reasoning_tokens),
+        input_per_million=right.input_per_million,
+        output_per_million=right.output_per_million,
+        cache_input_per_million=right.cache_input_per_million,
+        input_cost_cny=_to_float(in_cost),
+        output_cost_cny=_to_float(out_cost),
+        total_cost_cny=_to_float(tot_cost),
+    )
+
+
 def usage_to_payload(usage: LlmUsage) -> dict[str, int]:
     payload: dict[str, int] = {}
     if usage.input_tokens is not None:

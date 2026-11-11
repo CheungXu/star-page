@@ -36,7 +36,13 @@ async def _noop(*_args, **_kwargs) -> None:
 
 
 def test_fork_flow(monkeypatch):
+    from app.services.billing.account import BatchReservation
+
+    async def fake_reserve(_self, **_kw):
+        return BatchReservation()
+
     monkeypatch.setattr(BillingService, "ensure_can_start_batch", _noop)
+    monkeypatch.setattr(BillingService, "reserve_for_batch", fake_reserve)
     monkeypatch.setattr(BillingService, "record_anon_batch_started", _noop)
     monkeypatch.setattr(GenerationService, "_resolve_model_keys", lambda self, keys, allowed_keys=None: list(keys))
     asyncio.run(_run_with_engine(monkeypatch))

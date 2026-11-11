@@ -245,7 +245,7 @@ def get_settings() -> Settings:
 
 @dataclass(frozen=True)
 class BillingConfig:
-    """计费配置：模型倍率、匿名围栏、赠送与套餐等，来源 config/billing.json。"""
+    """计费配置：模型倍率、预冻结基准、匿名与首秀围栏、赠送与套餐等，来源 config/billing.json。"""
 
     default_markup: float
     model_markups: dict[str, float]
@@ -260,14 +260,56 @@ class BillingConfig:
     max_recharge_cny: float
     aliyun_llm_keywords: list[str]
     training_discount_rate: float = 1.0
+    model_hold_credits: dict[str, int] = None  # type: ignore[assignment]
+    default_hold_credits: int = 150
+    compression_hold_credits: int = 15
+    cost_floor_multiplier: float = 1.25
+    max_debt_credits_per_task: int = 100
+    cancel_charge_min_output_tokens: int = 2000
+    cancel_cost_multiplier: float = 1.0
+    signup_flagship_trial_batches: int = 1
+    free_registered_allowed_models: list[str] = None  # type: ignore[assignment]
+    flagship_trial_allowed_models: list[str] = None  # type: ignore[assignment]
+    first_recharge_only_packages: list[str] = None  # type: ignore[assignment]
+    hide_when_first_recharge_available: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.model_hold_credits is None:
+            object.__setattr__(self, "model_hold_credits", {})
+        if self.free_registered_allowed_models is None:
+            object.__setattr__(self, "free_registered_allowed_models", list(self.anon_allowed_models))
+        if self.flagship_trial_allowed_models is None:
+            object.__setattr__(self, "flagship_trial_allowed_models", ["qwen", "doubao"])
+        if self.first_recharge_only_packages is None:
+            object.__setattr__(self, "first_recharge_only_packages", ["first_19_9"])
+        if self.hide_when_first_recharge_available is None:
+            object.__setattr__(self, "hide_when_first_recharge_available", ["starter_20"])
 
     def markup_for(self, model_key: str | None) -> float:
         if model_key and model_key in self.model_markups:
             return float(self.model_markups[model_key])
         return float(self.default_markup)
 
+    def hold_credits_for(self, model_key: str | None) -> int:
+        if model_key and model_key in self.model_hold_credits:
+            return max(1, int(self.model_hold_credits[model_key]))
+        return max(1, int(self.default_hold_credits))
+
+    def tier_for(self, model_key: str) -> str:
+        if model_key in self.free_registered_allowed_models:
+            return "light"
+        if self.markup_for(model_key) >= 1.75:
+            return "flagship"
+        return "standard"
+
     def is_anon_allowed_model(self, model_key: str) -> bool:
         return model_key in self.anon_allowed_models
+
+    def is_free_registered_allowed_model(self, model_key: str) -> bool:
+        return model_key in self.free_registered_allowed_models
+
+    def is_flagship_trial_model(self, model_key: str) -> bool:
+        return model_key in self.flagship_trial_allowed_models or model_key in self.free_registered_allowed_models
 
 
 def _find_billing_config_path(settings: Settings) -> Path | None:
@@ -295,15 +337,15 @@ def get_billing_config() -> BillingConfig:
         data = json.loads(path.read_text(encoding="utf-8"))
 
     return BillingConfig(
-        default_markup=float(data.get("default_markup", 1.2)),
+        default_markup=float(data.get("default_markup", 1.65)),
         model_markups={str(k): float(v) for k, v in (data.get("model_markups") or {}).items()},
-        free_trial_generations=int(data.get("free_trial_generations", 2)),
-        signup_bonus_credits=int(data.get("signup_bonus_credits", 1000)),
+        free_trial_generations=int(data.get("free_trial_generations", 1)),
+        signup_bonus_credits=int(data.get("signup_bonus_credits", 450)),
         anon_allowed_models=[str(item) for item in (data.get("anon_allowed_models") or [])],
         anon_default_models=[str(item) for item in (data.get("anon_default_models") or [])],
         anon_max_models_per_gen=int(data.get("anon_max_models_per_gen", 2)),
         anon_daily_id_limit_per_ip=int(data.get("anon_daily_id_limit_per_ip", 3)),
-        anon_daily_free_generation_limit_per_ip=int(data.get("anon_daily_free_generation_limit_per_ip", 5)),
+        anon_daily_free_generation_limit_per_ip=int(data.get("anon_daily_free_generation_limit_per_ip", 4)),
         min_recharge_cny=float(data.get("min_recharge_cny", 1)),
         max_recharge_cny=float(data.get("max_recharge_cny", 100000)),
         aliyun_llm_keywords=[
@@ -314,6 +356,31 @@ def get_billing_config() -> BillingConfig:
             )
         ],
         training_discount_rate=min(1.0, max(0.5, float(data.get("training_discount_rate", 1.0)))),
+        model_hold_credits={str(k): int(v) for k, v in (data.get("model_hold_credits") or {}).items()},
+        default_hold_credits=int(data.get("default_hold_credits", 150)),
+        compression_hold_credits=int(data.get("compression_hold_credits", 15)),
+        cost_floor_multiplier=max(0.0, float(data.get("cost_floor_multiplier", 1.25))),
+        max_debt_credits_per_task=max(0, int(data.get("max_debt_credits_per_task", 100))),
+        cancel_charge_min_output_tokens=max(0, int(data.get("cancel_charge_min_output_tokens", 2000))),
+        cancel_cost_multiplier=max(0.0, float(data.get("cancel_cost_multiplier", 1.0))),
+        signup_flagship_trial_batches=max(0, int(data.get("signup_flagship_trial_batches", 1))),
+        free_registered_allowed_models=[
+            str(item)
+            for item in (
+                data.get("free_registered_allowed_models")
+                or data.get("anon_allowed_models")
+                or ["qwen-plus", "glm-5.3-flash", "doubao-code", "deepseek-v4.1-flash"]
+            )
+        ],
+        flagship_trial_allowed_models=[
+            str(item) for item in (data.get("flagship_trial_allowed_models") or ["qwen", "doubao"])
+        ],
+        first_recharge_only_packages=[
+            str(item) for item in (data.get("first_recharge_only_packages") or ["first_19_9"])
+        ],
+        hide_when_first_recharge_available=[
+            str(item) for item in (data.get("hide_when_first_recharge_available") or ["starter_20"])
+        ],
     )
 
 

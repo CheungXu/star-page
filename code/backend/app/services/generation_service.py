@@ -37,7 +37,7 @@ from app.services.document_parser.pipeline import batch_needs_parse, refund_free
 from app.services.html_sanitizer import extract_html_document, find_tailwind_runtime_violation, sanitize_html
 from app.services.image_assets import StoredImage
 from app.services.llm.client import create_llm_client
-from app.services.llm.cost import estimate_llm_cost, merge_llm_usage, usage_to_payload
+from app.services.llm.cost import estimate_llm_cost, merge_cost_breakdowns, merge_llm_usage, usage_to_payload
 from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, HTML_PAGE_TAILWIND_CORRECTION_PROMPT, build_skill_system_message
 from app.services.llm.types import LlmCostBreakdown, LlmImagePart, LlmMessage, LlmUsage
 from app.services.scenes.catalog import get_scene
@@ -155,14 +155,21 @@ class GenerationService:
 
         model_keys = self._resolve_model_keys(selected_model_keys, allowed_keys=allowed_keys)
 
-        # 额度/余额前置校验：匿名查免费次数与 IP 天花板，登录查积分余额。
-        await billing.ensure_can_start_batch(user, model_keys)
-        if user.is_anonymous:
-            await AnonService(self.session).check_ip_free_generation_ceiling(client_ip)
-
         title = _build_page_title(title_prompt or prompt)
         # 授权快照在建批次这一刻定下，之后改开关不影响这一轮的数据归属和折扣。
         consent = training_consent_for(user)
+        training_granted = consent == CONSENT_GRANTED
+        has_documents = bool(staged_uploads or extracted_file_text or input_file_names)
+
+        # 额度校验与动态预授权冻结：匿名查免费次数与 IP 天花板；登录加行锁预冻结积分并校验首秀券/欠费。
+        reservation = await billing.reserve_for_batch(
+            user=user,
+            model_keys=model_keys,
+            training_granted=training_granted,
+            has_documents=has_documents,
+        )
+        if user.is_anonymous:
+            await AnonService(self.session).check_ip_free_generation_ceiling(client_ip)
 
         # parent_for_model：每个模型的新节点接到哪个父节点。
         #  - 新会话(无 conversation_id)：根节点，父为空。
@@ -249,6 +256,7 @@ class GenerationService:
             scene_key=scene.key if scene else None,
             status="pending",
             training_consent=consent,
+            used_flagship_trial=reservation.used_flagship_trial,
         )
         self.session.add(batch)
         await self.session.flush()
@@ -257,7 +265,9 @@ class GenerationService:
             conversation.root_batch_id = batch.id
 
         runs: list[BatchRunRef] = []
-        for model_key in model_keys:
+        allocs = reservation.allocations
+        for idx, model_key in enumerate(model_keys):
+            alloc = allocs[idx] if idx < len(allocs) else None
             model = registry.get(model_key)
             page = Page(
                 owner_user_id=user.id,
@@ -294,6 +304,8 @@ class GenerationService:
                 scene_key=scene.key if scene else None,
                 status="pending",
                 training_consent=consent,
+                reserved_gift_credits=alloc.reserved_gift if alloc else 0,
+                reserved_paid_credits=alloc.reserved_paid if alloc else 0,
             )
             permission = PagePermission(page_id=page.id, user_id=user.id, role="owner")
             self.session.add_all([task, permission])
@@ -525,11 +537,13 @@ class GenerationService:
             task.status = "failed"
             task.error_message = "页面记录不存在"
             task.finished_at = datetime.now(UTC)
+            await BillingService(self.session).release_task_reservation(task)
             failed = self._stage_event(
                 task.id, "failed", {"type": "failed", "message": "页面记录不存在", "model_key": task.model_key}
             )
             await self.session.commit()
             await self.recompute_batch_status(task.batch_id)
+            await self._refund_flagship_trial_if_needed(task.batch_id)
             yield failed
             return
 
@@ -552,12 +566,17 @@ class GenerationService:
 
         doc_context = DocumentContext()
         extraction_usage: LlmUsage | None = None
+        router_usage: LlmUsage | None = None
+        router_model_key: str | None = None
+        wasted_retry_usage: LlmUsage | None = None
+        messages: list[LlmMessage] = []
         answer_parts: list[str] = []
         answer_started = False
         model_provider: str | None = None
         model_name: str | None = None
         generation_usage: LlmUsage | None = None
         cost: LlmCostBreakdown | None = None
+        reasoning_total_chars = 0
         answer_text_length = 0
         reported_output_tokens = 0
         next_token_report = 50
@@ -591,6 +610,7 @@ class GenerationService:
             task.skill_key = skill_selection.key
             page.skill_key = skill_selection.key
             router_usage = skill_selection.usage
+            router_model_key = skill_selection.router_model_key
             await self.session.commit()
             self._raise_if_cancelled()
 
@@ -640,6 +660,7 @@ class GenerationService:
                         model_name = chunk.model or model_name
 
                         if chunk.type == "reasoning_delta" and chunk.reasoning_text:
+                            reasoning_total_chars += len(chunk.reasoning_text)
                             self._buffer_reasoning(chunk.reasoning_text)
                             if self._reasoning_due():
                                 payload = self._take_reasoning_payload()
@@ -707,6 +728,11 @@ class GenerationService:
                         violation = find_tailwind_runtime_violation(html_document)
                         if violation and not tailwind_retry_used:
                             tailwind_retry_used = True
+                            # 保留首轮违规已消耗的 usage 用于 6001 COGS 真实记账，对用户计价只收成功轮。
+                            first_round_usage = generation_usage or _estimate_stream_usage(
+                                messages, reasoning_total_chars, answer_text_length
+                            )
+                            wasted_retry_usage = merge_llm_usage(wasted_retry_usage, first_round_usage)
                             messages = [
                                 *messages,
                                 LlmMessage(role="assistant", content=model_output_text),
@@ -715,6 +741,7 @@ class GenerationService:
                             answer_parts.clear()
                             answer_started = False
                             generation_usage = None
+                            reasoning_total_chars = 0
                             answer_text_length = 0
                             reported_output_tokens = 0
                             next_token_report = 50
@@ -785,13 +812,29 @@ class GenerationService:
             model_output_text = "".join(answer_parts)
             html_document = extract_html_document(model_output_text)
 
-            usage = merge_llm_usage(merge_llm_usage(router_usage, extraction_usage), generation_usage)
+            # 技能路由单独按实际轻量模型（如 qwen-plus）单价核计，避免误按写码旗舰单价高估。
+            router_cost = (
+                estimate_llm_cost(router_model_key or task.model_key or "", router_usage)
+                if router_usage is not None
+                else None
+            )
+            billable_main_usage = merge_llm_usage(extraction_usage, generation_usage)
+            billable_cost = merge_cost_breakdowns(
+                router_cost, estimate_llm_cost(task.model_key or "", billable_main_usage)
+            )
+
+            full_main_usage = merge_llm_usage(billable_main_usage, wasted_retry_usage)
+            full_cost = merge_cost_breakdowns(
+                router_cost, estimate_llm_cost(task.model_key or "", full_main_usage)
+            )
+
+            usage = merge_llm_usage(router_usage, full_main_usage)
+            cost = full_cost or billable_cost
             output_tokens = (
                 usage.output_tokens
                 if usage and usage.output_tokens is not None
                 else _estimate_output_tokens(answer_text_length)
             )
-            cost = estimate_llm_cost(task.model_key, usage) if usage else None
             progress_payload: dict[str, Any] = {
                 "type": "progress",
                 "step": "model_output",
@@ -844,8 +887,10 @@ class GenerationService:
             task.status = "succeeded"
             task.finished_at = datetime.now(UTC)
 
-            # 计费结算：按 page_version 幂等扣积分/记账（匿名仅记成本，登录扣积分确认收入）。
-            settle = await self._settle_generation_billing(task, version, cost)
+            # 计费结算：向用户按成功轮 billable_cost 计价扣积分，总账 6001/1102 按含重试的真实 full_cost 入账。
+            settle = await self._settle_generation_billing(
+                task, version, billable_cost or cost, ledger_cost=cost
+            )
             # 授权生成当场提取匿名结构样本：等到事后再提，用户可能已撤回授权。
             if task.training_consent == CONSENT_GRANTED:
                 await self._store_training_sample(task, safe_html)
@@ -874,6 +919,8 @@ class GenerationService:
                 "training_consent": task.training_consent,
                 "credits_charged": settle.credits_charged if settle else 0,
                 "discount_credits": settle.discount_credits if settle else 0,
+                "reserved_credits": settle.reserved_credits if settle else 0,
+                "refunded_credits": settle.refunded_credits if settle else 0,
             }
             # 终态、版本、结算和收尾事件同一个事务提交：事件流看到终态时一定也能读到 completed。
             completed = self._stage_event(task.id, "completed", completed_payload)
@@ -889,6 +936,17 @@ class GenerationService:
             task.error_message = "用户停止了生成"
             task.finished_at = datetime.now(UTC)
             page.status = "failed"
+            await self._settle_cancelled_generation(
+                task=task,
+                messages=messages,
+                reasoning_chars=reasoning_total_chars,
+                answer_chars=answer_text_length,
+                generation_usage=generation_usage,
+                extraction_usage=extraction_usage,
+                wasted_retry_usage=wasted_retry_usage,
+                router_usage=router_usage,
+                router_model_key=router_model_key,
+            )
             cancelled = self._stage_event(
                 task.id,
                 "cancelled",
@@ -896,6 +954,7 @@ class GenerationService:
             )
             await self.session.commit()
             await self.recompute_batch_status(task.batch_id)
+            await self._refund_flagship_trial_if_needed(task.batch_id)
             yield cancelled
         except Exception as exc:
             if answer_parts and not task.model_output_text:
@@ -906,6 +965,7 @@ class GenerationService:
             task.error_message = ((DocumentStageError.ERROR_PREFIX if document_stage else "") + str(exc))[:2000]
             task.finished_at = datetime.now(UTC)
             page.status = "failed"
+            await self._release_task_reservation_safe(task)
             failed = self._stage_event(
                 task.id,
                 "failed",
@@ -915,6 +975,7 @@ class GenerationService:
             await self.recompute_batch_status(task.batch_id)
             if document_stage:
                 await self._refund_if_batch_failed_on_documents(task.batch_id)
+            await self._refund_flagship_trial_if_needed(task.batch_id)
             yield failed
 
     async def _progress(self, task_id: uuid.UUID, step: str, status: str, text: str) -> SseEvent:
@@ -966,7 +1027,12 @@ class GenerationService:
             await refund_free_trial_once(self.session, batch_id)
 
     async def _settle_generation_billing(
-        self, task: GenerationTask, version: PageVersion, cost: LlmCostBreakdown | None
+        self,
+        task: GenerationTask,
+        version: PageVersion,
+        cost: LlmCostBreakdown | None,
+        *,
+        ledger_cost: LlmCostBreakdown | None = None,
     ) -> SettleResult | None:
         """对一次成功生成结算计费，按 version_id 幂等。失败不阻断生成主流程。"""
         actor = await self.session.get(User, task.requested_by_user_id)
@@ -974,18 +1040,89 @@ class GenerationService:
             return None
         markup = get_billing_config().markup_for(task.model_key)
         raw_cost = cost.total_cost_cny if cost is not None else None
+        ledger_cogs = ledger_cost.total_cost_cny if ledger_cost is not None else raw_cost
         try:
-            return await BillingService(self.session).settle_generation(
-                user=actor,
-                version_id=version.id,
-                model_key=task.model_key,
-                raw_cost_cny=raw_cost,
-                markup=markup,
-                training_granted=task.training_consent == CONSENT_GRANTED,
-            )
-        except Exception as exc:  # noqa: BLE001 - 结算失败仅告警，不影响已生成页面
+            async with self.session.begin_nested():
+                return await BillingService(self.session).settle_generation(
+                    user=actor,
+                    version_id=version.id,
+                    model_key=task.model_key,
+                    raw_cost_cny=raw_cost,
+                    markup=markup,
+                    training_granted=task.training_consent == CONSENT_GRANTED,
+                    task=task,
+                    ledger_cogs_cny=ledger_cogs,
+                )
+        except Exception as exc:  # noqa: BLE001 - 结算失败仅告警，回退解冻不卡死资金
             print(f"[billing] 结算失败 version={version.id}: {exc}")
+            await self._release_task_reservation_safe(task)
             return None
+
+    async def _release_task_reservation_safe(self, task: GenerationTask) -> None:
+        try:
+            async with self.session.begin_nested():
+                await BillingService(self.session).release_task_reservation(task)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[billing] 释放任务预授权失败 task={task.id}: {exc}")
+
+    async def _refund_flagship_trial_if_needed(self, batch_id: uuid.UUID | None) -> None:
+        if batch_id is None:
+            return
+        try:
+            await BillingService(self.session).refund_flagship_trial_if_batch_all_failed(batch_id)
+            await self.session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await self.session.rollback()
+            print(f"[billing] 检查并退回首秀券失败 batch={batch_id}: {exc}")
+
+    async def _settle_cancelled_generation(
+        self,
+        *,
+        task: GenerationTask,
+        messages: list[LlmMessage],
+        reasoning_chars: int,
+        answer_chars: int,
+        generation_usage: LlmUsage | None,
+        extraction_usage: LlmUsage | None,
+        wasted_retry_usage: LlmUsage | None,
+        router_usage: LlmUsage | None,
+        router_model_key: str | None,
+    ) -> None:
+        """用户主动取消时的结算：把思考字符 + 正文字符一并纳入输出 Token 估算。"""
+        try:
+            async with self.session.begin_nested():
+                actor = await self.session.get(User, task.requested_by_user_id)
+                if actor is None:
+                    await BillingService(self.session).release_task_reservation(task)
+                    return
+
+                stream_usage = generation_usage or _estimate_stream_usage(messages, reasoning_chars, answer_chars)
+                est_out_tokens = 0
+                if stream_usage and stream_usage.output_tokens:
+                    est_out_tokens += int(stream_usage.output_tokens)
+                if wasted_retry_usage and wasted_retry_usage.output_tokens:
+                    est_out_tokens += int(wasted_retry_usage.output_tokens)
+
+                main_usage = merge_llm_usage(
+                    merge_llm_usage(extraction_usage, stream_usage), wasted_retry_usage
+                )
+                router_cost = (
+                    estimate_llm_cost(router_model_key or task.model_key or "", router_usage)
+                    if router_usage is not None
+                    else None
+                )
+                total_cost = merge_cost_breakdowns(
+                    router_cost, estimate_llm_cost(task.model_key or "", main_usage)
+                )
+                await BillingService(self.session).settle_cancelled_task(
+                    task=task,
+                    user=actor,
+                    estimated_output_tokens=est_out_tokens,
+                    raw_cost_cny=total_cost.total_cost_cny if total_cost else None,
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[billing] 取消任务结算失败 task={task.id}: {exc}")
+            await self._release_task_reservation_safe(task)
 
     async def _store_training_sample(self, task: GenerationTask, html: str) -> None:
         """保存匿名结构样本。放在保存点里，失败只丢样本，不影响页面和计费。"""
@@ -1153,10 +1290,39 @@ class GenerationService:
         page = await self.session.get(Page, task.page_id)
         if page is not None and page.status == "generating":
             page.status = "failed"
+
+        if status == "cancelled":
+            # 若硬取消前已落库部分思考/正文，汇总估算后按取消规则结算；排队中未跑过的估算为 0 将直接全额解冻。
+            ev_rows = (
+                await self.session.execute(
+                    select(GenerationEvent.payload).where(
+                        GenerationEvent.task_id == task.id,
+                        GenerationEvent.event_type == "reasoning_delta",
+                    )
+                )
+            ).scalars().all()
+            reasoning_chars = sum(len(str((p or {}).get("text") or "")) for p in ev_rows)
+            answer_chars = len(task.model_output_text or "")
+            prompt_msgs = [LlmMessage(role="user", content=task.model_prompt or task.prompt or "")]
+            await self._settle_cancelled_generation(
+                task=task,
+                messages=prompt_msgs,
+                reasoning_chars=reasoning_chars,
+                answer_chars=answer_chars,
+                generation_usage=None,
+                extraction_usage=None,
+                wasted_retry_usage=None,
+                router_usage=None,
+                router_model_key=None,
+            )
+        else:
+            await self._release_task_reservation_safe(task)
+
         event_type = "cancelled" if status == "cancelled" else "failed"
         self._stage_event(task.id, event_type, {"type": event_type, "message": user_message, "model_key": task.model_key})
         await self.session.commit()
         await self.recompute_batch_status(task.batch_id)
+        await self._refund_flagship_trial_if_needed(task.batch_id)
         return True
 
 
@@ -1187,6 +1353,25 @@ def _estimate_output_tokens(text_length: int) -> int:
     if text_length <= 0:
         return 0
     return max(1, round(text_length / 2))
+
+
+def _estimate_stream_usage(
+    messages: list[LlmMessage], reasoning_chars: int, answer_chars: int
+) -> LlmUsage | None:
+    """当上游流在中途取消或未返回最终 usage 帧时，按已收到的思考 + 正文字符数估算 Token。"""
+    total_out_chars = max(0, int(reasoning_chars)) + max(0, int(answer_chars))
+    if total_out_chars <= 0:
+        return None
+    in_chars = sum(len(m.content or "") for m in messages)
+    in_tokens = _estimate_output_tokens(in_chars)
+    reason_tokens = _estimate_output_tokens(reasoning_chars) if reasoning_chars > 0 else 0
+    out_tokens = _estimate_output_tokens(total_out_chars)
+    return LlmUsage(
+        input_tokens=in_tokens,
+        output_tokens=out_tokens,
+        total_tokens=in_tokens + out_tokens,
+        reasoning_tokens=reason_tokens or None,
+    )
 
 
 def _retry_delay_seconds(settings: Any, attempt: int) -> float:

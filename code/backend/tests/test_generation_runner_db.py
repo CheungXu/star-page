@@ -69,6 +69,12 @@ async def _noop(*_args, **_kwargs) -> None:
     return None
 
 
+async def _fake_reserve(_self, *, model_keys, **_kwargs):
+    from app.services.billing.account import BatchReservation, TaskHoldAllocation
+
+    return BatchReservation(allocations=[TaskHoldAllocation(k, 0, 0) for k in model_keys])
+
+
 async def _no_skill(self, *, page, task):
     return SkillSelectionResult(None, None)
 
@@ -80,6 +86,7 @@ async def _fake_upload(self, page, html):
 @pytest.fixture(autouse=True)
 def _fakes(monkeypatch):
     monkeypatch.setattr(BillingService, "ensure_can_start_batch", _noop)
+    monkeypatch.setattr(BillingService, "reserve_for_batch", _fake_reserve)
     monkeypatch.setattr(BillingService, "record_anon_batch_started", _noop)
     monkeypatch.setattr(GenerationService, "_resolve_model_keys", lambda self, keys, allowed_keys=None: list(keys))
     monkeypatch.setattr(GenerationService, "_resolve_task_skill_key", _no_skill)

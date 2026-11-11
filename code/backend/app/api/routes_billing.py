@@ -56,9 +56,10 @@ async def list_transactions(request: Request) -> list[TransactionItem]:
 
 
 @router.get("/packages", response_model=list[PackageItem])
-async def list_packages() -> list[PackageItem]:
+async def list_packages(request: Request) -> list[PackageItem]:
     async with AsyncSessionLocal() as session:
-        packages = await BillingService(session).list_active_packages()
+        user = await get_optional_actor(session, request)
+        packages = await BillingService(session).list_active_packages(user)
         return [
             PackageItem(
                 key=p.key,

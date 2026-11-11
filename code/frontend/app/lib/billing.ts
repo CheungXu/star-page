@@ -11,6 +11,10 @@ export type BillingAccount = {
   free_generations_limit: number;
   free_generations_remaining: number;
   signup_bonus_granted: boolean;
+  frozen_balance?: number;
+  debt_credits?: number;
+  is_paid_user?: boolean;
+  free_flagship_batches_remaining?: number;
 };
 
 export type CreditPackage = {
@@ -110,6 +114,7 @@ export function txnTypeLabel(type: string): string {
     refund: "退款",
     adjust: "调整",
     expire: "过期",
+    debt_settle: "补缴抵扣",
   };
   return map[type] ?? type;
 }

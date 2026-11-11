@@ -4239,6 +4239,17 @@ h1 {
   background: var(--color-primary-hover);
 }
 
+.preauth-choice-list {
+  display: grid;
+  gap: 10px;
+}
+
+.preauth-choice-primary,
+.preauth-choice-alt {
+  width: 100%;
+  justify-content: center;
+}
+
 .auth-primary-button:disabled,
 .auth-secondary-button:disabled {
   cursor: not-allowed;

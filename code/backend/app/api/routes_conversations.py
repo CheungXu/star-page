@@ -35,23 +35,32 @@ router = APIRouter(tags=["conversations"])
 
 @router.get("/api/models", response_model=list[ModelInfo])
 async def list_models() -> list[ModelInfo]:
+    from app.services.billing.pricing import discounted_hold_credits
+
     registry = get_model_registry()
     billing = get_billing_config()
     defaults = set(registry.default_model_keys)
     anon_allowed = set(billing.anon_allowed_models)
     anon_defaults = set(billing.anon_default_models)
-    return [
-        ModelInfo(
-            key=model.key,
-            label=model.label,
-            provider=model.provider,
-            is_default=model.key in defaults,
-            available=model.available,
-            anon_allowed=model.key in anon_allowed,
-            anon_default=model.key in anon_defaults,
+    items: list[ModelInfo] = []
+    for model in registry.models.values():
+        hold = billing.hold_credits_for(model.key)
+        items.append(
+            ModelInfo(
+                key=model.key,
+                label=model.label,
+                provider=model.provider,
+                is_default=model.key in defaults,
+                available=model.available,
+                anon_allowed=model.key in anon_allowed,
+                anon_default=model.key in anon_defaults,
+                tier=billing.tier_for(model.key),
+                hold_credits=hold,
+                discounted_hold_credits=discounted_hold_credits(hold, billing.training_discount_rate),
+                requires_paid_or_trial=not billing.is_free_registered_allowed_model(model.key),
+            )
         )
-        for model in registry.models.values()
-    ]
+    return items
 
 
 @router.get("/api/conversations", response_model=list[ConversationListItem])

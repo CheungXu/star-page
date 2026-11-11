@@ -115,17 +115,17 @@ async def create_generation(request: Request, response: Response) -> GenerationC
         except InsufficientCreditsError as exc:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail={"code": exc.code, "message": exc.message},
+                detail=exc.to_detail(),
             ) from exc
         except (AnonLimitError, ModelNotAllowedError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail={"code": exc.code, "message": exc.message, "need_login": True},
+                detail=exc.to_detail(need_login=True),
             ) from exc
         except BillingError as exc:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail={"code": exc.code, "message": exc.message},
+                detail=exc.to_detail(),
             ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from app.core.config import get_settings
-from app.services.llm.client import create_llm_client
+from app.services.llm.client import create_router_llm_client
 from app.services.llm.types import LlmMessage, LlmUsage
 from app.services.skills.registry import SkillDefinition, get_skill_registry
 
@@ -34,6 +34,7 @@ _ROUTER_USER_TEMPLATE = """候选技能：
 class SkillSelectionResult:
     key: str | None
     usage: LlmUsage | None = None
+    router_model_key: str | None = None
 
 
 @runtime_checkable
@@ -79,21 +80,22 @@ class LlmClassifierSelector:
 
         valid_keys = {skill.key for skill in skills}
         try:
-            raw, usage = await asyncio.wait_for(
+            raw, usage, actual_model_key = await asyncio.wait_for(
                 self._classify(clean_prompt, skills),
                 timeout=_ROUTER_TIMEOUT_SECONDS,
             )
             key = _extract_key(raw, valid_keys)
             if key:
-                return SkillSelectionResult(key, usage)
+                return SkillSelectionResult(key, usage, actual_model_key)
+            return SkillSelectionResult(_keyword_match(clean_prompt, skills), usage, actual_model_key)
         except Exception:
             # 超时、模型不可用、网络错误等：不阻断生成，降级到关键词兜底。
             pass
 
         return SkillSelectionResult(_keyword_match(clean_prompt, skills), None)
 
-    async def _classify(self, prompt: str, skills: list[SkillDefinition]) -> tuple[str, LlmUsage | None]:
-        client = create_llm_client(self.router_model)
+    async def _classify(self, prompt: str, skills: list[SkillDefinition]) -> tuple[str, LlmUsage | None, str]:
+        client, actual_model_key = create_router_llm_client(fallback_model_key=self.router_model)
         listing = "\n".join(
             f"- key: {skill.key} ｜ 名称: {skill.name} ｜ 适用: {skill.description}" for skill in skills
         )
@@ -102,7 +104,7 @@ class LlmClassifierSelector:
             LlmMessage(role="user", content=_ROUTER_USER_TEMPLATE.format(listing=listing, prompt=prompt)),
         ]
         result = await client.complete_text(messages, require_content=False)
-        return result.text, result.usage
+        return result.text, result.usage, actual_model_key
 
 
 async def select_skill_for_prompt(prompt: str, *, router_model: str) -> SkillSelectionResult:

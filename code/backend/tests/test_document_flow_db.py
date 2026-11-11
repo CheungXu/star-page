@@ -93,6 +93,14 @@ def env(monkeypatch, tmp_path):
         monkeypatch.setattr(module, "create_storage_provider", lambda: storage)
     monkeypatch.setattr("app.services.image_assets.create_storage_provider", lambda: storage)
     monkeypatch.setattr(BillingService, "ensure_can_start_batch", _noop)
+    monkeypatch.setattr(
+        BillingService,
+        "reserve_for_batch",
+        lambda self, *, model_keys, **_kw: asyncio.sleep(
+            0,
+            result=__import__("app.services.billing.account", fromlist=["BatchReservation"]).BatchReservation(),
+        ),
+    )
     monkeypatch.setattr(BillingService, "record_anon_batch_started", _noop)
     monkeypatch.setattr(BillingService, "validate_anon_models", lambda self, keys: None)
     monkeypatch.setattr("app.services.anon_service.AnonService.check_ip_free_generation_ceiling", _noop)

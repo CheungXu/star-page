@@ -15,6 +15,10 @@ class AccountResponse(BaseModel):
     free_generations_limit: int
     free_generations_remaining: int
     signup_bonus_granted: bool
+    frozen_balance: int = 0
+    debt_credits: int = 0
+    is_paid_user: bool = False
+    free_flagship_batches_remaining: int = 0
 
 
 class TransactionItem(BaseModel):
