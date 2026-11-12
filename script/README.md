@@ -2,6 +2,17 @@
 
 脚本目录，存放临时支持任务的脚本。
 
+## 逐个重启后端 web 实例
+
+`restart_web.sh` 依次重启 `star-page-web@8000` 和 `star-page-web@8001`：重启一个、等它健康检查通过、再等过 Nginx 的 `fail_timeout`（5 秒），才动下一个，对外服务不中断。不会重启生成 worker。
+
+```bash
+script/restart_web.sh          # 默认 8000 8001
+script/restart_web.sh 8001     # 只重启一个
+```
+
+不要手动连着重启两个实例：前一个刚恢复的 5 秒内 Nginx 仍把它当作不可用，第二个一停就两边同时不可用。2026-11-12 上线时间隔 4 秒手动重启过一次，场景页的服务端渲染因此返回了约 1.5 秒的 404。
+
 ## 数据库连接测试
 
 `check_postgres_connection.sh` 用于从当前服务器验证 PostgreSQL/RDS 连接。
@@ -229,12 +240,12 @@ python ../../script/promo-capture/compose_xhs_images.py
 
 ## 重跑卡住的生成（推荐）
 
-后端启动时会扫尾：最近活动在 120 分钟内、还没自动重跑过的中断任务从头重跑一次，其余标失败（见 `code/backend/README.md` 的「后台生成」）。`requeue_stuck_generations.py` 用来把更早卡住的批次交给下一次启动扫尾：给指定批次里没完成的任务各写一条 `requeued` 事件，把最近活动刷成现在。
+生成 worker 启动时会扫尾：最近活动在 120 分钟内、还没自动重跑过的中断任务从头重跑一次，其余标失败（见 `code/backend/README.md` 的「后台生成」）。`requeue_stuck_generations.py` 用来把更早卡住的批次交给下一次启动扫尾：给指定批次里没完成的任务各写一条 `requeued` 事件，把最近活动刷成现在。
 
 ```bash
 code/backend/.venv/bin/python script/requeue_stuck_generations.py --batch f8433bce --batch c3522807 --dry-run   # 先预演
 code/backend/.venv/bin/python script/requeue_stuck_generations.py --batch f8433bce --batch c3522807
-systemctl restart star-page-backend.service   # 必须在 120 分钟内
+systemctl restart star-page-worker.service   # 必须在 120 分钟内；扫尾只在 worker 里做
 ```
 
 批次 id 可写前 8 位。已经自动重跑过一次的 `running` 任务会被提示，扫尾仍会把它标失败。重跑会再消耗一次模型 token。

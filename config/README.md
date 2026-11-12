@@ -35,16 +35,21 @@
 
 服务器内部：
 3000 Next.js frontend
-8000 FastAPI backend
+8000 FastAPI web 实例 A
+8001 FastAPI web 实例 B
+8080 Nginx 本机内部入口（只监听 127.0.0.1，供 Next.js 服务端取数）
+生成 worker 不监听端口
 ```
 
-`3000` 和 `8000` 不需要在阿里云防火墙对公网开放，由 Nginx 反向代理转发：
+这些端口都不需要在阿里云防火墙对公网开放，由 Nginx 反向代理转发：
 
 ```text
-/      -> 127.0.0.1:3000
-/api/  -> 127.0.0.1:8000
-/p/    -> 127.0.0.1:8000
+/                                       -> 127.0.0.1:3000
+/api/ /p/ /u/ /assets/                  -> upstream star_page_api（127.0.0.1:8000、127.0.0.1:8001）
+127.0.0.1:8080 上的全部路径             -> upstream star_page_api
 ```
+
+`/api/analytics/collect` 在 Nginx 上按客户端 IP 限流（约每分钟 120 次，超出返回 429）。配置文件见 `config/nginx/`。
 
 ## 运行环境变量
 

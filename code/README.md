@@ -61,7 +61,7 @@ Compose 只将服务绑定在本机：
 - Next.js：`127.0.0.1:3000`
 - FastAPI：`127.0.0.1:8000`
 
-公网仍只需要开放 `22/80/443`，由 Nginx 将 `/` 转发到前端，将 `/api/` 和 `/p/` 转发到后端。
+公网仍只需要开放 `22/80/443`，由 Nginx 将 `/` 转发到前端，将 `/api/`、`/p/`、`/u/`、`/assets/` 转发到后端。
 
 当前上传资料最大 50MB，Nginx 示例配置中设置了 `client_max_body_size 60m`，避免 multipart 请求在进入 FastAPI 前被 Nginx 拦截。
 
@@ -70,13 +70,12 @@ Compose 只将服务绑定在本机：
 当前服务器上由 Nginx + systemd 常驻运行：
 
 - Next.js：`127.0.0.1:3000`
-- FastAPI：`127.0.0.1:8000`
-- Nginx：`http://8.138.118.232/`
-
-当前已使用 systemd 常驻运行：
+- FastAPI web：`127.0.0.1:8000`、`127.0.0.1:8001`（两个实例，Nginx 在两者之间转发）
+- 生成 worker：不对外，只连数据库、对象存储和模型服务
+- Nginx：对外 `80/443`；本机 `127.0.0.1:8080` 供 Next.js 服务端取数
 
 ```bash
-systemctl status star-page-backend.service
+systemctl status star-page-worker.service 'star-page-web@*'
 systemctl status star-page-frontend.service
 systemctl status star-page-analytics.timer   # 运营指标聚合（每小时 :05 + 每日 00:10）
 ```
@@ -84,7 +83,8 @@ systemctl status star-page-analytics.timer   # 运营指标聚合（每小时 :0
 重启服务：
 
 ```bash
-systemctl restart star-page-backend.service star-page-frontend.service
+script/restart_web.sh                        # 改了接口、分享页等：逐个重启两个 web，不中断服务
+systemctl restart star-page-worker.service   # 改了生成相关代码：在跑的生成会由启动扫尾重跑
 # 前端改代码后须先 npm run build，再 restart frontend（见 code/systemd/README.md）
 ```
 
@@ -94,4 +94,4 @@ systemd 模板文件位于 `code/systemd/`，实际运行文件已复制到 `/et
 
 ## 后台执行与后续扩容
 
-生成任务已在 FastAPI 进程内由常驻后台执行器跑完（先过每用户上限 10、再过全站上限 48，重启后自动扫尾重跑近期中断的任务，详见 `code/backend/README.md` 的「后台生成」和 `wiki/sse-background-job-streaming.md`）。这一版依赖后端只跑**单个 uvicorn worker**；以后要多 worker 或多台机器横向扩容，需要给任务加 owner 与心跳，或拆成独立的任务队列 + Worker。
+生成任务由单独的 worker 进程跑完（先过每用户上限 10、再过全站上限 48，重启后自动扫尾重跑近期中断的任务）；web 进程只接请求，用 PostgreSQL `LISTEN/NOTIFY` 通知 worker 派发和停止，worker 再通知 web 唤醒事件流。详见 `code/backend/README.md` 的「后台生成」和 `wiki/sse-background-job-streaming.md`。名额和任务登记表在 worker 的内存里，所以 worker 只能开一个；以后要多台机器跑生成，见 `alternatives/backend-process-model/README.md`。

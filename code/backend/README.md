@@ -39,14 +39,26 @@ docker push "$ACR:backend-latest"
 
 `python -m app.db.migrate` 每次都按文件名重跑全部 SQL，语句必须能重复执行。要删掉某张表上的索引时，除了新增 `DROP INDEX IF EXISTS`，还得删掉最初那份迁移里的 `CREATE INDEX`，否则下次迁移会先把索引建回来。`generation_events` 的 `(task_id, sequence)` 已有唯一约束，不要再加一条同样列的普通索引。
 
-服务器上已通过 `star-page-backend.service` 常驻运行：
+线上后端按角色拆成三个常驻进程（`APP_ROLE`，不设时为 `all`，即单进程既接请求又跑生成，本地开发、测试和预览都用它）：
+
+| 服务 | 角色 | 做什么 |
+| --- | --- | --- |
+| `star-page-web@8000`、`star-page-web@8001` | `web` | 接 HTTP 请求、推事件流、返回生成页与分享页。不跑生成、不做启动扫尾，可以逐个重启 |
+| `star-page-worker` | `worker` | `python -m app.worker`，跑全部生成、持有排队名额、做启动扫尾。不对外提供 HTTP，只能开一个 |
 
 ```bash
-systemctl restart star-page-backend.service
-journalctl -u star-page-backend.service -f
+script/restart_web.sh                        # 逐个重启两个 web，不中断对外服务
+systemctl restart star-page-worker.service   # 重启 worker：在跑的生成会被打断，由启动扫尾重跑
+journalctl -u star-page-worker -u 'star-page-web@*' -f
 ```
 
-> 备忘（重要）：常驻服务直接从仓库目录跑 uvicorn 且**未开 `--reload`**，只在启动时加载一次代码。**每次修改后端代码后，必须执行 `systemctl restart star-page-backend.service`**，否则线上仍在用旧代码（例如改了 prompt 但生成仍是旧行为）。该服务已设 `TimeoutStopSec=10s`，避免 SSE 长连接把 restart 卡到默认 90s。
+> 备忘（重要）：常驻服务直接从仓库目录运行且**未开 `--reload`**，只在启动时加载一次代码，改完后端代码必须重启。按改动范围选：
+> - 只改接口、分享页、计费展示、登录等请求路径上的代码：`script/restart_web.sh`。
+> - 改了生成相关代码（prompt、模型调用、解析、结算、`generation_service` / `generation_runner`）：还要重启 worker，挑没人在生成的时候，在跑的任务会按启动扫尾的规则重跑。
+> - 两边都改了，或改了模型目录、`config/*.env`：两者都重启。
+> 计费倍率（`config/billing.json`）不用重启：各进程每 5 秒按文件修改时间检查一次。
+>
+> 滚动重启一定要等前一个实例恢复、再等过 Nginx 的 `fail_timeout`（5 秒）才动下一个，否则 Nginx 会把两个实例同时算作不可用。`script/restart_web.sh` 已经按这个顺序做。
 
 ## 关键接口
 
@@ -176,21 +188,23 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 
 ## 后台生成
 
-模型调用由进程内的后台执行器跑完，和浏览器的事件流连接无关。用户新建对话、切到别的历史、刷新或关掉页面，生成都会继续，回来时从数据库回放进度再跟进实时事件。
+模型调用由后台执行器跑完，和浏览器的事件流连接无关。用户新建对话、切到别的历史、刷新或关掉页面，生成都会继续，回来时从数据库回放进度再跟进实时事件。线上执行器只在 worker 进程里；`all` 角色的单进程里，执行器和接口在同一个进程。
 
-- **连接池**：`create_async_engine` 默认 `DB_POOL_SIZE=30`、`DB_MAX_OVERFLOW=40`（本进程最多同时借出 70 条，等 30 秒），`DB_POOL_RECYCLE_SECONDS=1800`（超过 30 分钟的连接在下次借出前换新）。SQLAlchemy 在事务 `commit` 后把连接还回池。流式等待模型吐字、下载原件、解析、上传配图、续写提取和附图下载期间都不占连接。改这些值写在 `config/db.env`，重启 `star-page-backend` 后生效。预览实例如果和线上连同一个 RDS，把 `DB_POOL_SIZE` 和 `DB_MAX_OVERFLOW` 都调成 5。
-- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后立即 `start`，每个任务一个 `asyncio.Task`、各自一个数据库会话。名额分两层，都按先来后到排队：先过**个人上限**（每个用户同时生成的模型数，默认 `GENERATION_USER_CONCURRENCY=10`，`users.generation_concurrency` 有值时以它为准，会员放宽限制时写这一列或改 `user_concurrency_limit`），再过**全站上限** `GENERATION_MAX_CONCURRENCY`（默认 48）。个人名额没轮到的任务不占全站名额，一个人提交再多也挤不到别人。排队时写一条 `queued` 事件（`reason` 为 `user_limit` 或 `global_limit`，`message` 是给用户看的说明），轮到后写 `started`，任务在库里一直是 `pending`。同一用户的任务按提交顺序开始；每次提交都会按最新上限调整，调大后排队的立即补上。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
+- **web 与 worker 怎么通信**（`app/services/generation_bus.py`）：用 PostgreSQL `LISTEN/NOTIFY`，不依赖 Redis。三个频道：`sp_gen_dispatch`（web 提交批次后发，内容是批次 id）、`sp_gen_cancel`（web 收到停止后发，内容是任务 id）、`sp_gen_batch`（批次有新事件时发，web 据此唤醒挂着的事件流；worker 同一批次 200 毫秒内只发一次）。收：每个进程一条 asyncpg 专用连接，不占连接池，每 `GENERATION_BUS_PING_SECONDS`（默认 20 秒）`SELECT 1` 探活，`GENERATION_BUS_PING_TIMEOUT_SECONDS`（默认 3 秒）内没回就断开重连，重连后补读一遍。发：走连接池的普通会话，提交时送达，所以收到通知时数据已经可见；也就不依赖发送方自己的监听连接是否健康。通知只是提速，丢了由下面两条兜底：worker 每 `GENERATION_DISPATCH_SCAN_SECONDS`（默认 5 秒）扫一次没人领的 `pending` 任务和带停止标记的任务；web 的监听连接断开期间，事件流改为每 2 秒读一次库。
+- **连接池**：`create_async_engine` 默认 `DB_POOL_SIZE=30`、`DB_MAX_OVERFLOW=40`（本进程最多同时借出 70 条，等 30 秒），`DB_POOL_RECYCLE_SECONDS=1800`（超过 30 分钟的连接在下次借出前换新）。线上按角色在 systemd 里覆盖：每个 web 10 + 10，worker 20 + 30。SQLAlchemy 在事务 `commit` 后把连接还回池。流式等待模型吐字、下载原件、解析、上传配图、续写提取和附图下载期间都不占连接。预览实例如果和线上连同一个 RDS，把 `DB_POOL_SIZE` 和 `DB_MAX_OVERFLOW` 都调成 5。
+- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后，`all` 角色立即 `start`；`web` 角色发派发通知，由 worker 读出这一批的 `pending` 任务后 `start`。每个任务一个 `asyncio.Task`、各自一个数据库会话。名额分两层，都按先来后到排队：先过**个人上限**（每个用户同时生成的模型数，默认 `GENERATION_USER_CONCURRENCY=10`，`users.generation_concurrency` 有值时以它为准，会员放宽限制时写这一列或改 `user_concurrency_limit`），再过**全站上限** `GENERATION_MAX_CONCURRENCY`（默认 48）。个人名额没轮到的任务不占全站名额，一个人提交再多也挤不到别人。排队时写一条 `queued` 事件（`reason` 为 `user_limit` 或 `global_limit`，`message` 是给用户看的说明），轮到后写 `started`，任务在库里一直是 `pending`。同一用户的任务按提交顺序开始；每次提交都会按最新上限调整，调大后排队的立即补上。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
 - **停止**：先协作式中止，在两个模型 chunk 之间检查，写成 `cancelled`；3 秒内模型没吐下一个 chunk 就直接取消协程，再由兜底写库。模型已经完整输出后不再响应停止，页面照常发布。
+- **web 角色下的停止**（`GenerationService.request_cancel`）：对每个未结束的任务加行锁，按锁内看到的状态处理。还是 `pending` 的直接写成已停止并解开冻结，再通知 worker 丢掉排队中的协程，并发一条批次通知，让挂在其他 web 实例上的事件流马上看到「已停止」；已是 `running` 的只写 `generation_tasks.cancel_requested_at`（迁移 `025`）并通知 worker，终态由 worker 写。不能对 `running` 直接调用 `finish_unfinished_task`：它也会写终态，和 worker 抢着写会把状态改回、重复结算。worker 收到停止时，若任务刚在库里认领、还没在本进程登记，只设停止标志，等登记后按停止收尾，不直接取消协程，否则会留下一条永远停在 `running` 的任务。
 - **终态与收尾事件同事务**：`completed` / `failed` / `cancelled` 事件和任务终态在同一个事务里提交。事件流据此判断「任务结束」，不会出现状态已结束却漏掉 `completed` 的情况。
 - **事件流**（`app/services/generation_events.py`）：只读数据库，每个任务各有一个游标。原因是 `sequence` 全局递增，多个任务并发写入时提交顺序和 `sequence` 顺序不一致，用一个全局游标会永久漏掉晚提交的小号事件。续传 id 是按任务 id 排序后各任务游标用点连接的字符串。一次提交可以包含多行，同一任务内的行序就是序号顺序。思考碎片先在进程里合并再落库：该任务第一段立即写入，之后满 `GENERATION_REASONING_FLUSH_SECONDS`（默认 5 秒）或缓冲满 `GENERATION_REASONING_FLUSH_CHARS`（默认 8000 字）再写一行；其它事件写入前会把缓冲放进同一个事务。硬取消不刷缓冲。输出中每 50 token 的进度另受 `GENERATION_PROGRESS_FLUSH_SECONDS`（默认 2 秒）限制，开始时的 0 token 和完成时的真实用量不限制。回放时仍把同一任务连续的 `reasoning_delta` 合成一条。执行器每次提交后唤醒订阅者，唤醒后等 0.2 秒合批再读库；空闲时每 15 秒发一行 `: ping`，避开 nginx 420 秒读超时。响应头带 `Cache-Control: no-cache, no-transform`，防止中间层压缩把实时事件攒住。
-- **启动扫尾**（lifespan，受 `GENERATION_STARTUP_SWEEP` 控制，默认开）：处理上一个进程留下的 `pending` / `running` 任务。最近活动时间（最后一条事件、`started_at`、`created_at` 取最晚）在 `GENERATION_RESUME_WINDOW_MINUTES`（默认 120）内的：没开始过的直接排队；中途被打断且 `retry_count < 1` 的清掉旧事件、写一条 `restarted`、从头重跑一次；其余标 `failed`（「服务重启中断」，不扣积分）。进程退出时不改任务状态，全部留给下次启动处理。
-- **单 worker 约束**：任务登记表在内存里，后端必须只跑一个 uvicorn worker。以后要多 worker 或多机，需要给任务加 owner 与心跳字段，再改扫尾逻辑。
-- **预览实例注意**：在 worktree 里起后端预览时，如果连的是线上库，必须设 `GENERATION_STARTUP_SWEEP=false`，否则一启动就会去重跑或标记线上的任务。最好连独立测试库。连同一个 RDS 时，把 `DB_POOL_SIZE` 和 `DB_MAX_OVERFLOW` 调成 5，避免预览进程和线上一起把连接池打满。
-- **补救卡住的任务**：`script/requeue_stuck_generations.py --batch <id>` 给指定批次没完成的任务刷新最近活动时间，随后在窗口内重启后端，由扫尾重跑（见 `script/README.md`）。
-- **重启耗时**：有 SSE 连接时 uvicorn 会等连接关闭，systemd 到 `TimeoutStopSec=10s` 才强杀。强杀不影响正确性，被打断的任务由下次启动扫尾处理。
+- **启动扫尾**（`all` 角色在 lifespan 里做，`worker` 角色在 `app/worker.py` 启动时做，都受 `GENERATION_STARTUP_SWEEP` 控制，默认开；`web` 角色永远不做）：处理上一个进程留下的 `pending` / `running` 任务。带停止标记的直接写成已停止，不再重跑。其余按最近活动时间（最后一条事件、`started_at`、`created_at` 取最晚）判断，在 `GENERATION_RESUME_WINDOW_MINUTES`（默认 120）内的：没开始过的直接排队；中途被打断且 `retry_count < 1` 的清掉旧事件、写一条 `restarted`、从头重跑一次；其余标 `failed`（「服务重启中断」，不扣积分）。最后把任务都已结束、批次却还停在进行中的批次重算一次状态。进程退出时不改任务状态，全部留给下次启动处理。
+- **只能有一个进程跑生成**：任务登记表和名额都在内存里，线上只能开一个 worker；单进程部署时只能开一个 uvicorn 进程（不要加 `--workers`）。要多台机器跑生成，见 `alternatives/backend-process-model/README.md` 的方案二。
+- **预览实例注意**：在 worktree 里起后端预览时，如果连的是线上库，必须设 `GENERATION_STARTUP_SWEEP=false`，否则一启动就会去重跑或标记线上的任务；也绝不能用 `APP_ROLE=worker`，它的定时扫描会把线上的 `pending` 任务领走。最好连独立测试库。连同一个 RDS 时，把 `DB_POOL_SIZE` 和 `DB_MAX_OVERFLOW` 调成 5，避免预览进程和线上一起把连接池打满。
+- **补救卡住的任务**：`script/requeue_stuck_generations.py --batch <id>` 给指定批次没完成的任务刷新最近活动时间，随后在窗口内重启 worker，由扫尾重跑（见 `script/README.md`）。
+- **重启耗时**：有 SSE 连接时 uvicorn 会等连接关闭，systemd 到 `TimeoutStopSec=10s` 才强杀；浏览器的事件流会自动重连到另一个 web 实例。worker 收到 SIGTERM 后最多等 3 秒协程收尾。强杀不影响正确性，被打断的任务由下次启动扫尾处理。
 - **改某个用户的上限**：暂无管理界面，直接改库，例如 `UPDATE users SET generation_concurrency = 30 WHERE phone = '...'`；改回默认设为 `NULL`。下次提交生效（迁移 `021_user_generation_concurrency.sql`）。
 - **历史事件**：`script/compact_generation_events.py` 把已结束超过 10 分钟的任务收短。连续思考行合并成一行，文本保留；同一阶段、同一状态的连续进度（输出中每 50 token 一条）收成最后一行。序号都留在这段的最后一行（续传只会多发、不会漏发）。默认只统计，`--apply` 才写入，写完执行 `VACUUM (ANALYZE)`。不要在有人还在看这条任务的事件时合并，所以留了 10 分钟。
-- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器、名额闸门、个人上限取值）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾、个人上限排队与补位、调大上限立即补上、全站上限排队原因、思考碎片合并后序号仍在正式输出之前、历史思考行合并且不碰还在跑的任务），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。
+- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器、名额闸门、个人上限取值）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾、个人上限排队与补位、调大上限立即补上、全站上限排队原因、思考碎片合并后序号仍在正式输出之前、历史思考行合并且不碰还在跑的任务），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。`tests/test_web_worker_split_db.py` 在同一个测试里分别构造 web 和 worker 两侧的执行器，用真实的 `LISTEN/NOTIFY` 验证：派发通知丢了由扫描补上；停止排队中和运行中的任务；停止与认领同时发生时只有一方写终态；收到停止时还没登记认领也能停下；扫尾按停止标记收尾并重算停在进行中的批次；跨进程唤醒事件流；监听断开时退回轮询、断线后重连。`tests/test_billing_config_reload.py` 验证计费配置按文件修改时间重载。
 
 ## 生成过程事件
 
@@ -231,4 +245,4 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - 生成页可信 CDN 白名单：`GENERATED_PAGE_CDN_ALLOWLIST`，默认 `https://cdn.jsdelivr.net https://unpkg.com`。
 - 业务数据库：`stars_page`。
 - 当前 Qwen 配置：`LLM_PROVIDER=qwen`、`LLM_PROTOCOL=openai`、`LLM_MODEL=qwen3.8-max`。
-- 多模型目录见 `config/llm.models.json`，当前 9 个可用 key：`qwen`、`qwen-plus`、`doubao`、`doubao-code`、`deepseek-v4.1-flash`、`deepseek-v4-pro`、`glm-5.3`、`glm-5.3-flash`、`kimi-k3.1-pro`（MiniMax 暂缓）。变更目录后需 `systemctl restart star-page-backend.service`；可用 `script/probe-llm-models.py` 探测连通性。
+- 多模型目录见 `config/llm.models.json`，当前 9 个可用 key：`qwen`、`qwen-plus`、`doubao`、`doubao-code`、`deepseek-v4.1-flash`、`deepseek-v4-pro`、`glm-5.3`、`glm-5.3-flash`、`kimi-k3.1-pro`（MiniMax 暂缓）。变更目录后 worker 和 web 都要重启（`systemctl restart star-page-worker.service` 后执行 `script/restart_web.sh`）；可用 `script/probe-llm-models.py` 探测连通性。

@@ -148,11 +148,13 @@ npm install
 npm run dev
 ```
 
-默认会把 `/api/*` 和 `/p/*` 转发到 `http://127.0.0.1:8000`。如需修改后端地址：
+默认会把 `/api/*`、`/p/*`、`/u/*`、`/assets/*` 转发到 `http://127.0.0.1:8000`。如需修改后端地址：
 
 ```bash
 BACKEND_INTERNAL_URL=http://127.0.0.1:8000 npm run dev
 ```
+
+线上 `star-page-frontend.service` 设的是 `BACKEND_INTERNAL_URL=http://127.0.0.1:8080`（Nginx 的本机入口，在两个后端 web 实例之间转发），场景页等服务端取数在重启其中一个后端时不中断。`next.config.mjs` 里的转发地址在构建时就定下来了，线上这几条路径由 Nginx 直接转给后端，不经过它。
 
 ## Standalone 临时运行注意
 

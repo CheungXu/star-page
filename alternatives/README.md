@@ -21,3 +21,4 @@
 | 项目 | 线上方案 | 备选 | 状态 |
 | --- | --- | --- | --- |
 | [`preview-toolbar/`](preview-toolbar/README.md) 结果预览工具栏与分享 | C1 胶片联动（缩略图上「继续改」、用量居中、名称左对齐） | A 浏览器顶栏、C2 聚光胶片（主线保留，可切换）；C1 其它细节变体、B 侧边控制轨（仅标签存档） | 2026-11-11 上线 C1，A / C2 待 AB |
+| [`backend-process-model/`](backend-process-model/README.md) 后端进程模型 | 方案一：1 个生成 worker + 2 个 web 实例，PostgreSQL `LISTEN/NOTIFY` 通信 | 方案二 Redis 队列 + 多机 worker；方案三 函数计算跑重型任务（仅文档，无代码） | 2026-11-12 上线方案一，二、三按触发条件再评估 |

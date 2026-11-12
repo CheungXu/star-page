@@ -5,8 +5,11 @@
 ## 服务拆分
 
 - 前端服务：运行 Next.js standalone，监听 `127.0.0.1:3000`。
-- 后端服务：运行 Uvicorn/FastAPI，监听 `127.0.0.1:8000`。
-- Nginx：只暴露公网 `80/443`，按路径转发到本机前后端。
+- 后端 web 服务：用 systemd 模板单元 `star-page-web@.service` 开两个实例，分别监听 `127.0.0.1:8000`、`127.0.0.1:8001`，只接请求。
+- 后端 worker 服务：`star-page-worker.service`，跑长任务，不监听端口，只开一个。
+- Nginx：只暴露公网 `80/443`，按路径转发到前端或后端的 `upstream`；另开一个只监听本机的入口（本项目 `127.0.0.1:8080`），给前端服务端取数用，同样走 `upstream`。
+
+模板单元（文件名带 `@`）的好处：一份文件起多个实例，`%i` 就是端口号，`systemctl restart star-page-web@8000` 单独重启其中一个。
 
 ## 关键原则
 
@@ -28,7 +31,8 @@
 
 常驻服务直接从仓库目录运行 uvicorn / Next.js standalone，且生产**不开 `--reload`**，只在启动时加载一次代码。
 
-- 改了后端代码（哪怕只是改一行 prompt 文案），必须 `systemctl restart star-page-backend.service`，否则进程内存里还是旧代码——典型症状：磁盘代码已更新，但线上行为不变（看 `systemctl status` 的 `Active: since` 早于改动时间即可确认）。
+- 改了后端代码（哪怕只是改一行 prompt 文案），必须重启对应进程，否则进程内存里还是旧代码——典型症状：磁盘代码已更新，但线上行为不变（看 `systemctl status` 的 `Active: since` 早于改动时间即可确认）。请求路径上的代码重启 web（`script/restart_web.sh` 逐个重启），生成相关的代码还要重启 worker。
+- 多个 web 实例滚动重启时，要等前一个恢复、再等过 nginx `upstream` 的 `fail_timeout`，才重启下一个。nginx 在冷却时间内仍把刚恢复的实例当作不可用，连着重启会出现所有实例同时不可用的空档。
 - 前端改动需要先 `next build` 再重启（见上一节静态资源教训）。
 - 排查口诀：行为没变先看进程启动时间，而不是反复怀疑代码。
 
@@ -68,12 +72,14 @@ Environment=FRONTEND_ORIGIN=https://stars-page.com
 ## 常用命令
 
 ```bash
-systemctl status star-page-backend.service
+systemctl status star-page-worker.service 'star-page-web@*'
 systemctl status star-page-frontend.service
 
-systemctl restart star-page-backend.service star-page-frontend.service
+script/restart_web.sh                        # 逐个重启 web
+systemctl restart star-page-worker.service   # 重启 worker（在跑的任务由启动扫尾处理）
+systemctl restart star-page-frontend.service
 
-journalctl -u star-page-backend.service -f
+journalctl -u star-page-worker.service -u 'star-page-web@*' -f
 journalctl -u star-page-frontend.service -f
 ```
 
@@ -89,9 +95,10 @@ systemctl daemon-reload
 cd code/backend && set -a && . ../../config/db.env && . ../../config/oss.env && . ../../config/llm.env && set +a \
   && .venv/bin/python -m app.db.migrate
 
-# 2) 重启后端并验证
-systemctl restart star-page-backend.service
-curl -s http://127.0.0.1:8000/healthz
+# 2) 重启后端并验证（生成相关改动才需要重启 worker）
+systemctl restart star-page-worker.service
+script/restart_web.sh
+curl -s http://127.0.0.1:8000/healthz && curl -s http://127.0.0.1:8001/healthz
 curl -s http://127.0.0.1:8000/api/skills   # 确认技能数符合预期
 
 # 3) 前端：先 build 再重启（standalone 需复制 .next/static，由 ExecStartPre 完成）
