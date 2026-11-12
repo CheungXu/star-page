@@ -21,6 +21,8 @@ from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_EVE
 from app.services.sse import SseEvent
 
 HEARTBEAT_SECONDS = 15.0
+# 监听连接断开期间，事件流每隔这么久读一次库，代替跨进程唤醒。
+POLL_FALLBACK_SECONDS = 2.0
 # 被唤醒后稍等再读库，把这段时间里各模型写入的事件合成一次查询。
 WAKE_DEBOUNCE_SECONDS = 0.2
 # 一次最多读这么多行；回放很长的任务时分几块发，每块结束带一次 id 供续传。
@@ -125,11 +127,14 @@ async def stream_task_events(
     last_event_id: str | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     debounce_seconds: float = WAKE_DEBOUNCE_SECONDS,
+    poll_seconds: float = POLL_FALLBACK_SECONDS,
 ) -> AsyncIterator[SseEvent | Heartbeat]:
     """订阅一组任务的事件，直到每个任务都发出收尾事件（completed / failed / cancelled），最后发 batch_done。"""
     ids = ordered_task_ids(task_ids)
     cursors = decode_cursor(last_event_id, ids)
     finished: set[uuid.UUID] = set()
+    loop = asyncio.get_running_loop()
+    last_sent = loop.time()
     signal = runner.acquire_signal(signal_key)
     try:
         if any(cursors.values()):
@@ -216,12 +221,22 @@ async def stream_task_events(
             for event in [*events, *synthesized]:
                 yield event
 
+            if events or synthesized:
+                last_sent = loop.time()
             if read_again or all(task_id in finished for task_id in ids):
                 continue
+            # 跨进程唤醒靠监听连接；连接断开期间收不到通知，改为每隔 poll_seconds 读一次库。
+            live = runner.wake_is_live()
+            idle = loop.time() - last_sent
+            timeout = max(0.0, heartbeat_seconds - idle)
+            if not live:
+                timeout = min(timeout, poll_seconds)
             try:
-                await asyncio.wait_for(waiter.wait(), timeout=heartbeat_seconds)
+                await asyncio.wait_for(waiter.wait(), timeout=timeout)
             except TimeoutError:
-                yield HEARTBEAT
+                if loop.time() - last_sent >= heartbeat_seconds:
+                    last_sent = loop.time()
+                    yield HEARTBEAT
                 continue
             if debounce_seconds > 0:
                 await asyncio.sleep(debounce_seconds)

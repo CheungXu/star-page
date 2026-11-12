@@ -275,6 +275,7 @@ class GenerationTask(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     reserved_paid_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     reserved_gift_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)

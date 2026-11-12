@@ -20,6 +20,7 @@ from app.api.routes_publications import router as publications_router
 from app.api.routes_reports import router as reports_router
 from app.api.routes_scenes import router as scenes_router
 from app.core.config import get_settings
+from app.services.generation_bus import CHANNEL_BATCH, GenerationBus
 from app.services.generation_runner import generation_runner
 
 settings = get_settings()
@@ -27,14 +28,26 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    # 启动扫尾：上一个进程留下的 pending/running 任务，近期中断的从头重跑一次，其余标失败。
-    # 依赖单 worker；共用线上库的预览实例要设 GENERATION_STARTUP_SWEEP=false。
-    if settings.generation_startup_sweep:
+    if settings.app_role == "worker":
+        raise RuntimeError("APP_ROLE=worker 的进程用 python -m app.worker 启动，不要用 uvicorn")
+    bus: GenerationBus | None = None
+    if settings.app_role == "web":
+        # web 不跑生成也不扫尾：生成在 worker 里，事件流靠监听 worker 发来的批次通知唤醒。
+        bus = GenerationBus()
+        bus.subscribe(CHANNEL_BATCH, generation_runner.handle_batch_notice)
+        bus.on_connect(generation_runner.wake_all)
+        generation_runner.attach_bus(bus)
+        await bus.start()
+    elif settings.generation_startup_sweep:
+        # 单进程：上一个进程留下的 pending/running 任务，近期中断的从头重跑一次，其余标失败。
+        # 共用线上库的预览实例要设 GENERATION_STARTUP_SWEEP=false。
         try:
             await generation_runner.startup_sweep()
         except Exception as exc:  # noqa: BLE001 - 扫尾失败不阻止服务启动
             print(f"[generation] 启动扫尾失败：{exc!r}", flush=True)
     yield
+    if bus is not None:
+        await bus.stop()
     # 退出时只取消协程、不改状态，留给下次启动扫尾。
     await generation_runner.shutdown()
 

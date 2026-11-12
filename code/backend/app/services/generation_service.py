@@ -1343,6 +1343,25 @@ class GenerationService:
         await self._refund_flagship_trial_if_needed(task.batch_id)
         return True
 
+    async def request_cancel(self, task_id: uuid.UUID, *, message: str, user_message: str) -> str:
+        """不在本进程跑生成时停止一个任务，返回 "cancelled"、"flagged" 或 "noop"。
+
+        加行锁后按此刻的状态决定：还在排队（pending）就直接写成已停止；已被 worker 认领（running）
+        只记下停止请求，由 worker 停下并写终态，避免两边同时写终态、重复结算。
+        worker 先认领时这里看到的是 running；这里先锁住时，worker 的认领条件 status='pending' 不再成立。
+        """
+        task = await self.session.get(GenerationTask, task_id, populate_existing=True, with_for_update=True)
+        if task is None or task.status in TERMINAL_STATUSES:
+            await self.session.rollback()
+            return "noop"
+        if task.status == "pending":
+            changed = await self.finish_unfinished_task(task_id, status="cancelled", message=message, user_message=user_message)
+            return "cancelled" if changed else "noop"
+        if task.cancel_requested_at is None:
+            task.cancel_requested_at = datetime.now(UTC)
+        await self.session.commit()
+        return "flagged"
+
 
 def _extraction_summary(context: DocumentContext) -> str:
     if context.mode == "visual":

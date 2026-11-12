@@ -79,6 +79,15 @@ def test_plan_sweep_uses_latest_activity_for_requeued_tasks():
     assert plan.start == [requeued_pending]
 
 
+def test_plan_sweep_cancels_tasks_with_stop_request():
+    # 用户点过停止、worker 还没来得及停就退出了：重启后写成已停止，不论多近都不重跑。
+    flagged = _task(created_ago=timedelta(minutes=2), started_ago=timedelta(minutes=2), event_ago=timedelta(seconds=5))
+    flagged = InterruptedTask(**{**flagged.__dict__, "cancel_requested": True})
+    plan = plan_sweep([flagged], now=NOW, window=WINDOW)
+    assert plan.cancel == [flagged]
+    assert plan.rerun == [] and plan.fail == [] and plan.start == []
+
+
 def test_coalesce_merges_reasoning_per_task_and_keeps_task_order():
     a, b = uuid.uuid4(), uuid.uuid4()
     rows = [

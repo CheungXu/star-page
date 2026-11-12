@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     generation_max_concurrency: int = Field(default=48, alias="GENERATION_MAX_CONCURRENCY")
     # 每个用户同时生成的模型数默认上限，超出的排队；用户表 generation_concurrency 有值时以它为准。
     generation_user_concurrency: int = Field(default=10, alias="GENERATION_USER_CONCURRENCY")
+    # 进程角色。all：单进程，接请求也跑生成（本地开发、测试、预览）。
+    # web：只接请求，生成交给 worker；worker：只跑生成，不对外提供 HTTP。线上 web 可以开多个，worker 只能开一个。
+    app_role: str = Field(default="all", alias="APP_ROLE")
+    # worker 兜底扫描间隔：补上没收到派发通知的 pending 任务、处理没收到停止通知的停止请求。
+    generation_dispatch_scan_seconds: float = Field(default=5, alias="GENERATION_DISPATCH_SCAN_SECONDS")
+    # 监听连接的探活间隔与超时。探活失败就断开重连，期间 web 的事件流改为定时读库。
+    generation_bus_ping_seconds: float = Field(default=20, alias="GENERATION_BUS_PING_SECONDS")
+    generation_bus_ping_timeout_seconds: float = Field(default=3, alias="GENERATION_BUS_PING_TIMEOUT_SECONDS")
     # 启动扫尾：把上次进程留下的 pending/running 任务收尾。共用线上库的非生产实例必须关掉。
     generation_startup_sweep: bool = Field(default=True, alias="GENERATION_STARTUP_SWEEP")
     # 最近活动在这个窗口内、且还没自动重跑过的中断任务从头重跑一次，其余标失败。
@@ -239,6 +247,19 @@ class Settings(BaseSettings):
             if normalized in {"0", "false", "no", "off"}:
                 return False
         return value
+
+    @field_validator("app_role", mode="before")
+    @classmethod
+    def parse_app_role(cls, value: object) -> object:
+        role = str(value or "all").strip().lower()
+        if role not in {"all", "web", "worker"}:
+            raise ValueError("APP_ROLE 只能是 all、web 或 worker")
+        return role
+
+    @property
+    def runs_generation(self) -> bool:
+        """本进程是否调用模型、持有生成名额。web 角色只派发给 worker。"""
+        return self.app_role in {"all", "worker"}
 
 
 @lru_cache(maxsize=1)
