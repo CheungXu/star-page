@@ -138,6 +138,8 @@ curl -sI "http://127.0.0.1:3000$css" | grep -iE 'HTTP/|content-type'
 
 要点：迁移脚本（`app/db/migrate.py`）会把 `migrations/*.sql` 全部按序执行一遍，因此每个 SQL 必须幂等（如 `ADD COLUMN IF NOT EXISTS`）；后端 registry 等进程级缓存只在启动时加载，技能/配置改动必须重启后端，仅改磁盘文件不生效。
 
+**worktree 里的 `.venv` 软链接会毁掉线上虚拟环境。** 服务直接跑在仓库目录的 `.venv` 上时，在 worktree 里开发常 `ln -s 主目录/.venv .venv`。如果 `.gitignore` 写的是 `.venv/`（带斜杠只匹配目录），这个软链接会被 `git add -A` 提交；合并回主目录时 git 把被忽略的目录当作可覆盖，直接删掉真正的虚拟环境、换成指向自己的软链接。已在跑的进程不受影响，但下一次重启（包括崩溃自动拉起）就起不来。防范：`.gitignore` 写 `.venv`（不带斜杠），提交前看一眼 `git status`；`requirements.txt` 没锁版本时，出事只能按最新版本重建，重建后先跑全量测试再重启服务。
+
 ## 适用阶段
 
 适合早期 MVP、单机部署、需要快速保证服务常驻的阶段。等应用稳定后，可以再统一切换到 Docker Compose、镜像仓库和更完整的发布流程。
