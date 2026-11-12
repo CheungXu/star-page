@@ -583,3 +583,50 @@ def test_parse_claim_across_workers(env):
             await pipeline._claim_parse(batch_id)
 
     _run(flow)
+
+
+def test_parse_lost_to_other_worker_writes_nothing(env, monkeypatch):
+    """解析到一半被别的 worker 接手（本进程续期中断过）：成功、失败都不写回，原件不删，回去等对方结果。"""
+    original = pipeline._parse_staged
+
+    async def flow(factory, _runner):
+        user = await _user(factory)
+        creation, _staged = await _create(factory, user, ["vis-a"], [("report.pdf", _report_pdf())])
+        batch_id = creation.batch_id
+
+        async def take_over() -> None:
+            async with factory() as session:
+                await session.execute(
+                    update(GenerationBatch)
+                    .where(GenerationBatch.id == batch_id)
+                    .values(parse_worker_id="other-worker", parse_heartbeat_at=datetime.now(UTC))
+                )
+                await session.commit()
+
+        async def parse_then_lose(staged):
+            parsed = await original(staged)
+            await take_over()
+            return parsed
+
+        async def fail_after_lose(staged):
+            await take_over()
+            raise DocumentParseError("坏文件")
+
+        for fake in (parse_then_lose, fail_after_lose):
+            monkeypatch.setattr(pipeline, "_parse_staged", fake)
+            assert await pipeline._claim_parse(batch_id) == "mine"
+            assert await pipeline._parse_claimed(batch_id) is False
+            async with factory() as session:
+                batch = await session.get(GenerationBatch, batch_id)
+                assert (batch.parse_status, batch.parse_worker_id) == ("running", "other-worker")
+                assert batch.staged_uploads and batch.extracted_file_text is None
+                staged_key = batch.staged_uploads[0]["storage_key"]
+            assert await pipeline.create_storage_provider().get_bytes(staged_key)
+            # 让本进程下一轮还能抢到。
+            async with factory() as session:
+                await session.execute(
+                    update(GenerationBatch).where(GenerationBatch.id == batch_id).values(parse_heartbeat_at=None)
+                )
+                await session.commit()
+
+    _run(flow)

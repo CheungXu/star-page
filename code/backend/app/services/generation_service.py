@@ -67,6 +67,10 @@ class GenerationCancelled(Exception):
     """用户主动停止。在两个模型 chunk 之间检查到停止请求时抛出，走正常收尾写成 cancelled。"""
 
 
+class TaskLost(Exception):
+    """任务已不归本 worker（续期过期后被别的 worker 接手）。已回滚，什么都不再写。"""
+
+
 @dataclass
 class BatchRunRef:
     """批次内一个模型 run 的引用信息（供 API 组装响应）。"""
@@ -89,11 +93,15 @@ class BatchCreation:
 
 
 class GenerationService:
-    def __init__(self, session: AsyncSession, cancel_check: Callable[[], bool] | None = None) -> None:
+    def __init__(
+        self, session: AsyncSession, cancel_check: Callable[[], bool] | None = None, owner: str | None = None
+    ) -> None:
         self.session = session
         self.settings = get_settings()
         # 后台执行器传入：返回 True 表示用户已请求停止这个任务。
         self._cancel_check = cancel_check
+        # 后台执行器传入本 worker 的 worker_id：写终态前确认任务仍归自己。
+        self._owner = owner
         # 本任务还没落库的思考碎片。硬取消时直接丢掉，不在 finally 里刷。
         self._reasoning_parts: list[str] = []
         self._reasoning_chars = 0
@@ -103,6 +111,24 @@ class GenerationService:
     def _raise_if_cancelled(self) -> None:
         if self._cancel_check is not None and self._cancel_check():
             raise GenerationCancelled()
+
+    async def _fence(self, task_id: uuid.UUID) -> None:
+        """写终态前锁住任务行，确认仍是本 worker 在跑。锁到提交为止，接手和本次写入不会交错。
+
+        不归自己了就回滚本事务里的所有修改（版本、结算、终态）并抛 TaskLost。
+        """
+        if self._owner is None:
+            return
+        row = (
+            await self.session.execute(
+                select(GenerationTask.status, GenerationTask.worker_id)
+                .where(GenerationTask.id == task_id)
+                .with_for_update()
+            )
+        ).first()
+        if row is None or row.status != "running" or row.worker_id != self._owner:
+            await self.session.rollback()
+            raise TaskLost()
 
     def _resolve_model_keys(
         self, selected_model_keys: list[str] | None, allowed_keys: set[str] | None = None
@@ -544,6 +570,7 @@ class GenerationService:
         """跑完一个已认领的任务，逐条产出已写入数据库的事件。由后台执行器驱动，不依赖任何浏览器连接。"""
         page = await self.session.get(Page, task.page_id)
         if page is None:
+            await self._fence(task.id)
             task.status = "failed"
             task.error_message = "页面记录不存在"
             task.finished_at = datetime.now(UTC)
@@ -894,6 +921,7 @@ class GenerationService:
                 cost=cost,
             )
 
+            await self._fence(task.id)
             page.current_version_id = version.id
             page.status = "ready"
             task.status = "succeeded"
@@ -941,7 +969,10 @@ class GenerationService:
             yield deploy_done
             yield completed
 
+        except TaskLost:
+            raise
         except GenerationCancelled:
+            await self._fence(task.id)
             if answer_parts and not task.model_output_text:
                 task.model_output_text = "".join(answer_parts)
             task.status = "cancelled"
@@ -969,6 +1000,7 @@ class GenerationService:
             await self._refund_flagship_trial_if_needed(task.batch_id)
             yield cancelled
         except Exception as exc:
+            await self._fence(task.id)
             if answer_parts and not task.model_output_text:
                 task.model_output_text = "".join(answer_parts)
             document_stage = isinstance(exc, DocumentStageError)
@@ -1298,11 +1330,30 @@ class GenerationService:
         self.session.add(GenerationEvent(task_id=task_id, event_type=event_type, payload=payload))
         return SseEvent(event_type, payload)
 
-    async def finish_unfinished_task(self, task_id: uuid.UUID, *, status: str, message: str, user_message: str) -> bool:
-        """把仍未结束的任务直接写成终态（硬取消、执行器兜底、启动扫尾用）。已结束的不动，返回是否改了。"""
+    async def finish_unfinished_task(
+        self,
+        task_id: uuid.UUID,
+        *,
+        status: str,
+        message: str,
+        user_message: str,
+        owner: str | None = None,
+        stale_before: datetime | None = None,
+    ) -> bool:
+        """把仍未结束的任务直接写成终态（硬取消、执行器兜底、启动扫尾用）。已结束的不动，返回是否改了。
+
+        owner：执行器兜底传本 worker 的 worker_id，任务已不归自己（被接手）时不动。
+        stale_before：扫尾传续期时限，加锁后发现任务又续上了期（执行者还在）时不动。
+        """
         # 行锁：停止接口和执行器兜底可能同时收尾同一个任务，只能有一方写终态和收尾事件。
         task = await self.session.get(GenerationTask, task_id, populate_existing=True, with_for_update=True)
         if task is None or task.status in TERMINAL_STATUSES:
+            await self.session.rollback()
+            return False
+        if owner is not None and (task.status != "running" or task.worker_id != owner):
+            await self.session.rollback()
+            return False
+        if stale_before is not None and task.status == "running" and not lease_expired(task, stale_before):
             await self.session.rollback()
             return False
         task.status = status
@@ -1364,6 +1415,12 @@ class GenerationService:
             task.cancel_requested_at = datetime.now(UTC)
         await self.session.commit()
         return "flagged"
+
+
+def lease_expired(task: GenerationTask, stale_before: datetime) -> bool:
+    """running 任务的续期是否早于 stale_before。老行没有续期时间，按开始、创建时间算。"""
+    last = task.heartbeat_at or task.started_at or task.created_at
+    return last is None or last < stale_before
 
 
 def _extraction_summary(context: DocumentContext) -> str:

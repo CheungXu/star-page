@@ -28,7 +28,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.entities import GenerationBatch, GenerationEvent, GenerationTask, Page, User
 from app.services.generation_bus import CHANNEL_DISPATCH, GenerationBus
-from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_STATUSES, GenerationService
+from app.services.generation_service import (
+    CANCELLED_USER_MESSAGE,
+    TERMINAL_STATUSES,
+    GenerationService,
+    TaskLost,
+    lease_expired,
+)
 
 # 一次认领最多看这么多个排队任务；每个用户最多看前 CLAIM_PER_USER_WINDOW 个，免得一个人排的几百个挡住别人。
 CLAIM_SCAN_LIMIT = 500
@@ -551,25 +557,35 @@ class GenerationRunner:
         self, session: AsyncSession, *, startup: bool, window: timedelta, lease: timedelta
     ) -> SweepPlan:
         now = datetime.now(UTC)
-        await _reset_stale_parses(session, now - lease)
-        items = await _load_unfinished(session, stale_before=now - lease, include_pending=startup, exclude=self._claimed)
+        stale_before = now - lease
+        await _reset_stale_parses(session, stale_before)
+        items = await _load_unfinished(session, stale_before=stale_before, include_pending=startup, exclude=self._claimed)
         plan = plan_sweep(items, now=now, window=window)
-        await _reset_for_rerun(session, plan.rerun)
+        # 查出来到动手之间执行者可能又续上了期，每一步都在行锁下重新确认，没过期的跳过。
+        plan.rerun = await _reset_for_rerun(session, plan.rerun, stale_before=stale_before)
         service = GenerationService(session)
-        for item in plan.fail:
-            await service.finish_unfinished_task(
+        plan.fail = [
+            item
+            for item in plan.fail
+            if await service.finish_unfinished_task(
                 item.task_id,
                 status="failed",
                 message=INTERRUPTED_ERROR_MESSAGE,
                 user_message=INTERRUPTED_USER_MESSAGE,
+                stale_before=stale_before,
             )
-        for item in plan.cancel:
-            await service.finish_unfinished_task(
+        ]
+        plan.cancel = [
+            item
+            for item in plan.cancel
+            if await service.finish_unfinished_task(
                 item.task_id,
                 status="cancelled",
                 message=CANCELLED_ERROR_MESSAGE,
                 user_message=CANCELLED_USER_MESSAGE,
+                stale_before=stale_before,
             )
+        ]
         for batch_id in {item.batch_id for item in plan.rerun}:
             await service.recompute_batch_status(batch_id)
         if startup:
@@ -685,7 +701,9 @@ class GenerationRunner:
     async def _drive(self, task_id: uuid.UUID, key: uuid.UUID) -> None:
         try:
             async with self._session() as session:
-                service = GenerationService(session, cancel_check=lambda: task_id in self._cancel_requested)
+                service = GenerationService(
+                    session, cancel_check=lambda: task_id in self._cancel_requested, owner=self.worker_id
+                )
                 task = await session.get(GenerationTask, task_id, populate_existing=True)
                 if task is None or task.status != "running" or task.worker_id != self.worker_id:
                     return
@@ -697,6 +715,9 @@ class GenerationRunner:
                     self.notify(key)
         except asyncio.CancelledError:
             raise
+        except TaskLost:
+            self._lost.add(task_id)
+            print(f"[generation] 任务已被别的 worker 接手，放弃写回 task={task_id}", flush=True)
         except Exception as exc:  # noqa: BLE001 - 兜底收尾在 finally 里
             print(f"[generation] 任务执行异常 task={task_id}: {exc!r}", flush=True)
         finally:
@@ -715,6 +736,7 @@ class GenerationRunner:
                         status="cancelled" if cancelled else "failed",
                         message=CANCELLED_ERROR_MESSAGE if cancelled else UNFINISHED_ERROR_MESSAGE,
                         user_message=CANCELLED_USER_MESSAGE if cancelled else UNFINISHED_USER_MESSAGE,
+                        owner=self.worker_id,
                     )
                 )
         except Exception as exc:  # noqa: BLE001
@@ -847,16 +869,29 @@ async def _discard_orphan_staging(session: AsyncSession) -> None:
     await discard_staged(staged)
 
 
-async def _reset_for_rerun(session: AsyncSession, items: Sequence[InterruptedTask]) -> None:
-    """清掉上次的事件和半成品，任务回到 pending，记一条 restarted 让前端清空旧进度。"""
+async def _reset_for_rerun(
+    session: AsyncSession, items: Sequence[InterruptedTask], *, stale_before: datetime
+) -> list[InterruptedTask]:
+    """清掉上次的事件和半成品，任务回到 pending，记一条 restarted 让前端清空旧进度。
+
+    加行锁后只重置仍在 running 且续期早于 stale_before 的，返回实际重置了的。
+    """
     if not items:
-        return
-    task_ids = [item.task_id for item in items]
-    await session.execute(delete(GenerationEvent).where(GenerationEvent.task_id.in_(task_ids)))
-    for task_id in task_ids:
-        task = await session.get(GenerationTask, task_id)
-        if task is None:
-            continue
+        return []
+    locked = await session.execute(
+        select(GenerationTask)
+        .where(GenerationTask.id.in_([item.task_id for item in items]))
+        .order_by(GenerationTask.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    tasks = [task for task in locked.scalars() if task.status == "running" and lease_expired(task, stale_before)]
+    if not tasks:
+        await session.commit()
+        return []
+    reset_ids = {task.id for task in tasks}
+    await session.execute(delete(GenerationEvent).where(GenerationEvent.task_id.in_(reset_ids)))
+    for task in tasks:
         task.status = "pending"
         task.retry_count = (task.retry_count or 0) + 1
         task.started_at = None
@@ -873,6 +908,7 @@ async def _reset_for_rerun(session: AsyncSession, items: Sequence[InterruptedTas
         payload: dict[str, Any] = {"type": "restarted", "message": RESTARTED_USER_MESSAGE, "model_key": task.model_key}
         session.add(GenerationEvent(task_id=task.id, event_type="restarted", payload=payload))
     await session.commit()
+    return [item for item in items if item.task_id in reset_ids]
 
 
 generation_runner = GenerationRunner()

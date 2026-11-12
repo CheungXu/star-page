@@ -556,3 +556,121 @@ def test_drain_times_out_when_task_keeps_running():
         assert not a.idle()
 
     _run_workers(flow)
+
+
+class GateClient:
+    """先吐一段思考，然后等测试放行再输出页面。每个实例单独放行，用来控制两个 worker 谁先跑完。"""
+
+    instances: list["GateClient"] = []
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        GateClient.instances.append(self)
+
+    async def stream_text(self, _messages):
+        from test_generation_runner_db import HTML
+
+        from app.services.llm.types import LlmStreamChunk
+
+        yield LlmStreamChunk(type="reasoning_delta", provider="fake", model="fake", reasoning_text="等放行")
+        await self.release.wait()
+        yield LlmStreamChunk(type="text_delta", provider="fake", model="fake", text=HTML)
+
+
+async def _versions(factory, page_id) -> int:
+    from app.models.entities import PageVersion
+
+    async with factory() as session:
+        return int(await session.scalar(select(func.count(PageVersion.id)).where(PageVersion.page_id == page_id)))
+
+
+def test_taken_over_worker_cannot_write_back(monkeypatch):
+    """A 卡住超过续期时限、B 接手重跑后，A 回过神来跑完，不能把 B 手上的任务写成功、也不能多结一次账。"""
+    GateClient.instances = []
+    monkeypatch.setattr(
+        service_module,
+        "create_llm_client",
+        lambda model_key: GateClient() if model_key.startswith("gate") else FakeClient(model_key),
+    )
+
+    async def flow(factory, workers):
+        a, b = workers
+        creation = await _create_batch(factory, ["gate"])
+        task_id, page_id = creation.runs[0].task_id, creation.runs[0].page_id
+        assert await a.claim_once() == 1
+        await _wait_until(lambda: _count_reasoning(factory, task_id))
+
+        # A 停止续期（卡住），续期过期；B 扫描时接手，从头重跑。
+        async with factory() as session:
+            await session.execute(
+                update(GenerationTask)
+                .where(GenerationTask.id == task_id)
+                .values(heartbeat_at=datetime.now(UTC) - timedelta(minutes=5))
+            )
+            await session.commit()
+        assert await b.scan_once() == 1
+        await _wait_until(lambda: _async_bool(len(GateClient.instances) == 2))
+        task = await _task(factory, task_id)
+        assert (task.status, task.worker_id) == ("running", "test-1")
+
+        # A 先跑完：它已经不是这个任务的执行者，什么都不能写。
+        GateClient.instances[0].release.set()
+        await _wait_until(lambda: _async_bool(task_id not in a._tasks))
+        task = await _task(factory, task_id)
+        assert (task.status, task.worker_id) == ("running", "test-1")
+        assert await _versions(factory, page_id) == 0
+
+        # B 跑完，只有一个版本。
+        GateClient.instances[1].release.set()
+        await _wait_status(factory, task_id, {"succeeded"})
+        assert await _versions(factory, page_id) == 1
+        assert await _count_events(factory, task_id, "completed") == 1
+
+    _run_workers(flow)
+
+
+def test_sweep_skips_task_that_renewed(monkeypatch):
+    """扫尾查出过期任务后、动手前执行者又续上了期：不重置、不标失败；兜底收尾也不碰别人的任务。"""
+    from app.services.generation_runner import InterruptedTask, _reset_for_rerun
+
+    GateClient.instances = []
+    monkeypatch.setattr(
+        service_module,
+        "create_llm_client",
+        lambda model_key: GateClient() if model_key.startswith("gate") else FakeClient(model_key),
+    )
+
+    async def flow(factory, workers):
+        a, _b = workers
+        creation = await _create_batch(factory, ["gate"])
+        task_id = creation.runs[0].task_id
+        assert await a.claim_once() == 1
+        await _wait_until(lambda: _count_reasoning(factory, task_id))
+        task = await _task(factory, task_id)
+        item = InterruptedTask(
+            task_id=task_id,
+            batch_id=task.batch_id,
+            status="running",
+            retry_count=0,
+            created_at=task.created_at,
+            started_at=task.started_at,
+            last_event_at=None,
+            user_id=task.requested_by_user_id,
+            cancel_requested=False,
+        )
+        stale_before = datetime.now(UTC) - timedelta(seconds=45)
+        async with factory() as session:
+            assert await _reset_for_rerun(session, [item], stale_before=stale_before) == []
+            service = service_module.GenerationService(session)
+            assert not await service.finish_unfinished_task(
+                task_id, status="failed", message="x", user_message="x", stale_before=stale_before
+            )
+            assert not await service.finish_unfinished_task(
+                task_id, status="failed", message="x", user_message="x", owner="test-1"
+            )
+        task = await _task(factory, task_id)
+        assert (task.status, task.worker_id, task.retry_count) == ("running", "test-0", 0)
+        GateClient.instances[0].release.set()
+        await _wait_status(factory, task_id, {"succeeded"})
+
+    _run_workers(flow)

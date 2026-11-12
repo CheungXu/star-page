@@ -207,8 +207,10 @@ async def _run_parse(batch_id: uuid.UUID) -> None:
         if outcome == "done":
             return
         if outcome == "mine":
-            await _parse_claimed(batch_id)
-            return
+            if await _parse_claimed(batch_id):
+                return
+            # 做到一半被别的 worker 接手了（本进程续期中断过）：结果不写，回去等它的。
+            continue
         await asyncio.sleep(PARSE_WAIT_POLL_SECONDS)
 
 
@@ -287,19 +289,32 @@ async def _hand_over_parse(batch_id: uuid.UUID) -> None:
         print(f"[parse] 交出解析失败 batch={batch_id}: {exc!r}", flush=True)
 
 
-async def _parse_claimed(batch_id: uuid.UUID) -> None:
+async def _parse_claimed(batch_id: uuid.UUID) -> bool:
+    """返回 False 表示解析已被别的 worker 接手，本进程什么都没写。"""
     heartbeat = asyncio.create_task(_parse_heartbeat(batch_id), name=f"parse-heartbeat-{batch_id}")
     try:
-        await _parse_owned(batch_id)
+        return await _parse_owned(batch_id)
     finally:
         heartbeat.cancel()
 
 
-async def _parse_owned(batch_id: uuid.UUID) -> None:
+async def _lock_if_owner(session: AsyncSession, batch_id: uuid.UUID) -> bool:
+    """锁住批次行并确认解析仍归本进程。锁到调用方提交为止，接手和本次写入不会交错。"""
+    row = (
+        await session.execute(
+            select(GenerationBatch.parse_status, GenerationBatch.parse_worker_id)
+            .where(GenerationBatch.id == batch_id)
+            .with_for_update()
+        )
+    ).first()
+    return row is not None and row.parse_status == "running" and row.parse_worker_id == PROCESS_WORKER_ID
+
+
+async def _parse_owned(batch_id: uuid.UUID) -> bool:
     async with _new_session() as session:
         batch = await session.get(GenerationBatch, batch_id, populate_existing=True)
         if batch is None:
-            return
+            return True
 
         stored_assets: list[PageAsset] = []
         snapshots: list[dict[str, Any]] = []
@@ -311,6 +326,10 @@ async def _parse_owned(batch_id: uuid.UUID) -> None:
 
             parsed = await _parse_staged(staged)
             text, documents_meta = await _store_outputs(batch, owner_id, parsed, stored_assets, snapshots)
+            if not await _lock_if_owner(session, batch_id):
+                await session.rollback()
+                await _discard_lost_outputs(stored_assets)
+                return False
             for asset in stored_assets:
                 session.add(asset)
             batch.extracted_file_text = text
@@ -324,22 +343,31 @@ async def _parse_owned(batch_id: uuid.UUID) -> None:
             )
             await session.commit()
             await discard_staged(staged)
+            return True
         except asyncio.CancelledError:
             if _handing_over:
-                await asyncio.shield(_hand_over_parse(batch_id))
+                # 先删再交出：交出后接手的 worker 会按同样的键重新上传快照。
                 await _delete_keys([asset.storage_key for asset in stored_assets] + [item.get("storage_key") for item in snapshots])
+                await asyncio.shield(_hand_over_parse(batch_id))
             else:
                 await asyncio.shield(_mark_failed(batch_id, CANCELLED_PARSE_MESSAGE, stored_assets, snapshots, refund=False))
             raise
         except DocumentParseError as exc:
             await session.rollback()
-            await _mark_failed(batch_id, exc.user_message, stored_assets, snapshots, refund=True)
+            if not await _mark_failed(batch_id, exc.user_message, stored_assets, snapshots, refund=True):
+                return False
             raise
         except Exception as exc:  # noqa: BLE001 - 解析器抛什么都要落成用户可读的失败
             await session.rollback()
             message = "文件解析失败，请确认文件未加密且内容可读取"
-            await _mark_failed(batch_id, message, stored_assets, snapshots, refund=True)
+            if not await _mark_failed(batch_id, message, stored_assets, snapshots, refund=True):
+                return False
             raise DocumentParseError(message, detail=f"{type(exc).__name__}: {exc}") from exc
+
+
+async def _discard_lost_outputs(stored_assets: list[PageAsset]) -> None:
+    """解析被接手时只删本进程上传的配图（键带随机 ID）。快照键按批次固定，接手的 worker 会写同一个键，不能删。"""
+    await _delete_keys([asset.storage_key for asset in stored_assets])
 
 
 async def _parse_staged(staged: list[dict[str, Any]]) -> list[ParsedDocument]:
@@ -468,10 +496,17 @@ async def _mark_failed(
     snapshots: list[dict[str, Any]],
     *,
     refund: bool,
-) -> None:
-    """解析失败或整批取消：记下原因、删原件和半途写入的图片，必要时退回一次匿名免费次数。"""
+) -> bool:
+    """解析失败或整批取消：记下原因、删原件和半途写入的图片，必要时退回一次匿名免费次数。
+
+    解析已被别的 worker 接手时只删本进程上传的配图，返回 False。
+    """
     async with _new_session() as session:
-        batch = await session.get(GenerationBatch, batch_id)
+        if not await _lock_if_owner(session, batch_id):
+            await session.rollback()
+            await _discard_lost_outputs(stored_assets)
+            return False
+        batch = await session.get(GenerationBatch, batch_id, populate_existing=True)
         staged = list(batch.staged_uploads or []) if batch is not None else []
         if batch is not None:
             batch.parse_status = "failed"
@@ -488,6 +523,7 @@ async def _mark_failed(
     await discard_staged(staged)
     await discard_snapshots(snapshots)
     await _delete_keys([asset.storage_key for asset in stored_assets])
+    return True
 
 
 async def refund_free_trial_once(session: AsyncSession, batch_id: uuid.UUID) -> bool:
