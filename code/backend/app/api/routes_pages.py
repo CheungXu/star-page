@@ -183,7 +183,7 @@ async def serve_page(
     settings = get_settings()
     page_url = build_page_url(settings, conversation_id, page_id)
     description = scene.tagline if scene and scene.tagline else f"{page_title} · 由星页 StarPage 生成"
-    return render_page_html(
+    return await render_page_html(
         html,
         title=page_title,
         description=description,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlencode, urlparse
 
 from fastapi.responses import HTMLResponse
@@ -78,7 +79,7 @@ def build_report_url(page_id: str, slug: str | None = None) -> str:
     return f"{base}/report?{urlencode(params)}"
 
 
-def render_page_html(
+async def render_page_html(
     html: str,
     *,
     title: str,
@@ -91,7 +92,9 @@ def render_page_html(
     report_url: str | None = None,
     force_title: bool = False,
 ) -> HTMLResponse:
-    content = inject_share_meta(
+    # 整页 HTML 解析是同步的纯计算，放进线程，避免一次大页面卡住同进程的其他请求和事件流。
+    content = await asyncio.to_thread(
+        inject_share_meta,
         html,
         title=title,
         description=description,

@@ -734,7 +734,7 @@ class GenerationService:
                     if answer_parts:
                         model_output_text = "".join(answer_parts)
                         html_document = extract_html_document(model_output_text)
-                        violation = find_tailwind_runtime_violation(html_document)
+                        violation = await asyncio.to_thread(find_tailwind_runtime_violation, html_document)
                         if violation and not tailwind_retry_used:
                             tailwind_retry_used = True
                             # 保留首轮违规已消耗的 usage 用于 6001 COGS 真实记账，对用户计价只收成功轮。
@@ -866,7 +866,7 @@ class GenerationService:
 
             task.model_output_text = model_output_text or None
 
-            safe_html = sanitize_html(html_document)
+            safe_html = await asyncio.to_thread(sanitize_html, html_document)
 
             yield await self._record_event(
                 task.id,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from dataclasses import dataclass
@@ -152,11 +153,15 @@ async def _page_display_title(session: AsyncSession, page: Page) -> str:
             except Exception:
                 html = ""
             if html:
-                soup = BeautifulSoup(html, "html.parser")
-                text = soup.title.get_text(" ", strip=True) if soup.title else ""
+                text = await asyncio.to_thread(_html_title, html)
                 if text and text != "生成页面":
                     return text
     return page.title
+
+
+def _html_title(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.title.get_text(" ", strip=True) if soup.title else ""
 
 
 async def _unique_slug(session: AsyncSession, slug: str) -> str:
@@ -171,10 +176,10 @@ async def _unique_slug(session: AsyncSession, slug: str) -> str:
 
 async def _write_share_images(publication: PagePublication) -> None:
     url = publication_url(publication.slug)
-    qr = render_qr_png(url)
     subtitle = publication.og_description or DEFAULT_SUBTITLE
-    og = render_card_png(title=publication.title, subtitle=subtitle, qr_png=qr, wide=True)
-    poster = render_card_png(title=publication.title, subtitle=subtitle, qr_png=qr, wide=False, align=publication.card_align or "center")
+    og, poster = await asyncio.to_thread(
+        _render_share_images, url, publication.title, subtitle, publication.card_align or "center"
+    )
     storage = create_storage_provider()
     og_key = f"share-cards/{publication.id}/og.png"
     poster_key = f"share-cards/{publication.id}/poster.png"
@@ -182,3 +187,10 @@ async def _write_share_images(publication: PagePublication) -> None:
     await storage.put_bytes(poster_key, poster, "image/png")
     publication.og_image_key = og_key
     publication.poster_image_key = poster_key
+
+
+def _render_share_images(url: str, title: str, subtitle: str, align: str) -> tuple[bytes, bytes]:
+    qr = render_qr_png(url)
+    og = render_card_png(title=title, subtitle=subtitle, qr_png=qr, wide=True)
+    poster = render_card_png(title=title, subtitle=subtitle, qr_png=qr, wide=False, align=align)
+    return og, poster

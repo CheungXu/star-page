@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -330,10 +331,45 @@ def _find_billing_config_path(settings: Settings) -> Path | None:
     return None
 
 
-@lru_cache(maxsize=1)
+# 多进程部署时，管理后台改倍率只清掉处理请求的那个进程的缓存；其他进程靠文件修改时间发现变化，最多晚这么多秒。
+BILLING_CONFIG_RECHECK_SECONDS = 5.0
+_billing_cache: tuple[BillingConfig, Path | None, int | None, float] | None = None
+
+
+def _file_mtime_ns(path: Path | None) -> int | None:
+    if path is None:
+        return None
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
 def get_billing_config() -> BillingConfig:
-    settings = get_settings()
-    path = _find_billing_config_path(settings)
+    global _billing_cache
+    now = time.monotonic()
+    cached = _billing_cache
+    if cached is not None and now - cached[3] < BILLING_CONFIG_RECHECK_SECONDS:
+        return cached[0]
+    path = _find_billing_config_path(get_settings())
+    mtime = _file_mtime_ns(path)
+    if cached is not None and cached[1] == path and cached[2] == mtime:
+        _billing_cache = (cached[0], path, mtime, now)
+        return cached[0]
+    config = _load_billing_config(path)
+    _billing_cache = (config, path, mtime, now)
+    return config
+
+
+def _clear_billing_config_cache() -> None:
+    global _billing_cache
+    _billing_cache = None
+
+
+get_billing_config.cache_clear = _clear_billing_config_cache  # type: ignore[attr-defined]
+
+
+def _load_billing_config(path: Path | None) -> BillingConfig:
     data: dict[str, Any] = {}
     if path is not None:
         data = json.loads(path.read_text(encoding="utf-8"))

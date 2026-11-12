@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Literal
 
@@ -194,7 +195,7 @@ async def serve_publication(
         )
     if scene and scene.tagline and not description:
         description = scene.tagline
-    return render_page_html(
+    return await render_page_html(
         html,
         title=title,
         description=description,
@@ -223,7 +224,8 @@ async def publication_qr(slug: str) -> Response:
     publication = await _load_publication(slug)
     from app.services.share_card import render_qr_png
 
-    return Response(content=render_qr_png(publication_url(publication.slug)), media_type="image/png")
+    png = await asyncio.to_thread(render_qr_png, publication_url(publication.slug))
+    return Response(content=png, media_type="image/png")
 
 
 async def _share_image(slug: str, *, kind: str) -> Response:

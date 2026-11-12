@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 import uuid
@@ -105,7 +106,7 @@ async def store_training_sample(
     session: AsyncSession, *, html: str, scene_key: str | None, model_key: str | None
 ) -> None:
     """提取并保存一条匿名结构样本，内容相同则跳过。"""
-    skeleton = extract_skeleton(html)
+    skeleton = await asyncio.to_thread(extract_skeleton, html)
     digest = hashlib.sha256(skeleton.encode("utf-8")).hexdigest()
     await session.execute(
         insert(TrainingSample)
