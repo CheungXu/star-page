@@ -2,21 +2,27 @@
 
 - 解析是独立的 asyncio.Task，不属于任何一个模型的协程：停掉某个模型不会打断解析，
   只有同批已经没有排队或在跑的任务时才取消解析。
-- 单进程假设与 generation_runner 一致：任务登记表在内存里，状态用 parse_status 原子更新兜底。
-- 原件只在解析期间存在：成功、失败、取消都会删掉。整页快照存私有键，不进 page_assets。
+- 同一进程内用 _jobs 合并；跨 worker 靠 parse_status 原子抢占：抢到的解析并定时续期，其余的每秒查一次结果。
+  做解析的 worker 续期超时（不在了），下一个查结果的 worker 接手重做。
+- 原件只在解析期间存在：成功、失败、取消都会删掉；进程退出时没做完的不删，留给接手的 worker。
+  整页快照存私有键，不进 page_assets。
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import socket
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.executors import parse_executor
 from app.models.entities import Conversation, GenerationBatch, GenerationTask, PageAsset, User
 from app.services.document_parser.errors import DocumentParseError
@@ -28,6 +34,9 @@ from app.services.storage.factory import create_storage_provider
 STAGING_PREFIX = "batch-uploads"
 SNAPSHOT_PREFIX = "batch-private"
 CANCELLED_PARSE_MESSAGE = "已停止生成"
+# 别的 worker 在解析时，多久查一次它做完没有。
+PARSE_WAIT_POLL_SECONDS = 1.0
+PROCESS_WORKER_ID = f"{socket.gethostname()[:32]}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 
 def staging_key(staging_id: uuid.UUID, index: int, extension: str) -> str:
@@ -103,6 +112,17 @@ class _ParseJob:
 _jobs: dict[uuid.UUID, _ParseJob] = {}
 _background: set[asyncio.Task[None]] = set()
 _session_factory: Callable[[], AsyncSession] | None = None
+_handing_over = False
+
+
+def hand_over_on_exit() -> None:
+    """进程退出前调用：之后被取消的解析不记失败，交给别的 worker 接手。"""
+    global _handing_over
+    _handing_over = True
+
+
+def active_parse_jobs() -> int:
+    return len(_jobs)
 
 
 def configure_session_factory(factory: Callable[[], AsyncSession] | None) -> None:
@@ -181,17 +201,105 @@ async def _batch_has_live_tasks(batch_id: uuid.UUID, *, exclude: set[uuid.UUID])
 
 
 async def _run_parse(batch_id: uuid.UUID) -> None:
-    async with _new_session() as session:
-        batch = await session.get(GenerationBatch, batch_id)
-        if batch is None or batch.parse_status in {"none", "succeeded"}:
+    """同批的模型可能分在不同 worker 上：抢到解析的去做，其余的等它的结果。做解析的 worker 不在了就有人接手重做。"""
+    while True:
+        outcome = await _claim_parse(batch_id)
+        if outcome == "done":
             return
-        if batch.parse_status == "failed":
-            raise DocumentParseError(batch.parse_error or "文件解析失败，请重新上传")
-        # pending 正常认领；running 只可能是上个进程留下的（扫尾会重置），本进程接手。
-        await session.execute(
-            update(GenerationBatch).where(GenerationBatch.id == batch_id).values(parse_status="running")
-        )
+        if outcome == "mine":
+            await _parse_claimed(batch_id)
+            return
+        await asyncio.sleep(PARSE_WAIT_POLL_SECONDS)
+
+
+async def _claim_parse(batch_id: uuid.UUID) -> str:
+    """返回 done（不用解析或已解析完）、mine（本进程抢到了）、busy（别的 worker 在做）。解析失败直接抛错。"""
+    lease = timedelta(seconds=max(1.0, get_settings().generation_worker_lease_seconds))
+    async with _new_session() as session:
+        claimed = (
+            await session.execute(
+                update(GenerationBatch)
+                .where(
+                    GenerationBatch.id == batch_id,
+                    or_(
+                        GenerationBatch.parse_status == "pending",
+                        (GenerationBatch.parse_status == "running")
+                        & or_(
+                            GenerationBatch.parse_heartbeat_at.is_(None),
+                            GenerationBatch.parse_heartbeat_at < func.now() - lease,
+                        ),
+                    ),
+                )
+                .values(parse_status="running", parse_worker_id=PROCESS_WORKER_ID, parse_heartbeat_at=func.now())
+                .returning(GenerationBatch.id)
+                .execution_options(synchronize_session=False)
+            )
+        ).scalar_one_or_none()
+        if claimed is not None:
+            await session.commit()
+            return "mine"
+        row = (
+            await session.execute(
+                select(GenerationBatch.parse_status, GenerationBatch.parse_error).where(GenerationBatch.id == batch_id)
+            )
+        ).first()
         await session.commit()
+    if row is None or row.parse_status in {"none", "succeeded"}:
+        return "done"
+    if row.parse_status == "failed":
+        raise DocumentParseError(row.parse_error or "文件解析失败，请重新上传")
+    return "busy"
+
+
+async def _parse_heartbeat(batch_id: uuid.UUID) -> None:
+    interval = max(0.5, get_settings().generation_heartbeat_seconds)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            async with _new_session() as session:
+                await session.execute(
+                    update(GenerationBatch)
+                    .where(
+                        GenerationBatch.id == batch_id,
+                        GenerationBatch.parse_status == "running",
+                        GenerationBatch.parse_worker_id == PROCESS_WORKER_ID,
+                    )
+                    .values(parse_heartbeat_at=func.now())
+                    .execution_options(synchronize_session=False)
+                )
+                await session.commit()
+        except Exception as exc:  # noqa: BLE001 - 续期失败下一轮再来
+            print(f"[parse] 解析续期失败 batch={batch_id}: {exc!r}", flush=True)
+
+
+async def _hand_over_parse(batch_id: uuid.UUID) -> None:
+    """进程退出时解析没做完：状态留在 running、作废续期，原件不删，别的 worker 马上可以接手重做。"""
+    try:
+        async with _new_session() as session:
+            await session.execute(
+                update(GenerationBatch)
+                .where(GenerationBatch.id == batch_id, GenerationBatch.parse_worker_id == PROCESS_WORKER_ID)
+                .values(parse_heartbeat_at=None)
+                .execution_options(synchronize_session=False)
+            )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[parse] 交出解析失败 batch={batch_id}: {exc!r}", flush=True)
+
+
+async def _parse_claimed(batch_id: uuid.UUID) -> None:
+    heartbeat = asyncio.create_task(_parse_heartbeat(batch_id), name=f"parse-heartbeat-{batch_id}")
+    try:
+        await _parse_owned(batch_id)
+    finally:
+        heartbeat.cancel()
+
+
+async def _parse_owned(batch_id: uuid.UUID) -> None:
+    async with _new_session() as session:
+        batch = await session.get(GenerationBatch, batch_id, populate_existing=True)
+        if batch is None:
+            return
 
         stored_assets: list[PageAsset] = []
         snapshots: list[dict[str, Any]] = []
@@ -217,7 +325,11 @@ async def _run_parse(batch_id: uuid.UUID) -> None:
             await session.commit()
             await discard_staged(staged)
         except asyncio.CancelledError:
-            await asyncio.shield(_mark_failed(batch_id, CANCELLED_PARSE_MESSAGE, stored_assets, snapshots, refund=False))
+            if _handing_over:
+                await asyncio.shield(_hand_over_parse(batch_id))
+                await _delete_keys([asset.storage_key for asset in stored_assets] + [item.get("storage_key") for item in snapshots])
+            else:
+                await asyncio.shield(_mark_failed(batch_id, CANCELLED_PARSE_MESSAGE, stored_assets, snapshots, refund=False))
             raise
         except DocumentParseError as exc:
             await session.rollback()

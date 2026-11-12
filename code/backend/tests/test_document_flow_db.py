@@ -14,6 +14,7 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,7 +27,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not TEST_DATABASE_URL, reason="未设置 TEST_DATABASE_URL")
 
 if TEST_DATABASE_URL:
-    from sqlalchemy import select  # noqa: E402
+    from sqlalchemy import func, select, update  # noqa: E402
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 
     from app.models.entities import (  # noqa: E402
@@ -43,6 +44,7 @@ if TEST_DATABASE_URL:
     from app.services.billing.account import BillingService  # noqa: E402
     from app.services.document_parser import attachments as attachments_module  # noqa: E402
     from app.services.document_parser import pipeline  # noqa: E402
+    from app.services.document_parser.errors import DocumentParseError  # noqa: E402
     from app.services.document_parser.extractor_agent import ExtractionResult  # noqa: E402
     from app.services.document_parser.precheck import precheck_uploads  # noqa: E402
     from app.services.generation_runner import GenerationRunner  # noqa: E402
@@ -193,10 +195,12 @@ def _run(flow) -> None:
         factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
         pipeline.configure_session_factory(factory)
         runner = GenerationRunner(session_factory=factory)
+        await _settle_leftovers(factory)
         try:
             await flow(factory, runner)
         finally:
             await runner.shutdown()
+            await _settle_leftovers(factory)
             pipeline.configure_session_factory(None)
             await engine.dispose()
 
@@ -238,9 +242,28 @@ async def _create(factory, user, models, files, *, conversation_id=None, prompt=
     return creation, staged
 
 
+async def _settle_leftovers(factory) -> None:
+    """认领会捡起库里所有 pending 任务：别的用例留下的先收掉。"""
+    async with factory() as session:
+        await session.execute(
+            update(GenerationTask)
+            .where(GenerationTask.status.in_(["pending", "running"]))
+            .values(status="failed", finished_at=func.now())
+        )
+        await session.commit()
+
+
+async def _start(factory, runner, user, limit: int) -> None:
+    """按个人上限 limit 认领这个用户所有 pending 的任务。"""
+    async with factory() as session:
+        await session.execute(update(User).where(User.id == user.id).values(generation_concurrency=limit))
+        await session.commit()
+    runner.kick()
+
+
 async def _wait_idle(runner, timeout: float = 20.0) -> None:
     deadline = asyncio.get_running_loop().time() + timeout
-    while runner._tasks:
+    while not runner.idle():
         if asyncio.get_running_loop().time() > deadline:
             raise AssertionError("等待超时")
         await asyncio.sleep(0.05)
@@ -259,7 +282,7 @@ def test_first_round_parses_once_and_feeds_both_channels(env):
         user = await _user(factory)
         creation, staged = await _create(factory, user, ["vis-a", "txt-b"], [("report.pdf", _report_pdf()), ("logo.png", png_bytes())])
         ids = {run.model_key: run.task_id for run in creation.runs}
-        runner.start(list(ids.values()), creation.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
         await _wait_idle(runner)
 
         assert env.recorder.parses == 1
@@ -304,7 +327,7 @@ def test_first_round_parses_once_and_feeds_both_channels(env):
         # 第二轮：没传新文件，仍然结合资料重新提取；本轮与资料无关时不塞资料、不重复附图。
         env.recorder.extraction_reply = ExtractionResult(text="", prompt_log="log")
         second, _staged = await _create(factory, user, ["vis-a"], [], conversation_id=creation.conversation_id, prompt="把主色改成墨绿")
-        runner.start([second.runs[0].task_id], second.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
         await _wait_idle(runner)
         follow = env.recorder.extractions[-1]
         assert follow["history"] == ["做一个年报网页"] and follow["current"] == "把主色改成墨绿"
@@ -327,7 +350,7 @@ def test_continuation_reads_parent_html_outside_transaction(env):
     async def flow(factory, runner):
         user = await _user(factory)
         creation, _staged = await _create(factory, user, ["vis-a"], [], prompt="做一个年报网页")
-        runner.start([creation.runs[0].task_id], creation.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
         await _wait_idle(runner)
 
         parent_html = "<!DOCTYPE html><html><head><title>上一版</title></head><body>parent-marker-77</body></html>"
@@ -344,7 +367,7 @@ def test_continuation_reads_parent_html_outside_transaction(env):
         second, _staged = await _create(
             factory, user, ["vis-a"], [], conversation_id=creation.conversation_id, prompt="把主色改成墨绿"
         )
-        runner.start([second.runs[0].task_id], second.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
         await _wait_idle(runner)
 
         assert not env.recorder.txn_failures, env.recorder.txn_failures
@@ -365,7 +388,7 @@ def test_same_image_in_two_documents_stored_once_and_anchored_in_both(env):
         first = build_pdf([{"texts": [(50, 780, 10, "First document body " * 8)], "image": (60, 300, 200, 120, logo)}])
         second = build_pdf([{"texts": [(50, 780, 10, "Second document body " * 8)], "image": (60, 300, 200, 120, logo)}])
         creation, _staged = await _create(factory, user, ["vis-a"], [("a.pdf", first), ("b.pdf", second)])
-        runner.start([creation.runs[0].task_id], creation.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
         await _wait_idle(runner)
         async with factory() as session:
             batch = await session.get(GenerationBatch, creation.batch_id)
@@ -391,7 +414,7 @@ def test_parse_failure_fails_batch_and_refunds_free_trial_once(env):
             creation = await GenerationService(session).create_batch(
                 prompt="做网页", selected_model_keys=["vis-a", "txt-b"], input_file_names=["broken.pdf"], staged_uploads=staged, user=user
             )
-        runner.start([run.task_id for run in creation.runs], creation.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
         await _wait_idle(runner)
 
         async with factory() as session:
@@ -416,7 +439,7 @@ def test_stopping_running_model_keeps_parse_for_queued_sibling(env):
         user = await _user(factory)
         creation, staged = await _create(factory, user, ["vis-a", "vis-b"], [("slow-report.pdf", _report_pdf())])
         ids = {run.model_key: run.task_id for run in creation.runs}
-        runner.start([ids["vis-a"], ids["vis-b"]], creation.batch_id, user_id=user.id, user_limit=1)
+        await _start(factory, runner, user, 1)
 
         async def parsing() -> bool:
             return any(kind == "progress" and payload["step"] == "parse_file" for kind, payload in await _events(factory, ids["vis-a"]))
@@ -446,7 +469,7 @@ def test_parse_cancelled_when_whole_batch_stopped(env):
         user = await _user(factory)
         creation, staged = await _create(factory, user, ["vis-a"], [("slow-report.pdf", _report_pdf())])
         task_id = creation.runs[0].task_id
-        runner.start([task_id], creation.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
 
         async def parsing() -> bool:
             return any(kind == "progress" and payload["step"] == "parse_file" for kind, payload in await _events(factory, task_id))
@@ -475,7 +498,7 @@ def test_stopping_one_model_does_not_interrupt_shared_parse(env):
         user = await _user(factory)
         creation, _staged = await _create(factory, user, ["vis-a", "vis-b"], [("slow-report.pdf", _report_pdf())])
         ids = {run.model_key: run.task_id for run in creation.runs}
-        runner.start(list(ids.values()), creation.batch_id, user_id=user.id, user_limit=10)
+        await _start(factory, runner, user, 10)
 
         async def parsing() -> bool:
             return any(kind == "progress" and payload["step"] == "parse_file" for kind, payload in await _events(factory, ids["vis-a"]))
@@ -509,7 +532,7 @@ def test_returning_anon_create_uploads_without_open_transaction(env, monkeypatch
 
     async def flow(factory, _runner):
         monkeypatch.setattr(routes_generation, "AsyncSessionLocal", factory)
-        monkeypatch.setattr(routes_generation.generation_runner, "start", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(routes_generation.generation_runner, "kick", lambda: None)
         async with factory() as session:
             visitor, cookie = await AnonService(session).create_visitor(sign_ip=None, user_agent="test")
             owner_id = visitor.id
@@ -529,5 +552,34 @@ def test_returning_anon_create_uploads_without_open_transaction(env, monkeypatch
         async with factory() as session:
             assets = list((await session.execute(select(PageAsset).where(PageAsset.owner_user_id == owner_id))).scalars())
         assert any(asset.source_kind == "scene_slot" for asset in assets)
+
+    _run(flow)
+
+
+def test_parse_claim_across_workers(env):
+    """同批的模型分在不同 worker 上：只有一个抢到解析；它不在了（续期过期）别人接手；做完或失败后都不再抢。"""
+
+    async def flow(factory, _runner):
+        user = await _user(factory)
+        creation, _staged = await _create(factory, user, ["vis-a"], [("report.pdf", _report_pdf())])
+        batch_id = creation.batch_id
+        assert await pipeline._claim_parse(batch_id) == "mine"
+        assert await pipeline._claim_parse(batch_id) == "busy"
+
+        async def set_batch(**values) -> None:
+            async with factory() as session:
+                await session.execute(update(GenerationBatch).where(GenerationBatch.id == batch_id).values(**values))
+                await session.commit()
+
+        await set_batch(parse_heartbeat_at=datetime.now(UTC) - timedelta(minutes=5))
+        assert await pipeline._claim_parse(batch_id) == "mine"
+        # 退出时交出：续期清空，马上可以被接手。
+        await pipeline._hand_over_parse(batch_id)
+        assert await pipeline._claim_parse(batch_id) == "mine"
+        await set_batch(parse_status="succeeded")
+        assert await pipeline._claim_parse(batch_id) == "done"
+        await set_batch(parse_status="failed", parse_error="坏文件")
+        with pytest.raises(DocumentParseError):
+            await pipeline._claim_parse(batch_id)
 
     _run(flow)

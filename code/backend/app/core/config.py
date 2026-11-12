@@ -100,21 +100,31 @@ class Settings(BaseSettings):
     # 同时调用模型的任务上限，超出的保持 pending 按先来后到排队。上限是全局的，一次大批量生成会让后来的用户排队，
     # 所以要明显高于单个用户可能的突发量（9 个模型连发 4 轮 = 36）。
     # 每条进度事件 commit 后连接会归还；48 路同时提交时，突发借出量由 DB_POOL_SIZE + DB_MAX_OVERFLOW 限制。
+    # 上限按库里 running 的任务数算，所有 worker 共用；所有 worker 要设成同一个值。设成 0 表示暂停领取新任务。
     generation_max_concurrency: int = Field(default=48, alias="GENERATION_MAX_CONCURRENCY")
     # 每个用户同时生成的模型数默认上限，超出的排队；用户表 generation_concurrency 有值时以它为准。
     generation_user_concurrency: int = Field(default=10, alias="GENERATION_USER_CONCURRENCY")
     # 进程角色。all：单进程，接请求也跑生成（本地开发、测试、预览）。
-    # web：只接请求，生成交给 worker；worker：只跑生成，不对外提供 HTTP。线上 web 可以开多个，worker 只能开一个。
+    # web：只接请求，生成交给 worker；worker：只跑生成，不对外提供 HTTP。web 和 worker 都可以开多个。
     app_role: str = Field(default="all", alias="APP_ROLE")
     # worker 兜底扫描间隔：补上没收到派发通知的 pending 任务、处理没收到停止通知的停止请求。
     generation_dispatch_scan_seconds: float = Field(default=5, alias="GENERATION_DISPATCH_SCAN_SECONDS")
     # 监听连接的探活间隔与超时。探活失败就断开重连，期间 web 的事件流改为定时读库。
     generation_bus_ping_seconds: float = Field(default=20, alias="GENERATION_BUS_PING_SECONDS")
     generation_bus_ping_timeout_seconds: float = Field(default=3, alias="GENERATION_BUS_PING_TIMEOUT_SECONDS")
+    # 多个 worker：每隔 heartbeat 秒给手上的任务（和在做的解析）续期；超过 lease 秒没续期的，别的 worker 接手。
+    generation_heartbeat_seconds: float = Field(default=10, alias="GENERATION_HEARTBEAT_SECONDS")
+    generation_worker_lease_seconds: float = Field(default=45, alias="GENERATION_WORKER_LEASE_SECONDS")
+    # worker 收到退出信号后不再领新任务，最多等这么久让手上的跑完；systemd 的 TimeoutStopSec 要比它长。
+    worker_drain_timeout_seconds: float = Field(default=360, alias="WORKER_DRAIN_TIMEOUT_SECONDS")
     # asyncio.to_thread 用的默认线程池。OSS 读写、微信支付、HTML 清洗、分享图都在这里，Python 默认只有 8 个。
     thread_pool_size: int = Field(default=32, alias="THREAD_POOL_SIZE")
     # 文档完整解析单独的线程池：解析慢且吃 CPU，单独限量，不占上面那个池，免得堵住其他任务的上传和清洗。
     document_parse_threads: int = Field(default=3, alias="DOCUMENT_PARSE_THREADS")
+    # 每个进程缓存生成页 HTML 原文的上限（字节，按 Python 字符串实际占用算）。0 表示不缓存。
+    page_html_cache_max_bytes: int = Field(default=64 * 1024 * 1024, alias="PAGE_HTML_CACHE_MAX_BYTES")
+    # 每隔多少秒往日志写一行 [metrics]（事件循环延迟、线程池、连接池等）。0 表示不写。
+    metrics_interval_seconds: float = Field(default=60, alias="METRICS_INTERVAL_SECONDS")
     # 启动扫尾：把上次进程留下的 pending/running 任务收尾。共用线上库的非生产实例必须关掉。
     generation_startup_sweep: bool = Field(default=True, alias="GENERATION_STARTUP_SWEEP")
     # 最近活动在这个窗口内、且还没自动重跑过的中断任务从头重跑一次，其余标失败。

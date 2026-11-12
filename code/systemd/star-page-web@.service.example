@@ -1,6 +1,6 @@
 [Unit]
 Description=星页 StarPage · Web API（端口 %i）
-After=network-online.target star-page-worker.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

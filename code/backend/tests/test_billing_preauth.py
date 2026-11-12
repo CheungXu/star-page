@@ -450,7 +450,7 @@ def test_db_cancel_threshold_and_sweep_conservation(monkeypatch):
             await s.commit()
 
         runner = GenerationRunner(session_factory=factory)
-        monkeypatch.setattr(runner, "start", lambda *_a, **_kw: None)
+        monkeypatch.setattr(runner, "kick", lambda: None)
         try:
             await runner.startup_sweep()
         finally:

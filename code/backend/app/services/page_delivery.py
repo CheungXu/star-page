@@ -8,7 +8,7 @@ from urllib.parse import urlencode, urlparse
 from fastapi.responses import HTMLResponse
 
 from app.core.config import get_settings
-from app.services.share_meta import inject_share_meta
+from app.services.share_meta import inject_share_meta_fast, inject_share_meta_with_soup
 
 
 def build_page_csp() -> str:
@@ -92,10 +92,7 @@ async def render_page_html(
     report_url: str | None = None,
     force_title: bool = False,
 ) -> HTMLResponse:
-    # 整页 HTML 解析是同步的纯计算，放进线程，避免一次大页面卡住同进程的其他请求和事件流。
-    content = await asyncio.to_thread(
-        inject_share_meta,
-        html,
+    options = dict(
         title=title,
         description=description,
         image_url=image_url,
@@ -106,6 +103,10 @@ async def render_page_html(
         report_url=report_url,
         force_title=force_title,
     )
+    # 快速插入只扫页面头部，不到 1 毫秒，直接做；退回整页解析时要几十毫秒，放进线程，免得卡住同进程的其他请求。
+    content = inject_share_meta_fast(html, **options)
+    if content is None:
+        content = await asyncio.to_thread(inject_share_meta_with_soup, html, **options)
     return HTMLResponse(
         content=content,
         headers={

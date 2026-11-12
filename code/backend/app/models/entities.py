@@ -233,6 +233,9 @@ class GenerationBatch(Base):
     # none（没有文档或老数据）/ pending / running / succeeded / failed
     parse_status: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 正在解析的 worker 和最近一次续期时间：同批的模型可能分在不同 worker 上，只能有一个去解析。
+    parse_worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parse_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 整页快照只给模型看，存私有键，不进 page_assets，/assets 读不到。
     visual_snapshots: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
     # 每个文件的内容哈希及其在 extracted_file_text 里的起止位置，多轮按文件去重用。
@@ -276,6 +279,9 @@ class GenerationTask(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 正在跑它的 worker 和最近一次续期时间；续期超时说明那个 worker 已经不在了，别的 worker 会接手。
+    worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
     reserved_paid_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     reserved_gift_credits: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)

@@ -5,7 +5,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select, update
@@ -271,6 +271,8 @@ class GenerationService:
 
         runs: list[BatchRunRef] = []
         allocs = reservation.allocations
+        # 同一事务里 now() 都一样；按选模型的顺序错开 1 微秒，认领时按这个先后排队。
+        created_base = datetime.now(UTC)
         for idx, model_key in enumerate(model_keys):
             alloc = allocs[idx] if idx < len(allocs) else None
             model = registry.get(model_key)
@@ -308,6 +310,7 @@ class GenerationService:
                 extra_skill_keys=extra_skills,
                 scene_key=scene.key if scene else None,
                 status="pending",
+                created_at=created_base + timedelta(microseconds=idx),
                 training_consent=consent,
                 reserved_gift_credits=alloc.reserved_gift if alloc else 0,
                 reserved_paid_credits=alloc.reserved_paid if alloc else 0,

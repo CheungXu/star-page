@@ -22,7 +22,7 @@ from app.services.document_parser.pipeline import discard_staged, stage_document
 from app.services.document_parser.precheck import precheck_uploads
 from app.services.generation_bus import CHANNEL_CANCEL, CHANNEL_DISPATCH, send
 from app.services.generation_events import HEARTBEAT, stream_task_events
-from app.services.generation_runner import CANCELLED_ERROR_MESSAGE, generation_runner, user_concurrency_limit
+from app.services.generation_runner import CANCELLED_ERROR_MESSAGE, generation_runner
 from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_STATUSES, GenerationService
 from app.services.image_assets import discard_stored_images, store_general_images, store_uploaded_images
 from app.services.scenes.catalog import compose_scene_prompt, format_image_block, get_scene, normalize_utm_source, parse_guide
@@ -81,7 +81,6 @@ async def create_generation(request: Request, response: Response) -> GenerationC
         stored_images = []
         staged: list[dict] = []
         service = GenerationService(session)
-        owner_id = user.id
         created_ok = False
         try:
             slot_labels = {slot.key: slot.label for slot in scene.image_slots} if scene else {}
@@ -140,12 +139,7 @@ async def create_generation(request: Request, response: Response) -> GenerationC
 
         # 批次和图片都已提交，交给后台跑；浏览器之后只订阅事件，断开也不影响生成。
         if get_settings().runs_generation:
-            generation_runner.start(
-                [run.task_id for run in creation.runs],
-                creation.batch_id,
-                user_id=owner_id,
-                user_limit=user_concurrency_limit(user),
-            )
+            generation_runner.kick()
         else:
             # 批次已提交、积分已冻结，通知发不出去也不能报错（用户会重试、重复建批次）：worker 的定时扫描会补上。
             await send(CHANNEL_DISPATCH, str(creation.batch_id))
@@ -330,31 +324,15 @@ async def stream_batch_events(batch_id: uuid.UUID, request: Request, after: str 
 async def cancel_batch(batch_id: uuid.UUID, request: Request) -> dict[str, object]:
     """停止这一轮里还没完成的模型。已完成的照常结算，被停的不扣积分。"""
     tasks = await _load_owned_batch_tasks(request, batch_id)
-    if not get_settings().runs_generation:
-        return await _request_cancel_batch(batch_id, tasks)
-    stopping = 0
-    for task in tasks:
-        if task.status in TERMINAL_STATUSES:
-            continue
-        if await generation_runner.cancel(task.task_id):
-            stopping += 1
-            continue
-        # 不在本进程里调用模型（还在排队或是孤儿任务）：直接写成已停止。
-        async with AsyncSessionLocal() as session:
-            changed = await GenerationService(session).finish_unfinished_task(
-                task.task_id,
-                status="cancelled",
-                message=CANCELLED_ERROR_MESSAGE,
-                user_message=CANCELLED_USER_MESSAGE,
-            )
-        if changed:
-            stopping += 1
-            generation_runner.notify(batch_id)
-    return {"batch_id": str(batch_id), "stopping": stopping}
+    return await _request_cancel_batch(batch_id, tasks)
 
 
 async def _request_cancel_batch(batch_id: uuid.UUID, tasks: list[_BatchTaskRef]) -> dict[str, object]:
-    """web 进程不跑生成：排队中的直接写成已停止，已在 worker 里跑的记下停止请求并通知 worker。"""
+    """排队中的直接写成已停止；已被认领的记下停止请求，由跑它的进程停下并写终态。
+
+    单进程时就是本进程在跑，直接停；否则通知 worker（不知道在哪个 worker 上，大家都收到，各自看是不是自己的）。
+    """
+    local = get_settings().runs_generation
     stopping = 0
     cancelled_here = False
     for task in tasks:
@@ -368,8 +346,13 @@ async def _request_cancel_batch(batch_id: uuid.UUID, tasks: list[_BatchTaskRef])
             continue
         stopping += 1
         cancelled_here |= outcome == "cancelled"
-        # 排队中的：让 worker 丢掉还在等名额的协程；在跑的：让 worker 停下并写终态。
-        await send(CHANNEL_CANCEL, str(task.task_id))
+        if outcome != "flagged":
+            continue
+        if local:
+            # 不在本进程跑的是失联任务：扫尾会按停止请求收尾。
+            await generation_runner.cancel(task.task_id)
+        else:
+            await send(CHANNEL_CANCEL, str(task.task_id))
     if cancelled_here:
         # 已停止的收尾事件是这里写的，worker 不会再发批次通知；挂在其他 web 实例上的事件流要靠这一条唤醒。
         generation_runner.notify(batch_id)
@@ -393,14 +376,11 @@ async def stream_generation_events(task_id: uuid.UUID, request: Request) -> Stre
     if task.requested_by_user_id != user.id:
         return _event_stream_response(request, single("无权访问该生成任务"))
 
-    if task.status == "pending" and get_settings().runs_generation and not generation_runner.is_active(task.id):
-        # 兜底：没人在跑的 pending 任务交给后台；正常情况下创建批次时就已经启动了。
-        generation_runner.start(
-            [task.id], task.batch_id, user_id=user.id, user_limit=user_concurrency_limit(user)
-        )
-    elif task.status == "pending" and task.batch_id is not None and not get_settings().runs_generation:
-        # web 进程只提醒 worker；worker 已经在跑或排着的任务会被跳过。
-        await send(CHANNEL_DISPATCH, str(task.batch_id))
+    if task.status == "pending" and get_settings().runs_generation:
+        # 兜底：提醒本进程认领一轮；正常情况下创建批次时就已经认领过了。
+        generation_runner.kick()
+    elif task.status == "pending" and not get_settings().runs_generation:
+        await send(CHANNEL_DISPATCH, str(task.batch_id or task.id))
 
     events = stream_task_events(
         session_factory=AsyncSessionLocal,

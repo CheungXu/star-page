@@ -16,6 +16,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.entities import Conversation, Page, PagePublication, PageVersion
 from app.services.analytics import record_page_view
 from app.services.analytics.tracking import is_preview_bot, record_analytics_event
+from app.services.page_cache import page_source_cache
 from app.services.page_delivery import build_remix_url, build_report_url, render_blocked_page, render_page_html
 from app.services.publications import (
     CUSTOM_SUBTITLE_MAX,
@@ -178,8 +179,7 @@ async def serve_publication(
         is_owner_view = bool(user is not None and user.id == owner_user_id)
         scene = get_scene(publication.scene_key)
 
-    storage = create_storage_provider()
-    html = await storage.get_text(storage_key)
+    html = await page_source_cache.get(storage_key)
     url = publication_url(slug)
     if not is_preview_bot(request.headers.get("user-agent")):
         background_tasks.add_task(

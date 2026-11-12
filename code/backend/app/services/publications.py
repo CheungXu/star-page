@@ -12,11 +12,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from bs4 import BeautifulSoup
-
 from app.models.entities import Page, PagePublication, PageVersion, PageViewEvent
+from app.services.page_cache import page_source_cache
 from app.services.scenes.catalog import get_scene
 from app.services.share_card import CARD_ALIGNS, render_card_png, render_qr_png
+from app.services.share_meta import extract_title
 from app.services.storage.factory import create_storage_provider
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,47}$")
@@ -149,19 +149,14 @@ async def _page_display_title(session: AsyncSession, page: Page) -> str:
         version = await session.get(PageVersion, page.current_version_id)
         if version is not None:
             try:
-                html = await create_storage_provider().get_text(version.storage_key)
+                html = await page_source_cache.get(version.storage_key)
             except Exception:
                 html = ""
             if html:
-                text = await asyncio.to_thread(_html_title, html)
+                text = extract_title(html)
                 if text and text != "生成页面":
                     return text
     return page.title
-
-
-def _html_title(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.title.get_text(" ", strip=True) if soup.title else ""
 
 
 async def _unique_slug(session: AsyncSession, slug: str) -> str:

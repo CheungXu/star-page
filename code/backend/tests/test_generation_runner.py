@@ -19,7 +19,6 @@ from app.services.generation_events import (  # noqa: E402
 from app.models.entities import User  # noqa: E402
 from app.services.generation_runner import (  # noqa: E402
     BatchSignal,
-    FifoGate,
     InterruptedTask,
     plan_sweep,
     user_concurrency_limit,
@@ -141,46 +140,6 @@ def test_batch_signal_wakes_waiter_taken_before_notify():
         return signal.waiter().is_set()
 
     assert asyncio.run(run()) is False
-
-
-def test_fifo_gate_queues_in_order_and_backfills():
-    async def run() -> list[str]:
-        gate = FifoGate(2)
-        log: list[str] = []
-        assert gate.enter() is None and gate.enter() is None
-        third, fourth = gate.enter(), gate.enter()
-        assert third is not None and fourth is not None and gate.active == 2
-        gate.release()
-        await asyncio.sleep(0)
-        log.append(f"third={third.done()} fourth={fourth.done()} active={gate.active}")
-        gate.release()
-        log.append(f"fourth={fourth.done()} active={gate.active}")
-        return log
-
-    assert asyncio.run(run()) == ["third=True fourth=False active=2", "fourth=True active=2"]
-
-
-def test_fifo_gate_abandon_and_raise_limit():
-    async def run() -> tuple[int, int, bool]:
-        gate = FifoGate(1)
-        assert gate.enter() is None
-        waiting = gate.enter()
-        later = gate.enter()
-        # 还没轮到就放弃：作废排号，名额不变，后面的人接着排。
-        gate.abandon(waiting)
-        gate.release()
-        after_release = gate.active
-        assert later.done()
-        # 已经分到名额再放弃：名额还回去。
-        gate.abandon(later)
-        after_abandon = gate.active
-        # 上限调大后，排队的立即补上。
-        gate.enter()
-        queued = gate.enter()
-        gate.set_limit(2)
-        return after_release, after_abandon, queued.done()
-
-    assert asyncio.run(run()) == (1, 0, True)
 
 
 def test_user_concurrency_limit_prefers_user_override():

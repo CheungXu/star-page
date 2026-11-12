@@ -1,5 +1,5 @@
 [Unit]
-Description=星页 StarPage · 生成 Worker
+Description=星页 StarPage · 生成 Worker %i
 After=network-online.target
 Wants=network-online.target
 
@@ -13,7 +13,7 @@ EnvironmentFile=-/root/star-page/config/aliyun.env
 EnvironmentFile=-/root/star-page/config/huoshan.env
 Environment=PUBLIC_BASE_URL=https://stars-page.com
 Environment=FRONTEND_ORIGIN=https://stars-page.com
-# 只能开一个：生成名额和任务登记表都在这个进程的内存里。不对外提供 HTTP。
+# 可以开多个（@1、@2…）：名额按库里 running 的任务数算，各实例的 GENERATION_* 上限要一致。不对外提供 HTTP。
 Environment=APP_ROLE=worker
 Environment=DB_POOL_SIZE=20
 Environment=DB_MAX_OVERFLOW=30
@@ -22,8 +22,9 @@ Restart=always
 # 每路模型流式调用、OSS、数据库连接都占一个文件描述符，默认软上限 1024。
 LimitNOFILE=65536
 RestartSec=3
-# 退出时只取消在跑的生成、不改状态，下次启动扫尾重跑；最多等 3 秒协程收尾。
-TimeoutStopSec=15s
+# 退出时先排空：不领新任务，等手上的跑完（WORKER_DRAIN_TIMEOUT_SECONDS 默认 360 秒），超时的交给别的 worker 接手。
+# 停止超时要比排空时限长，否则排空到一半就被强杀（强杀也不丢任务，只是要等 45 秒续期过期才被接手）。
+TimeoutStopSec=390s
 
 [Install]
 WantedBy=multi-user.target

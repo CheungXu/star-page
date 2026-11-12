@@ -1,4 +1,5 @@
-"""web / worker 分进程运行的集成测试：派发、兜底扫描、两种停止、停止与认领的竞争、扫尾、跨进程唤醒与轮询降级。
+"""web / worker 分进程运行的集成测试：派发、兜底扫描、两种停止、停止与认领的竞争、扫尾、跨进程唤醒与轮询降级，
+以及多个 worker：共用名额、退出交接、失联接手、被接手后停手、排空。
 
 同一个测试进程里分别构造「web 侧」和「worker 侧」的执行器对象，用真实的 LISTEN/NOTIFY 通信。
 模型、上传、计费、技能路由沿用 test_generation_runner_db 里的假实现。需要一个跑过迁移的空库：
@@ -13,8 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,7 @@ if TEST_DATABASE_URL:
     from sqlalchemy import func, select, update  # noqa: E402
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 
-    from app.models.entities import GenerationBatch, GenerationEvent, GenerationTask  # noqa: E402
+    from app.models.entities import GenerationBatch, GenerationEvent, GenerationTask, User  # noqa: E402
     from app.services import generation_runner as runner_module  # noqa: E402
     from app.services import generation_service as service_module  # noqa: E402
     from app.services.billing.account import BillingService  # noqa: E402
@@ -44,6 +44,7 @@ if TEST_DATABASE_URL:
         _fake_upload,
         _no_skill,
         _noop,
+        _settle_leftovers,
         _task,
         _wait_until,
     )
@@ -77,6 +78,7 @@ def _run(flow) -> None:
         worker = GenerationRunner(session_factory=factory)
         web = GenerationRunner(session_factory=factory)
         buses: list[GenerationBus] = []
+        await _settle_leftovers(factory)
 
         def make_bus(**kwargs) -> GenerationBus:
             bus = GenerationBus(dsn=TEST_DATABASE_URL, session_factory=factory, **kwargs)
@@ -90,6 +92,7 @@ def _run(flow) -> None:
             await web.shutdown()
             for bus in buses:
                 await bus.stop()
+            await _settle_leftovers(factory)
             await engine.dispose()
 
     asyncio.run(wrapper())
@@ -97,6 +100,12 @@ def _run(flow) -> None:
 
 async def _owner(factory, creation):
     return (await _task(factory, creation.runs[0].task_id)).requested_by_user_id
+
+
+async def _set_user_limit(factory, creation, limit: int) -> None:
+    async with factory() as session:
+        await session.execute(update(User).where(User.id == await _owner(factory, creation)).values(generation_concurrency=limit))
+        await session.commit()
 
 
 async def _wait_status(factory, task_id, statuses: set[str], timeout: float = 10.0) -> None:
@@ -191,15 +200,18 @@ def test_cancel_pending_and_running_from_web():
     async def flow(factory, worker, _web, _make_bus):
         creation = await _create_batch(factory, ["slow-a", "slow-b"])
         first, second = (run.task_id for run in creation.runs)
-        # 个人上限 1：第一个在跑，第二个在 worker 里排队，库里仍是 pending。
-        worker.start([first, second], creation.batch_id, user_id=await _owner(factory, creation), user_limit=1)
+        # 个人上限 1：第一个在跑，第二个排队，库里仍是 pending，没有任何 worker 认领。
+        await _set_user_limit(factory, creation, 1)
+        worker.kick()
         await _wait_status(factory, first, {"running"})
         assert (await _task(factory, second)).status == "pending"
+        assert second not in worker._tasks
 
-        # 排队中的：web 直接写成已停止；worker 收到通知后丢掉排队的协程。
+        # 排队中的：web 直接写成已停止，之后再也不会被认领。
         assert await _request_cancel(factory, second) == "cancelled"
-        await worker._cancel_from_notice(second)
-        await _wait_until(lambda: _async_bool(second not in worker._tasks))
+        worker.handle_cancel_notice(str(second))
+        await worker.scan_once()
+        assert second not in worker._tasks
         assert (await _task(factory, second)).status == "cancelled"
         assert await _count_events(factory, second, "cancelled") == 1
 
@@ -252,15 +264,11 @@ def test_cancel_notice_before_claim_registered_stops_after_claim():
     async def flow(factory, worker, _web, _make_bus):
         creation = await _create_batch(factory, ["slow"])
         task_id = creation.runs[0].task_id
-        # 模拟：任务已在库里被认领（running），但 worker 还没登记认领就收到了停止通知。
-        worker.start([task_id], creation.batch_id, user_id=await _owner(factory, creation), user_limit=1)
-        await _wait_status(factory, task_id, {"running"})
-        worker._claimed.discard(task_id)
-        assert await _request_cancel(factory, task_id) == "flagged"
-        await worker._cancel_from_notice(task_id)
-        # 只设了标志，没有直接取消协程：任务照常按停止收尾，不会卡在 running。
-        assert task_id in worker._cancel_requested
-        worker._claimed.add(task_id)
+        # 模拟：停止通知比本进程登记认领先到（认领已在库里提交、还没登记）。通知先记下，登记时补上。
+        worker.handle_cancel_notice(str(task_id))
+        assert task_id in worker._early_cancels
+        assert await worker.claim_once() == 1
+        assert task_id in worker._cancel_requested and task_id not in worker._early_cancels
         await _wait_status(factory, task_id, {"cancelled"})
 
     _run(flow)
@@ -273,6 +281,15 @@ def test_startup_sweep_cancels_flagged_and_settles_stale_batch():
         async with factory() as session:
             assert await GenerationService(session).claim_task(flagged_id) is not None
         assert await _request_cancel(factory, flagged_id) == "flagged"
+        # 刚认领的可能还在别的 worker 上跑，不会被扫尾；认领它的 worker 早已不在（续期过期）才接手。
+        assert flagged_id not in {item.task_id for item in (await worker.startup_sweep()).cancel}
+        async with factory() as session:
+            await session.execute(
+                update(GenerationTask)
+                .where(GenerationTask.id == flagged_id)
+                .values(started_at=datetime.now(UTC) - timedelta(minutes=5))
+            )
+            await session.commit()
 
         stale = await _create_batch(factory, ["ok"])
         stale_id = stale.runs[0].task_id
@@ -320,7 +337,7 @@ def test_stream_polls_while_listener_is_down_and_bus_reconnects():
 
         consumer = asyncio.create_task(consume())
         await asyncio.sleep(0.2)
-        worker.start(task_ids, creation.batch_id, user_id=await _owner(factory, creation), user_limit=1)
+        worker.kick()
         received = await asyncio.wait_for(consumer, timeout=10)
         assert [item.event for item in received if item is not HEARTBEAT][-1] == "batch_done"
 
@@ -374,27 +391,168 @@ def test_listener_drop_wakes_waiting_stream_into_polling():
         bus._dsn = "postgresql://postgres:wrong@127.0.0.1:1/none"
         await bus.drop_connection()
         await _wait_healthy(bus, False)
-        worker.start(task_ids, creation.batch_id, user_id=await _owner(factory, creation), user_limit=1)
+        worker.kick()
         received = await asyncio.wait_for(consumer, timeout=10)
         assert [item.event for item in received if item is not HEARTBEAT][-1] == "batch_done"
 
     _run(flow)
 
 
-def test_scan_drops_queued_task_cancelled_without_notice():
-    async def flow(factory, worker, _web, _make_bus):
-        creation = await _create_batch(factory, ["slow-a", "slow-b"])
-        first, second = (run.task_id for run in creation.runs)
-        worker.start([first, second], creation.batch_id, user_id=await _owner(factory, creation), user_limit=1)
-        await _wait_status(factory, first, {"running"})
-        # 第二个在 worker 里排队；web 把它写成已停止，但停止通知丢了。
-        assert await _request_cancel(factory, second) == "cancelled"
-        assert second in worker._tasks
-        await worker.scan_once()
-        await _wait_until(lambda: _async_bool(second not in worker._tasks))
-        assert (await _task(factory, second)).status == "cancelled"
-        assert await _count_events(factory, second, "cancelled") == 1
-        # 在跑的不受影响。
-        assert (await _task(factory, first)).status == "running"
+def _run_workers(flow, count: int = 2) -> None:
+    """多个 worker 共用一个库：每个都有自己的 worker_id。"""
 
-    _run(flow)
+    async def wrapper() -> None:
+        engine = create_async_engine(TEST_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1))
+        factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+        workers = [GenerationRunner(session_factory=factory, worker_id=f"test-{index}") for index in range(count)]
+        await _settle_leftovers(factory)
+        try:
+            await flow(factory, workers)
+        finally:
+            for worker in workers:
+                await worker.shutdown()
+            await _settle_leftovers(factory)
+            await engine.dispose()
+
+    asyncio.run(wrapper())
+
+
+async def _statuses(factory, ids) -> list[tuple[str, str | None]]:
+    rows = [await _task(factory, task_id) for task_id in ids]
+    return [(row.status, row.worker_id) for row in rows]
+
+
+def test_workers_share_global_limit_and_backfill(monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "generation_max_concurrency", 2)
+
+    async def flow(factory, workers):
+        a, b = workers
+        creation = await _create_batch(factory, ["slow-a", "slow-b", "slow-c"])
+        ids = [run.task_id for run in creation.runs]
+        # 两个 worker 同时认领：全站名额 2，一共只有 2 个开跑，按先后顺序。
+        claimed = await asyncio.gather(a.claim_once(), b.claim_once())
+        assert sum(claimed) == 2
+        states = await _statuses(factory, ids)
+        assert [state for state, _owner in states] == ["running", "running", "pending"]
+        assert {owner for _state, owner in states[:2]} <= {"test-0", "test-1"}
+        assert [item["reason"] for item in await _payloads_of(factory, ids[2])] == ["global_limit"]
+        # 名额满时再认领也领不到。
+        assert await a.claim_once() == 0 and await b.claim_once() == 0
+
+        # 停掉一个，名额空出来，排队的那个被认领并收到 started。
+        holder = a if ids[0] in a._tasks else b
+        assert await holder.cancel(ids[0]) is True
+        await _wait_status(factory, ids[0], {"cancelled"})
+        await _wait_status(factory, ids[2], {"running"})
+        assert await _count_events(factory, ids[2], "started") == 1
+        for worker in workers:
+            for task_id in list(worker._tasks):
+                await worker.cancel(task_id)
+        await _wait_until(lambda: _async_bool(all(worker.idle() for worker in workers)))
+
+    _run_workers(flow)
+
+
+async def _payloads_of(factory, task_id) -> list[dict]:
+    async with factory() as session:
+        result = await session.execute(
+            select(GenerationEvent.payload)
+            .where(GenerationEvent.task_id == task_id, GenerationEvent.event_type == "queued")
+            .order_by(GenerationEvent.sequence)
+        )
+        return list(result.scalars().all())
+
+
+def test_shutdown_hands_over_to_other_worker():
+    async def flow(factory, workers):
+        a, b = workers
+        creation = await _create_batch(factory, ["slow"])
+        task_id = creation.runs[0].task_id
+        assert await a.claim_once() == 1
+        await _wait_until(lambda: _count_reasoning(factory, task_id))
+        # a 被强制退出：任务留在 running，续期作废；b 的下一次扫描马上接手，从头重跑一次。
+        await a.shutdown()
+        task = await _task(factory, task_id)
+        assert task.status == "running" and task.worker_id == "test-0"
+        assert await b.scan_once() == 1
+        task = await _task(factory, task_id)
+        assert (task.status, task.worker_id, task.retry_count) == ("running", "test-1", 1)
+        assert await _count_events(factory, task_id, "restarted") == 1
+        await b.cancel(task_id)
+        await _wait_status(factory, task_id, {"cancelled"})
+
+    _run_workers(flow)
+
+
+async def _count_reasoning(factory, task_id) -> bool:
+    return await _count_events(factory, task_id, "reasoning_delta") >= 1
+
+
+def test_live_worker_tasks_are_not_swept():
+    async def flow(factory, workers):
+        a, b = workers
+        creation = await _create_batch(factory, ["slow"])
+        task_id = creation.runs[0].task_id
+        assert await a.claim_once() == 1
+        await a.heartbeat_once()
+        # b 启动或扫描时，a 在续期，不碰 a 的任务。
+        plan = await b.startup_sweep()
+        assert task_id not in {item.task_id for item in [*plan.rerun, *plan.fail, *plan.cancel]}
+        assert await b.scan_once() == 0
+        assert (await _task(factory, task_id)).worker_id == "test-0"
+        await a.cancel(task_id)
+        await _wait_status(factory, task_id, {"cancelled"})
+
+    _run_workers(flow)
+
+
+def test_lost_lease_stops_local_coroutine_without_writing():
+    async def flow(factory, workers):
+        a, _b = workers
+        creation = await _create_batch(factory, ["slow"])
+        task_id = creation.runs[0].task_id
+        assert await a.claim_once() == 1
+        await _wait_until(lambda: _count_reasoning(factory, task_id))
+        # 模拟 a 卡住太久、任务已被别的 worker 接手。a 的续期发现后停掉本地协程，不写终态。
+        async with factory() as session:
+            await session.execute(update(GenerationTask).where(GenerationTask.id == task_id).values(worker_id="someone-else"))
+            await session.commit()
+        await a.heartbeat_once()
+        await _wait_until(lambda: _async_bool(a.idle()))
+        task = await _task(factory, task_id)
+        assert (task.status, task.worker_id) == ("running", "someone-else")
+        assert await _count_events(factory, task_id, "failed") == 0
+        assert await _count_events(factory, task_id, "cancelled") == 0
+
+    _run_workers(flow)
+
+
+def test_drain_finishes_running_and_stops_claiming():
+    async def flow(factory, workers):
+        a, _b = workers
+        first = await _create_batch(factory, ["ok"])
+        assert await a.claim_once() == 1
+        drain = asyncio.create_task(a.drain(10))
+        await asyncio.sleep(0)
+        # 排空期间新来的任务不再认领，留给其他 worker。
+        second = await _create_batch(factory, ["ok"])
+        a.kick()
+        assert await a.claim_once() == 0
+        assert await asyncio.wait_for(drain, timeout=10) is True
+        assert (await _task(factory, first.runs[0].task_id)).status == "succeeded"
+        assert (await _task(factory, second.runs[0].task_id)).status == "pending"
+
+    _run_workers(flow)
+
+
+def test_drain_times_out_when_task_keeps_running():
+    async def flow(factory, workers):
+        a, _b = workers
+        await _create_batch(factory, ["slow"])
+        assert await a.claim_once() == 1
+        assert await a.drain(0.3) is False
+        assert not a.idle()
+
+    _run_workers(flow)

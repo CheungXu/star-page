@@ -1,31 +1,48 @@
 """后台生成执行器：模型调用在进程内常驻任务里跑完，和浏览器的事件流连接无关。
 
 - 浏览器只订阅事件（见 generation_events.py），断开连接不影响生成。
-- 两层名额：先过每个用户自己的上限，再过全站上限，都按先来后到排队；排队时写一条 queued 事件，轮到时写 started。
-- 任务登记表和名额都在内存里，只能有一个进程跑生成：APP_ROLE=all 的单进程，或线上唯一的 worker 进程。
-  web 进程不跑生成，只把新批次和停止请求通过 generation_bus 通知 worker，worker 再定时扫一遍库兜底。
-- 进程退出时不改任务状态，留给下次启动的扫尾处理（近期中断的重跑一次，有停止请求的写成已停止，其余标失败）。
+- 名额在库里：个人上限和全站上限都按 status = 'running' 的行数算。认领在一个很短的事务里做，
+  事务开头拿一把咨询锁，多个 worker 的认领排着做，不会一起超额。拿不到名额的任务留在 pending，
+  按提交顺序排队，并写一条 queued 事件；轮到时认领成 running，写 started。
+- 任务结束（成功、失败、停止）名额就自然空出来，不会因为进程崩溃漏还。结束后发一次派发通知，空闲的 worker 立刻补领。
+- 认领时记下 worker_id，每隔 GENERATION_HEARTBEAT_SECONDS 续期 heartbeat_at。超过
+  GENERATION_WORKER_LEASE_SECONDS 没续期的任务，别的 worker（或重启后的自己）接手：近期的从头重跑一次，有停止请求的写成已停止，其余标失败。
+  在线 worker 手上的任务不会被碰。
+- web 进程不跑生成，只把新批次和停止请求通过 generation_bus 通知 worker，worker 再定时扫一遍库兜底。
+- 退出时先排空：不再领新任务，手上的跑完再走（见 drain）。超时才取消协程，并把这些任务的续期作废，让别的 worker 马上接手。
 """
 from __future__ import annotations
 
 import asyncio
+import os
+import socket
 import uuid
-from collections import deque
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.entities import GenerationBatch, GenerationEvent, GenerationTask, Page, User
-from app.services.generation_bus import GenerationBus
+from app.services.generation_bus import CHANNEL_DISPATCH, GenerationBus
 from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_STATUSES, GenerationService
 
-# 兜底扫描一次最多补这么多个没收到派发通知的任务，剩下的下一轮再补。
-SCAN_BATCH_LIMIT = 500
+# 一次认领最多看这么多个排队任务；每个用户最多看前 CLAIM_PER_USER_WINDOW 个，免得一个人排的几百个挡住别人。
+CLAIM_SCAN_LIMIT = 500
+CLAIM_PER_USER_WINDOW = 64
+
+# 咨询锁的键：认领、接手失联任务各一把。只在很短的事务里持有，事务结束自动释放。
+CLAIM_LOCK_KEY = 0x5350_434C
+SWEEP_LOCK_KEY = 0x5350_5357
+
+# 停止通知可能比本进程登记认领还早到（认领已提交、还没回到这里），记一会儿，登记时再处理。
+EARLY_CANCEL_TTL_SECONDS = 60.0
+
+# 作废续期时写的时间：任何 worker 下一次扫描都会把它当作失联任务接手。
+EXPIRED_LEASE = datetime(1970, 1, 1, tzinfo=UTC)
 
 # 协作式停止的宽限：超过这个时间模型还没吐出下一个 chunk，就直接取消协程。
 HARD_CANCEL_GRACE_SECONDS = 3.0
@@ -54,55 +71,8 @@ def _resolve_user_limit(override: int | None) -> int:
     return max(1, get_settings().generation_user_concurrency)
 
 
-class FifoGate:
-    """先来后到的名额闸门。上限可以随时调整，调大后排队的立即补上。
-
-    enter() 是同步的：按调用顺序入队，保证同一用户的任务按提交顺序开始。
-    """
-
-    def __init__(self, limit: int) -> None:
-        self.limit = max(0, limit)
-        self.active = 0
-        self._waiters: deque[asyncio.Future[None]] = deque()
-
-    def enter(self) -> asyncio.Future[None] | None:
-        """拿名额。拿到返回 None；要排队就返回一个 future，轮到时它完成，名额已经记在 active 里。"""
-        self._drop_cancelled()
-        if self.active < self.limit and not self._waiters:
-            self.active += 1
-            return None
-        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._waiters.append(future)
-        return future
-
-    def abandon(self, ticket: asyncio.Future[None]) -> None:
-        """排队的人不等了（被停止、出错）：还没轮到就作废排号，已经分到名额就还回去。"""
-        if not ticket.cancel() and not ticket.cancelled():
-            self.release()
-
-    def release(self) -> None:
-        self.active = max(0, self.active - 1)
-        self._wake()
-
-    def set_limit(self, limit: int) -> None:
-        self.limit = max(0, limit)
-        self._wake()
-
-    def idle(self) -> bool:
-        self._drop_cancelled()
-        return self.active == 0 and not self._waiters
-
-    def _drop_cancelled(self) -> None:
-        while self._waiters and self._waiters[0].done():
-            self._waiters.popleft()
-
-    def _wake(self) -> None:
-        while self._waiters and self.active < self.limit:
-            future = self._waiters.popleft()
-            if future.done():
-                continue
-            self.active += 1
-            future.set_result(None)
+def new_worker_id() -> str:
+    return f"{socket.gethostname()[:32]}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 
 class BatchSignal:
@@ -122,7 +92,7 @@ class BatchSignal:
 
 @dataclass(frozen=True)
 class InterruptedTask:
-    """启动扫尾看到的一个未结束任务。"""
+    """扫尾看到的一个未结束任务。"""
 
     task_id: uuid.UUID
     batch_id: uuid.UUID | None
@@ -137,7 +107,7 @@ class InterruptedTask:
 
 @dataclass
 class SweepPlan:
-    start: list[InterruptedTask] = field(default_factory=list)  # 还没开始过，直接排队
+    start: list[InterruptedTask] = field(default_factory=list)  # 还没开始过，留在 pending 等认领
     rerun: list[InterruptedTask] = field(default_factory=list)  # 中途被打断，清掉事件从头重跑
     fail: list[InterruptedTask] = field(default_factory=list)  # 太久以前的或已经重跑过一次的
     cancel: list[InterruptedTask] = field(default_factory=list)  # 用户已经点过停止，不再重跑
@@ -169,19 +139,27 @@ def _signal_key(task_id: uuid.UUID, batch_id: uuid.UUID | None) -> uuid.UUID:
 
 
 class GenerationRunner:
-    def __init__(self, session_factory: Callable[[], AsyncSession] | None = None) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession] | None = None, worker_id: str | None = None) -> None:
         self._session_factory = session_factory
+        self.worker_id = worker_id or new_worker_id()
+        # 本进程认领并正在跑的任务。认领和登记之间没有 await，所以两者总是一致的。
         self._tasks: dict[uuid.UUID, asyncio.Task[None]] = {}
         self._claimed: set[uuid.UUID] = set()
         self._cancel_requested: set[uuid.UUID] = set()
+        self._early_cancels: dict[uuid.UUID, float] = {}
+        # 被别的 worker 接手的任务：协程取消后不再写库。
+        self._lost: set[uuid.UUID] = set()
         self._signals: dict[uuid.UUID, BatchSignal] = {}
-        self._global_gate: FifoGate | None = None
-        self._user_gates: dict[uuid.UUID, FifoGate] = {}
         self._shutting_down = False
+        self._draining = False
         self._bus: GenerationBus | None = None
         self._background: set[asyncio.Task[None]] = set()
+        self._claimer: asyncio.Task[None] | None = None
+        self._claim_again = False
+        self._claim_lock: asyncio.Lock | None = None
+        self._slot_notice_pending = False
 
-    # ---- 会话与名额 ----
+    # ---- 会话 ----
 
     def _session(self) -> AsyncSession:
         if self._session_factory is None:
@@ -190,25 +168,8 @@ class GenerationRunner:
             self._session_factory = AsyncSessionLocal
         return self._session_factory()
 
-    def _global(self) -> FifoGate:
-        if self._global_gate is None:
-            self._global_gate = FifoGate(max(1, get_settings().generation_max_concurrency))
-        return self._global_gate
-
-    def _user_gate(self, user_id: uuid.UUID, limit: int) -> FifoGate:
-        gate = self._user_gates.get(user_id)
-        if gate is None:
-            gate = FifoGate(limit)
-            self._user_gates[user_id] = gate
-        else:
-            # 每次提交都按最新上限调整（例如刚升级会员），调大后排队的立即开始。
-            gate.set_limit(limit)
-        return gate
-
-    def _release_user_gate(self, user_id: uuid.UUID, gate: FifoGate) -> None:
-        gate.release()
-        if gate.idle() and self._user_gates.get(user_id) is gate:
-            self._user_gates.pop(user_id, None)
+    def accepting(self) -> bool:
+        return not self._shutting_down and not self._draining
 
     # ---- 订阅唤醒 ----
 
@@ -237,7 +198,7 @@ class GenerationRunner:
             signal.notify()
 
     def wake_all(self) -> None:
-        """监听连接刚（重新）连上：断线期间的通知已经丢了，让所有订阅者都重读一次库。"""
+        """监听连接刚（重新）连上或断开：让所有订阅者都重读一次库。"""
         for signal in list(self._signals.values()):
             signal.notify()
 
@@ -249,6 +210,9 @@ class GenerationRunner:
         """接了通知总线时，唤醒来自其他进程合并过的批次通知，订阅者被唤醒后不用再等一会儿攒事件。"""
         return self._bus is not None
 
+    def subscriber_count(self) -> int:
+        return sum(signal.refs for signal in self._signals.values())
+
     # ---- 跨进程 ----
 
     def attach_bus(self, bus: GenerationBus | None) -> None:
@@ -259,86 +223,240 @@ class GenerationRunner:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    def handle_dispatch_notice(self, payload: str) -> None:
-        batch_id = _parse_uuid(payload)
-        if batch_id is not None:
-            self._spawn(self._dispatch_safe(batch_id))
+    def handle_dispatch_notice(self, _payload: str) -> None:
+        """有新批次，或别的 worker 刚空出名额：认领一轮。"""
+        self.kick()
 
     def handle_cancel_notice(self, payload: str) -> None:
         task_id = _parse_uuid(payload)
-        if task_id is not None and task_id not in self._cancel_requested:
-            self._spawn(self._cancel_from_notice(task_id))
-
-    async def _cancel_from_notice(self, task_id: uuid.UUID) -> None:
-        """web 发来的停止。已认领的走协作停止；没认领的先查库：
-
-        库里已是终态（web 已把排队中的写成已停止）才能直接取消协程；否则可能是刚认领成功、还没登记，
-        直接取消会留下一个永远停在 running 的任务，只设标志，等认领登记后按停止处理。
-        """
-        if task_id in self._claimed:
-            await self.cancel(task_id)
+        if task_id is None:
             return
-        running = self._tasks.get(task_id)
-        if running is None or running.done():
-            return
-        async with self._session() as session:
-            status = await session.scalar(select(GenerationTask.status).where(GenerationTask.id == task_id))
         if task_id in self._claimed:
-            await self.cancel(task_id)
-        elif status in TERMINAL_STATUSES:
-            await self.cancel(task_id)
-        else:
-            self._cancel_requested.add(task_id)
+            self._spawn(self.cancel(task_id))
+            return
+        # 不在本进程：可能是别的 worker 的，也可能是本进程刚认领、还没登记。
+        self._early_cancels[task_id] = asyncio.get_running_loop().time()
+        self._prune_early_cancels()
 
     def handle_batch_notice(self, payload: str) -> None:
         key = _parse_uuid(payload)
         if key is not None:
             self.notify_local(key)
 
-    async def _dispatch_safe(self, batch_id: uuid.UUID) -> None:
-        try:
-            await self.dispatch_batch(batch_id)
-        except Exception as exc:  # noqa: BLE001 - 派发失败由定时扫描补上
-            print(f"[generation] 派发批次失败 batch={batch_id}: {exc!r}", flush=True)
+    def _prune_early_cancels(self) -> None:
+        cutoff = asyncio.get_running_loop().time() - EARLY_CANCEL_TTL_SECONDS
+        for task_id, seen in list(self._early_cancels.items()):
+            if seen < cutoff:
+                self._early_cancels.pop(task_id, None)
 
-    async def dispatch_batch(self, batch_id: uuid.UUID) -> int:
-        """把一个批次里还在 pending 的任务交给本进程跑，返回新启动的个数。"""
+    def _announce_free_slot(self) -> None:
+        """名额空出来了：本进程马上补领；其他 worker 靠派发通知补领（合并同一时刻的多次）。"""
+        self.kick()
+        if self._bus is None or self._slot_notice_pending:
+            return
+        self._slot_notice_pending = True
+
+        async def send() -> None:
+            await asyncio.sleep(0.05)
+            self._slot_notice_pending = False
+            await self._bus.send(CHANNEL_DISPATCH, "slot")
+
+        self._spawn(send())
+
+    # ---- 认领 ----
+
+    def kick(self) -> None:
+        """尽快认领一轮。正在认领时只记一下，这一轮结束后再来一轮。"""
+        if not self.accepting():
+            return
+        if self._claimer is not None and not self._claimer.done():
+            self._claim_again = True
+            return
+        self._claimer = asyncio.ensure_future(self._claim_until_settled())
+
+    def idle(self) -> bool:
+        """没有在跑的任务，也没有待做的认领。测试和排空用。"""
+        return not self._tasks and (self._claimer is None or self._claimer.done())
+
+    async def _claim_until_settled(self) -> None:
+        while True:
+            self._claim_again = False
+            try:
+                await self.claim_once()
+            except Exception as exc:  # noqa: BLE001 - 认领失败等下一次唤醒或定时扫描
+                print(f"[generation] 认领失败：{exc!r}", flush=True)
+            if not self._claim_again or not self.accepting():
+                return
+
+    async def claim_once(self) -> int:
+        """按先来后到认领能拿到名额的 pending 任务交给本进程跑，返回认领的个数。
+
+        拿不到名额的写一条 queued 事件（每种原因一次）。所有 worker 共用同一把咨询锁，认领排着做。
+        """
+        if not self.accepting():
+            return 0
+        if self._claim_lock is None:
+            self._claim_lock = asyncio.Lock()
+        async with self._claim_lock:
+            return await self._claim_locked()
+
+    async def _claim_locked(self) -> int:
+        settings = get_settings()
+        global_limit = max(0, settings.generation_max_concurrency)
+        touched: set[uuid.UUID] = set()
+        claimed: list[tuple[uuid.UUID, uuid.UUID]] = []
         async with self._session() as session:
-            rows = (
+            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": CLAIM_LOCK_KEY})
+            ranked = (
+                select(
+                    GenerationTask.id,
+                    GenerationTask.batch_id,
+                    GenerationTask.requested_by_user_id,
+                    GenerationTask.created_at,
+                    func.row_number()
+                    .over(
+                        partition_by=GenerationTask.requested_by_user_id,
+                        order_by=(GenerationTask.created_at, GenerationTask.id),
+                    )
+                    .label("rank"),
+                )
+                .where(GenerationTask.status == "pending", GenerationTask.cancel_requested_at.is_(None))
+                .subquery()
+            )
+            candidates = (
                 await session.execute(
-                    select(GenerationTask.id, GenerationTask.batch_id, GenerationTask.requested_by_user_id)
+                    select(ranked.c.id, ranked.c.batch_id, ranked.c.requested_by_user_id)
+                    .where(ranked.c.rank <= CLAIM_PER_USER_WINDOW)
+                    .order_by(ranked.c.created_at, ranked.c.id)
+                    .limit(CLAIM_SCAN_LIMIT)
+                )
+            ).all()
+            if not candidates:
+                await session.commit()
+                return 0
+
+            users = {row.requested_by_user_id for row in candidates}
+            limits = await _load_user_limits(session, users)
+            running_total = int(
+                await session.scalar(select(func.count()).select_from(GenerationTask).where(GenerationTask.status == "running"))
+                or 0
+            )
+            running_by_user: dict[uuid.UUID, int] = {
+                user_id: int(count)
+                for user_id, count in (
+                    await session.execute(
+                        select(GenerationTask.requested_by_user_id, func.count())
+                        .where(GenerationTask.status == "running", GenerationTask.requested_by_user_id.in_(users))
+                        .group_by(GenerationTask.requested_by_user_id)
+                    )
+                ).all()
+            }
+
+            free = global_limit - running_total
+            chosen: list[Any] = []
+            waiting: list[tuple[Any, str, str]] = []
+            for row in candidates:
+                if row.id in self._claimed:
+                    # 被接手退回 pending、但本地旧协程还没停下的：等它停了再说。
+                    continue
+                user_id = row.requested_by_user_id
+                limit = limits[user_id]
+                if running_by_user.get(user_id, 0) >= limit:
+                    waiting.append((row, "user_limit", user_queued_message(limit)))
+                elif free <= 0:
+                    waiting.append((row, "global_limit", GLOBAL_QUEUED_MESSAGE))
+                else:
+                    chosen.append(row)
+                    free -= 1
+                    running_by_user[user_id] = running_by_user.get(user_id, 0) + 1
+
+            if chosen:
+                # 停止接口对 pending 任务加行锁后写终态；这里的条件在行锁释放后重新判断，被停掉的不会被认领。
+                result = await session.execute(
+                    update(GenerationTask)
                     .where(
-                        GenerationTask.batch_id == batch_id,
+                        GenerationTask.id.in_([row.id for row in chosen]),
                         GenerationTask.status == "pending",
                         GenerationTask.cancel_requested_at.is_(None),
                     )
-                    .order_by(GenerationTask.created_at, GenerationTask.id)
+                    .values(status="running", started_at=func.now(), worker_id=self.worker_id, heartbeat_at=func.now())
+                    .returning(GenerationTask.id)
+                    .execution_options(synchronize_session=False)
                 )
-            ).all()
-            limits = await _load_user_limits(session, {row.requested_by_user_id for row in rows if row.requested_by_user_id})
-        return self._start_rows(rows, limits)
+                claimed_ids = set(result.scalars())
+                claimed = [(row.id, _signal_key(row.id, row.batch_id)) for row in chosen if row.id in claimed_ids]
+                if claimed_ids:
+                    were_queued = set(
+                        (
+                            await session.execute(
+                                select(GenerationEvent.task_id)
+                                .where(GenerationEvent.task_id.in_(claimed_ids), GenerationEvent.event_type == "queued")
+                                .distinct()
+                            )
+                        ).scalars()
+                    )
+                    for task_id in were_queued:
+                        session.add(GenerationEvent(task_id=task_id, event_type="started", payload={"type": "started"}))
+
+            if waiting:
+                existing = {
+                    (task_id, reason)
+                    for task_id, reason in (
+                        await session.execute(
+                            select(GenerationEvent.task_id, GenerationEvent.payload["reason"].astext).where(
+                                GenerationEvent.task_id.in_([row.id for row, _reason, _message in waiting]),
+                                GenerationEvent.event_type == "queued",
+                            )
+                        )
+                    ).all()
+                }
+                for row, reason, message in waiting:
+                    if (row.id, reason) in existing:
+                        continue
+                    session.add(
+                        GenerationEvent(
+                            task_id=row.id,
+                            event_type="queued",
+                            payload={"type": "queued", "reason": reason, "message": message},
+                        )
+                    )
+                    touched.add(_signal_key(row.id, row.batch_id))
+            await session.commit()
+
+        for task_id, key in claimed:
+            self._register(task_id, key)
+        for key in touched:
+            self.notify(key)
+        return len(claimed)
+
+    def _register(self, task_id: uuid.UUID, key: uuid.UUID) -> None:
+        self._claimed.add(task_id)
+        if self._early_cancels.pop(task_id, None) is not None:
+            self._cancel_requested.add(task_id)
+        running = asyncio.create_task(self._drive(task_id, key), name=f"generation-{task_id}")
+        self._tasks[task_id] = running
+        # 清理放在 done 回调里：开跑前就被取消的协程不会执行自己的 finally。
+        running.add_done_callback(lambda _done, task_id=task_id, key=key: self._forget(task_id, key))
+
+    def _forget(self, task_id: uuid.UUID, key: uuid.UUID) -> None:
+        self._tasks.pop(task_id, None)
+        self._claimed.discard(task_id)
+        self._cancel_requested.discard(task_id)
+        self._lost.discard(task_id)
+        self.notify(key)
+        if not self._shutting_down:
+            self._announce_free_slot()
+
+    # ---- 定时任务 ----
 
     async def scan_once(self) -> int:
-        """兜底：补上没收到派发通知的 pending 任务，处理没收到停止通知的停止请求。返回新启动的个数。
-
-        停止请求有两种：在跑的任务库里有停止标记；排队中的任务已被 web 直接写成终态，本进程还排着它的协程。
-        """
+        """兜底：接手失联任务、补认领没收到派发通知的任务、处理没收到停止通知的停止请求。返回新认领的个数。"""
         if self._shutting_down:
             return 0
-        async with self._session() as session:
-            rows = (
-                await session.execute(
-                    select(GenerationTask.id, GenerationTask.batch_id, GenerationTask.requested_by_user_id)
-                    .where(GenerationTask.status == "pending", GenerationTask.cancel_requested_at.is_(None))
-                    .order_by(GenerationTask.created_at, GenerationTask.id)
-                    .limit(SCAN_BATCH_LIMIT)
-                )
-            ).all()
-            rows = [row for row in rows if row.id not in self._tasks]
-            limits = await _load_user_limits(session, {row.requested_by_user_id for row in rows if row.requested_by_user_id})
-            flagged: list[uuid.UUID] = []
-            claimed = [task_id for task_id in self._claimed if task_id not in self._cancel_requested]
-            if claimed:
+        await self.sweep_stale()
+        claimed = [task_id for task_id in self._claimed if task_id not in self._cancel_requested]
+        if claimed:
+            async with self._session() as session:
                 flagged = list(
                     (
                         await session.execute(
@@ -348,37 +466,122 @@ class GenerationRunner:
                         )
                     ).scalars()
                 )
-            settled: list[uuid.UUID] = []
-            queued = [task_id for task_id in self._tasks if task_id not in self._claimed]
-            if queued:
-                settled = list(
-                    (
-                        await session.execute(
-                            select(GenerationTask.id).where(
-                                GenerationTask.id.in_(queued), GenerationTask.status.in_(TERMINAL_STATUSES)
-                            )
-                        )
-                    ).scalars()
-                )
-        started = self._start_rows(rows, limits)
-        for task_id in flagged:
-            await self.cancel(task_id)
-        for task_id in settled:
-            # 认领前取消协程：它不写库，排着的名额随之作废。
-            if task_id not in self._claimed:
+            for task_id in flagged:
                 await self.cancel(task_id)
+        started = await self.claim_once()
         if started:
-            print(f"[generation] 兜底扫描补上 {started} 个任务", flush=True)
+            print(f"[generation] 扫描认领 {started} 个任务", flush=True)
         return started
 
-    def _start_rows(self, rows, limits: dict[uuid.UUID, int]) -> int:
-        started = 0
-        for row in rows:
-            if row.requested_by_user_id is None or row.id in self._tasks:
-                continue
-            self.start([row.id], row.batch_id, user_id=row.requested_by_user_id, user_limit=limits[row.requested_by_user_id])
-            started += 1
-        return started
+    async def heartbeat_once(self) -> None:
+        """给手上的任务续期。续不上的（库里已归别的 worker，或被扫尾退回了 pending）说明被接手了，停掉本地协程、不写库。"""
+        ids = list(self._claimed)
+        if not ids:
+            return
+        async with self._session() as session:
+            alive = set(
+                (
+                    await session.execute(
+                        update(GenerationTask)
+                        .where(
+                            GenerationTask.id.in_(ids),
+                            GenerationTask.status == "running",
+                            GenerationTask.worker_id == self.worker_id,
+                        )
+                        .values(heartbeat_at=func.now())
+                        .returning(GenerationTask.id)
+                        .execution_options(synchronize_session=False)
+                    )
+                ).scalars()
+            )
+            missing = [task_id for task_id in ids if task_id not in alive]
+            lost: list[uuid.UUID] = []
+            if missing:
+                rows = (
+                    await session.execute(
+                        select(GenerationTask.id, GenerationTask.status, GenerationTask.worker_id).where(
+                            GenerationTask.id.in_(missing)
+                        )
+                    )
+                ).all()
+                # 已经写到终态的是本进程正在收尾，不算被接手。
+                lost = [
+                    row.id
+                    for row in rows
+                    if row.status not in TERMINAL_STATUSES and (row.status == "pending" or row.worker_id != self.worker_id)
+                ]
+            await session.commit()
+        for task_id in lost:
+            running = self._tasks.get(task_id)
+            if running is not None and not running.done():
+                print(f"[generation] 任务已被别的 worker 接手，停止本地执行 task={task_id}", flush=True)
+                self._lost.add(task_id)
+                running.cancel()
+
+    async def sweep_stale(self, *, startup: bool = False) -> SweepPlan | None:
+        """接手失联任务：running 但超过续期时限没续期的。启动时再顺带处理排队太久的 pending。
+
+        同一时刻只有一个 worker 做（拿不到锁就跳过，返回 None）。本进程手上的任务不碰。
+        """
+        settings = get_settings()
+        window = timedelta(minutes=max(0, settings.generation_resume_window_minutes))
+        lease = timedelta(seconds=max(1.0, settings.generation_worker_lease_seconds))
+        # 收尾过程中会多次提交，锁放在另一个会话的事务里，从头持有到尾。
+        async with self._session() as lock_session, self._session() as session:
+            locked = await lock_session.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": SWEEP_LOCK_KEY})
+            if not locked:
+                await lock_session.commit()
+                return None
+            plan = await self._sweep_locked(session, startup=startup, window=window, lease=lease)
+            await lock_session.commit()
+        touched = plan.rerun or plan.fail or plan.cancel
+        if touched or startup:
+            print(
+                f"[generation] 扫尾（{'启动' if startup else '失联接手'}）：重跑 {len(plan.rerun)}，标失败 {len(plan.fail)}，"
+                f"按停止请求收尾 {len(plan.cancel)}，排队中 {len(plan.start)}",
+                flush=True,
+            )
+        for item in [*plan.rerun, *plan.fail, *plan.cancel]:
+            self.notify(_signal_key(item.task_id, item.batch_id))
+        if plan.rerun or plan.start:
+            self.kick()
+        return plan
+
+    async def _sweep_locked(
+        self, session: AsyncSession, *, startup: bool, window: timedelta, lease: timedelta
+    ) -> SweepPlan:
+        now = datetime.now(UTC)
+        await _reset_stale_parses(session, now - lease)
+        items = await _load_unfinished(session, stale_before=now - lease, include_pending=startup, exclude=self._claimed)
+        plan = plan_sweep(items, now=now, window=window)
+        await _reset_for_rerun(session, plan.rerun)
+        service = GenerationService(session)
+        for item in plan.fail:
+            await service.finish_unfinished_task(
+                item.task_id,
+                status="failed",
+                message=INTERRUPTED_ERROR_MESSAGE,
+                user_message=INTERRUPTED_USER_MESSAGE,
+            )
+        for item in plan.cancel:
+            await service.finish_unfinished_task(
+                item.task_id,
+                status="cancelled",
+                message=CANCELLED_ERROR_MESSAGE,
+                user_message=CANCELLED_USER_MESSAGE,
+            )
+        for batch_id in {item.batch_id for item in plan.rerun}:
+            await service.recompute_batch_status(batch_id)
+        if startup:
+            await _recompute_settled_batches(session, service)
+        await _discard_orphan_staging(session)
+        await session.commit()
+        return plan
+
+    async def startup_sweep(self) -> SweepPlan:
+        """worker 启动时调用：接手失联任务、处理排队太久的任务、重算停在进行中的批次。"""
+        plan = await self.sweep_stale(startup=True)
+        return plan if plan is not None else SweepPlan()
 
     async def run_scan_loop(self, interval: float, wake: asyncio.Event | None = None) -> None:
         """worker 的兜底循环：每隔 interval 秒扫一次；wake 被置位时（例如监听刚重连）立刻扫。"""
@@ -396,54 +599,25 @@ class GenerationRunner:
                 pass
             wake.clear()
 
-    # ---- 启动与停止 ----
+    async def run_heartbeat_loop(self, interval: float) -> None:
+        while not self._shutting_down:
+            await asyncio.sleep(interval)
+            try:
+                await self.heartbeat_once()
+            except Exception as exc:  # noqa: BLE001 - 续期失败下一轮再来；连续失败到时限才会被接手
+                print(f"[generation] 续期失败：{exc!r}", flush=True)
+
+    # ---- 停止与退出 ----
 
     def is_active(self, task_id: uuid.UUID) -> bool:
         return task_id in self._tasks
 
-    def start(
-        self,
-        task_ids: Iterable[uuid.UUID],
-        batch_id: uuid.UUID | None,
-        *,
-        user_id: uuid.UUID,
-        user_limit: int,
-    ) -> None:
-        """把任务交给后台跑。重复调用同一个任务是安全的：已登记的跳过，数据库层还有原子认领兜底。
-
-        user_id / user_limit 决定这个用户同时生成的上限，超出的按提交顺序排队。
-        """
-        if self._shutting_down:
-            return
-        gate = self._user_gate(user_id, user_limit)
-        for task_id in task_ids:
-            if task_id in self._tasks:
-                continue
-            key = _signal_key(task_id, batch_id)
-            running = asyncio.create_task(self._drive(task_id, key, user_id, gate), name=f"generation-{task_id}")
-            self._tasks[task_id] = running
-            # 清理放在 done 回调里：开跑前就被取消的协程不会执行自己的 finally。
-            running.add_done_callback(lambda _done, task_id=task_id, key=key: self._forget(task_id, key))
-
-    def _forget(self, task_id: uuid.UUID, key: uuid.UUID) -> None:
-        self._tasks.pop(task_id, None)
-        self._claimed.discard(task_id)
-        self._cancel_requested.discard(task_id)
-        self.notify(key)
-
     async def cancel(self, task_id: uuid.UUID) -> bool:
-        """请求停止一个正在调用模型的任务，返回 True。
-
-        返回 False 表示这个任务不在本进程里调用模型（没登记，或还在排队、已被直接取消），
-        调用方需要自己用 finish_unfinished_task 把状态写成 cancelled。
-        """
+        """请求停止本进程正在跑的任务，返回 True。不在本进程跑的返回 False，调用方自己处理。"""
         running = self._tasks.get(task_id)
         if running is None or running.done():
             return False
         self._cancel_requested.add(task_id)
-        if task_id not in self._claimed:
-            running.cancel()
-            return False
         self._schedule_hard_cancel(task_id)
         return True
 
@@ -456,41 +630,68 @@ class GenerationRunner:
         if not running.done() and task_id in self._cancel_requested:
             running.cancel()
 
+    async def drain(self, timeout: float, *, busy: Callable[[], bool] | None = None) -> bool:
+        """不再认领新任务，等手上的跑完。停止请求和续期照常处理。返回是否在时限内排空。
+
+        busy 用来再等一些别的活（例如本进程在做的批次解析）。
+        """
+        self._draining = True
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, timeout)
+        if self._claimer is not None and not self._claimer.done():
+            await asyncio.wait({self._claimer}, timeout=max(0.0, deadline - loop.time()))
+        last_report = 0.0
+        while self._tasks or (busy is not None and busy()):
+            now = loop.time()
+            if now >= deadline:
+                return False
+            if now - last_report >= 30:
+                print(f"[generation] 排空中：还有 {len(self._tasks)} 个任务在跑", flush=True)
+                last_report = now
+            await asyncio.sleep(0.5)
+        return True
+
     async def shutdown(self) -> None:
-        """进程退出：取消所有协程但不改数据库状态，交给下次启动扫尾重跑。"""
+        """进程退出：取消剩下的协程但不改任务状态，并把它们的续期作废，让别的 worker 马上接手。"""
         self._shutting_down = True
         for pending in list(self._background):
             pending.cancel()
-        running = [task for task in self._tasks.values() if not task.done()]
+        if self._claimer is not None:
+            self._claimer.cancel()
+        remaining = [task_id for task_id, task in self._tasks.items() if not task.done()]
+        running = [self._tasks[task_id] for task_id in remaining]
         for task in running:
             task.cancel()
         if running:
             await asyncio.wait(running, timeout=3)
+        if remaining:
+            try:
+                async with self._session() as session:
+                    await session.execute(
+                        update(GenerationTask)
+                        .where(
+                            GenerationTask.id.in_(remaining),
+                            GenerationTask.status == "running",
+                            GenerationTask.worker_id == self.worker_id,
+                        )
+                        .values(heartbeat_at=EXPIRED_LEASE)
+                        .execution_options(synchronize_session=False)
+                    )
+                    await session.commit()
+                print(f"[generation] 退出时交出 {len(remaining)} 个未跑完的任务", flush=True)
+            except Exception as exc:  # noqa: BLE001 - 写不进去就等续期自然超时
+                print(f"[generation] 交出未跑完的任务失败：{exc!r}", flush=True)
 
-    async def _drive(self, task_id: uuid.UUID, key: uuid.UUID, user_id: uuid.UUID, user_gate: FifoGate) -> None:
-        holds_user = holds_global = False
-        queued = False
+    async def _drive(self, task_id: uuid.UUID, key: uuid.UUID) -> None:
         try:
-            # 先过个人上限再过全站上限：个人名额没轮到的任务不占全站名额，不影响别人。
-            # 这是协程的第一步，入队是同步的，同一用户的任务按提交顺序排。
-            queued |= await self._acquire(
-                user_gate, task_id, key, "user_limit", user_queued_message(user_gate.limit)
-            )
-            holds_user = True
-            queued |= await self._acquire(self._global(), task_id, key, "global_limit", GLOBAL_QUEUED_MESSAGE)
-            holds_global = True
-
             async with self._session() as session:
                 service = GenerationService(session, cancel_check=lambda: task_id in self._cancel_requested)
-                task = await service.claim_task(task_id)
-                if task is None:
+                task = await session.get(GenerationTask, task_id, populate_existing=True)
+                if task is None or task.status != "running" or task.worker_id != self.worker_id:
                     return
-                self._claimed.add(task_id)
                 if task_id in self._cancel_requested:
                     # 认领前已收到停止：run_task 第一步就会按停止收尾，模型卡住时照常到点强停。
                     self._schedule_hard_cancel(task_id)
-                if queued:
-                    await service.record_event(task_id, "started", {"type": "started"})
                 self.notify(key)
                 async for _event in service.run_task(task):
                     self.notify(key)
@@ -499,40 +700,9 @@ class GenerationRunner:
         except Exception as exc:  # noqa: BLE001 - 兜底收尾在 finally 里
             print(f"[generation] 任务执行异常 task={task_id}: {exc!r}", flush=True)
         finally:
-            if holds_global:
-                self._global().release()
-            if holds_user:
-                self._release_user_gate(user_id, user_gate)
-            elif user_gate.idle() and self._user_gates.get(user_id) is user_gate:
-                self._user_gates.pop(user_id, None)
-            # 进程退出时不写库，交给下次启动扫尾。没认领过的（排队中被停）由停止接口自己写成 cancelled。
-            if not self._shutting_down and task_id in self._claimed:
+            # 进程退出、或任务已被别的 worker 接手时不写库。
+            if not self._shutting_down and task_id not in self._lost:
                 await self._finish_if_unfinished(task_id)
-
-    async def _acquire(self, gate: FifoGate, task_id: uuid.UUID, key: uuid.UUID, reason: str, message: str) -> bool:
-        """拿一个名额，返回是否排过队。排队时先写 queued 事件再等；中途被取消或出错就作废排号。"""
-        ticket = gate.enter()
-        if ticket is None:
-            return False
-        try:
-            await self._record_queued(task_id, key, reason, message)
-            await ticket
-        except BaseException:
-            gate.abandon(ticket)
-            raise
-        return True
-
-    async def _record_queued(self, task_id: uuid.UUID, key: uuid.UUID, reason: str, message: str) -> None:
-        """排队提示写不进去只影响显示，不能让任务因此卡在排队里。"""
-        try:
-            async with self._session() as session:
-                await GenerationService(session).record_event(
-                    task_id, "queued", {"type": "queued", "reason": reason, "message": message}
-                )
-        except Exception as exc:  # noqa: BLE001
-            print(f"[generation] 排队事件写库失败 task={task_id}: {exc!r}", flush=True)
-            return
-        self.notify(key)
 
     async def _finish_if_unfinished(self, task_id: uuid.UUID) -> None:
         """生成器没把任务写到终态（被硬取消、数据库异常等）时，用新会话补写。"""
@@ -550,72 +720,46 @@ class GenerationRunner:
         except Exception as exc:  # noqa: BLE001
             print(f"[generation] 任务收尾写库失败 task={task_id}: {exc!r}", flush=True)
 
-    # ---- 启动扫尾 ----
-
-    async def startup_sweep(self) -> SweepPlan:
-        """处理上一个进程留下的 pending/running 任务。必须在接收请求前、单 worker 下执行。"""
-        settings = get_settings()
-        window = timedelta(minutes=max(0, settings.generation_resume_window_minutes))
-        async with self._session() as session:
-            await _reset_interrupted_parses(session)
-            items = await _load_unfinished(session)
-            plan = plan_sweep(items, now=datetime.now(UTC), window=window)
-            await _reset_for_rerun(session, plan.rerun)
-            service = GenerationService(session)
-            for item in plan.fail:
-                await service.finish_unfinished_task(
-                    item.task_id,
-                    status="failed",
-                    message=INTERRUPTED_ERROR_MESSAGE,
-                    user_message=INTERRUPTED_USER_MESSAGE,
-                )
-            for item in plan.cancel:
-                await service.finish_unfinished_task(
-                    item.task_id,
-                    status="cancelled",
-                    message=CANCELLED_ERROR_MESSAGE,
-                    user_message=CANCELLED_USER_MESSAGE,
-                )
-            for batch_id in {item.batch_id for item in plan.rerun}:
-                await service.recompute_batch_status(batch_id)
-            await _recompute_settled_batches(session, service)
-            await _discard_orphan_staging(session)
-            resume = sorted([*plan.start, *plan.rerun], key=lambda item: item.created_at)
-            limits = await _load_user_limits(session, {item.user_id for item in resume if item.user_id})
-
-        # 按原来的提交顺序重新排队，个人上限照常生效。
-        for item in resume:
-            if item.user_id is None:
-                continue
-            self.start([item.task_id], item.batch_id, user_id=item.user_id, user_limit=limits[item.user_id])
-        print(
-            f"[generation] 启动扫尾：排队 {len(plan.start)}，重跑 {len(plan.rerun)}，标失败 {len(plan.fail)}，"
-            f"按停止请求收尾 {len(plan.cancel)}",
-            flush=True,
-        )
-        return plan
+    def stats(self) -> dict[str, Any]:
+        return {
+            "worker_id": self.worker_id,
+            "running": len(self._tasks),
+            "draining": int(self._draining),
+            "subscribers": self.subscriber_count(),
+        }
 
 
-async def _load_unfinished(session: AsyncSession) -> list[InterruptedTask]:
+async def _load_unfinished(
+    session: AsyncSession,
+    *,
+    stale_before: datetime,
+    include_pending: bool,
+    exclude: set[uuid.UUID],
+) -> list[InterruptedTask]:
     last_event_at = (
         select(func.max(GenerationEvent.created_at))
         .where(GenerationEvent.task_id == GenerationTask.id)
         .correlate(GenerationTask)
         .scalar_subquery()
     )
-    result = await session.execute(
-        select(
-            GenerationTask.id,
-            GenerationTask.batch_id,
-            GenerationTask.status,
-            GenerationTask.retry_count,
-            GenerationTask.created_at,
-            GenerationTask.started_at,
-            GenerationTask.requested_by_user_id,
-            GenerationTask.cancel_requested_at,
-            last_event_at.label("last_event_at"),
-        ).where(GenerationTask.status.in_(("pending", "running")))
+    stale_running = (GenerationTask.status == "running") & (
+        func.coalesce(GenerationTask.heartbeat_at, GenerationTask.started_at, GenerationTask.created_at) < stale_before
     )
+    condition = or_(stale_running, GenerationTask.status == "pending") if include_pending else stale_running
+    query = select(
+        GenerationTask.id,
+        GenerationTask.batch_id,
+        GenerationTask.status,
+        GenerationTask.retry_count,
+        GenerationTask.created_at,
+        GenerationTask.started_at,
+        GenerationTask.requested_by_user_id,
+        GenerationTask.cancel_requested_at,
+        last_event_at.label("last_event_at"),
+    ).where(condition)
+    if exclude:
+        query = query.where(GenerationTask.id.not_in(exclude))
+    result = await session.execute(query)
     return [
         InterruptedTask(
             task_id=row.id,
@@ -650,7 +794,7 @@ async def _recompute_settled_batches(session: AsyncSession, service: GenerationS
     for batch_id in stale:
         await service.recompute_batch_status(batch_id)
     if stale:
-        print(f"[generation] 启动扫尾：重算 {len(stale)} 个停在进行中的批次", flush=True)
+        print(f"[generation] 扫尾：重算 {len(stale)} 个停在进行中的批次", flush=True)
 
 
 def _parse_uuid(payload: str) -> uuid.UUID | None:
@@ -669,10 +813,16 @@ async def _load_user_limits(session: AsyncSession, user_ids: set[uuid.UUID]) -> 
     return limits
 
 
-async def _reset_interrupted_parses(session: AsyncSession) -> None:
-    """上个进程解析到一半退出：原件还在暂存区，状态退回 pending，重跑的任务会重新解析。"""
+async def _reset_stale_parses(session: AsyncSession, stale_before: datetime) -> None:
+    """解析到一半、做解析的 worker 不在了：原件还在暂存区，状态退回 pending，等着的任务会重新解析。"""
     await session.execute(
-        update(GenerationBatch).where(GenerationBatch.parse_status == "running").values(parse_status="pending")
+        update(GenerationBatch)
+        .where(
+            GenerationBatch.parse_status == "running",
+            or_(GenerationBatch.parse_heartbeat_at.is_(None), GenerationBatch.parse_heartbeat_at < stale_before),
+        )
+        .values(parse_status="pending", parse_worker_id=None)
+        .execution_options(synchronize_session=False)
     )
     await session.commit()
 
@@ -715,6 +865,8 @@ async def _reset_for_rerun(session: AsyncSession, items: Sequence[InterruptedTas
         task.model_output_text = None
         task.output_html_storage_key = None
         task.extracted_context = None
+        task.worker_id = None
+        task.heartbeat_at = None
         page = await session.get(Page, task.page_id)
         if page is not None and page.deleted_at is None:
             page.status = "generating"

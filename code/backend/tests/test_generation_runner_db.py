@@ -111,13 +111,26 @@ def _run(flow) -> None:
         engine = create_async_engine(TEST_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1))
         factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
         runner = GenerationRunner(session_factory=factory)
+        await _settle_leftovers(factory)
         try:
             await flow(factory, runner)
         finally:
             await runner.shutdown()
+            await _settle_leftovers(factory)
             await engine.dispose()
 
     asyncio.run(wrapper())
+
+
+async def _settle_leftovers(factory) -> None:
+    """认领会捡起库里所有 pending 任务：别的用例留下的先收掉，免得被这里的假模型跑起来。"""
+    async with factory() as session:
+        await session.execute(
+            update(GenerationTask)
+            .where(GenerationTask.status.in_(["pending", "running"]))
+            .values(status="failed", finished_at=func.now())
+        )
+        await session.commit()
 
 
 async def _create_batch(factory, models: list[str]):
@@ -129,10 +142,13 @@ async def _create_batch(factory, models: list[str]):
     return creation
 
 
-async def _start(runner: GenerationRunner, factory, creation, task_ids=None, limit: int = 10) -> None:
+async def _start(runner: GenerationRunner, factory, creation, _task_ids=None, limit: int = 10) -> None:
+    """按个人上限 limit 认领这个用户所有 pending 的任务（和线上一样，不能只挑其中几个）。"""
     owner = (await _task(factory, creation.runs[0].task_id)).requested_by_user_id
-    ids = task_ids if task_ids is not None else [run.task_id for run in creation.runs]
-    runner.start(ids, creation.batch_id, user_id=owner, user_limit=limit)
+    async with factory() as session:
+        await session.execute(update(User).where(User.id == owner).values(generation_concurrency=limit))
+        await session.commit()
+    runner.kick()
 
 
 async def _task(factory, task_id) -> GenerationTask:
@@ -159,7 +175,7 @@ async def _wait_until(check, timeout: float = 10.0) -> None:
 
 async def _wait_idle(runner: GenerationRunner, timeout: float = 10.0) -> None:
     async def idle() -> bool:
-        return not runner._tasks
+        return runner.idle()
 
     await _wait_until(idle, timeout)
 
@@ -439,9 +455,12 @@ def test_hard_cancel_when_model_stalls():
     _run(flow)
 
 
-def test_cancel_queued_task_returns_false():
+def test_cancel_queued_task_returns_false(monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "generation_max_concurrency", 0)  # 全站名额为 0：永远排队
+
     async def flow(factory, runner):
-        runner._global_gate = runner_module.FifoGate(0)  # 全站名额为 0：永远排队
         creation = await _create_batch(factory, ["ok"])
         task_id = creation.runs[0].task_id
         await _start(runner, factory, creation, [task_id])
@@ -497,7 +516,6 @@ def test_user_limit_queues_in_order_and_backfills():
         for task_id in ids[1:]:
             await runner.cancel(task_id)
         await _wait_idle(runner)
-        assert not runner._user_gates
 
     _run(flow)
 
@@ -527,9 +545,12 @@ def test_raising_user_limit_starts_queued_task():
     _run(flow)
 
 
-def test_global_limit_queue_reason_and_other_users_unaffected_by_user_limit():
+def test_global_limit_queue_reason_and_other_users_unaffected_by_user_limit(monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "generation_max_concurrency", 1)
+
     async def flow(factory, runner):
-        runner._global_gate = runner_module.FifoGate(1)
         first = await _create_batch(factory, ["slow"])
         second = await _create_batch(factory, ["slow"])
         await _start(runner, factory, first)
@@ -551,7 +572,6 @@ def test_global_limit_queue_reason_and_other_users_unaffected_by_user_limit():
         await _wait_until(b_running)
         await runner.cancel(b)
         await _wait_idle(runner)
-        assert runner._global().active == 0
 
     _run(flow)
 
@@ -633,9 +653,9 @@ def test_startup_sweep_reruns_recent_and_fails_stale(monkeypatch):
             )
             await session.commit()
 
-        started: list[uuid.UUID] = []
-        monkeypatch.setattr(runner, "start", lambda task_ids, batch_id, **_kw: started.extend(task_ids))
-        await runner.startup_sweep()
+        monkeypatch.setattr(runner, "kick", lambda: None)
+        plan = await runner.startup_sweep()
+        started = [item.task_id for item in [*plan.rerun, *plan.start]]
 
         r1 = await _task(factory, ids["r1"])
         assert (r1.status, r1.retry_count, r1.started_at) == ("pending", 1, None)

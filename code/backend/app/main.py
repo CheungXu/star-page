@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -22,9 +23,11 @@ from app.api.routes_reports import router as reports_router
 from app.api.routes_scenes import router as scenes_router
 from app.core.config import get_settings
 from app.core.executors import install_default_executor
+from app.core.metrics import start_metrics
 from app.services.billing.errors import AnonLimitError
 from app.services.generation_bus import CHANNEL_BATCH, GenerationBus
 from app.services.generation_runner import generation_runner
+from app.services.page_cache import page_source_cache
 
 settings = get_settings()
 
@@ -35,6 +38,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError("APP_ROLE=worker 的进程用 python -m app.worker 启动，不要用 uvicorn")
     install_default_executor()
     bus: GenerationBus | None = None
+    background: list[asyncio.Task[None]] = []
     if settings.app_role == "web":
         # web 不跑生成也不扫尾：生成在 worker 里，事件流靠监听 worker 发来的批次通知唤醒。
         # 连上和断开时都唤醒全部订阅者：连上时补读断线期间漏掉的事件，断开时让它们马上改成定时读库。
@@ -44,18 +48,42 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         bus.on_disconnect(generation_runner.wake_all)
         generation_runner.attach_bus(bus)
         await bus.start()
-    elif settings.generation_startup_sweep:
-        # 单进程：上一个进程留下的 pending/running 任务，近期中断的从头重跑一次，其余标失败。
+    else:
+        # 单进程：同时是 worker，没有通知总线，靠定时扫描兜底。
         # 共用线上库的预览实例要设 GENERATION_STARTUP_SWEEP=false。
-        try:
-            await generation_runner.startup_sweep()
-        except Exception as exc:  # noqa: BLE001 - 扫尾失败不阻止服务启动
-            print(f"[generation] 启动扫尾失败：{exc!r}", flush=True)
+        if settings.generation_startup_sweep:
+            try:
+                await generation_runner.startup_sweep()
+            except Exception as exc:  # noqa: BLE001 - 扫尾失败不阻止服务启动
+                print(f"[generation] 启动扫尾失败：{exc!r}", flush=True)
+        background.append(asyncio.create_task(generation_runner.run_scan_loop(settings.generation_dispatch_scan_seconds)))
+        background.append(asyncio.create_task(generation_runner.run_heartbeat_loop(settings.generation_heartbeat_seconds)))
+        generation_runner.kick()
+    metrics = start_metrics(settings.app_role, settings.metrics_interval_seconds, lambda: _web_metrics(bus))
+    if metrics is not None:
+        background.append(metrics)
     yield
+    for task in background:
+        task.cancel()
     if bus is not None:
         await bus.stop()
-    # 退出时只取消协程、不改状态，留给下次启动扫尾。
+    # 退出时只取消协程、不改状态，交给其他 worker 或下次启动接手。
     await generation_runner.shutdown()
+
+
+def _web_metrics(bus: GenerationBus | None) -> dict[str, object]:
+    values: dict[str, object] = {
+        "sse": generation_runner.subscriber_count(),
+        "page_cache_items": len(page_source_cache),
+        "page_cache_mb": round(page_source_cache.bytes / 1024 / 1024, 1),
+        "page_cache_hits": page_source_cache.hits,
+        "page_cache_misses": page_source_cache.misses,
+    }
+    if bus is not None:
+        values["bus"] = int(bus.healthy)
+    else:
+        values["running"] = len(generation_runner._tasks)
+    return values
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

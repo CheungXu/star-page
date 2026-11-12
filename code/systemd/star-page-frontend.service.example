@@ -1,6 +1,6 @@
 [Unit]
 Description=星页 StarPage · Next.js Frontend
-After=network-online.target star-page-web@8000.service star-page-web@8001.service
+After=network-online.target star-page-web@8000.service star-page-web@8001.service star-page-web@8002.service
 Wants=network-online.target
 
 [Service]

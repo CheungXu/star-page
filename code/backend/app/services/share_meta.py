@@ -1,8 +1,14 @@
-"""给生成页补上微信分享用的 Open Graph 信息、打印脚本和「制作同款」浮标。"""
+"""给生成页补上微信分享用的 Open Graph 信息、打印脚本和「制作同款」浮标。
+
+默认不解析整页：只在 <head> 里删掉同名标签、在 </head> 前插入新标签、在最后一个 </body> 前插入脚本。
+50KB 的页面约 0.1 毫秒，可以直接在事件循环里做。找不到 </head> 的不规整页面才退回 BeautifulSoup（约 30 毫秒）。
+"""
 
 from __future__ import annotations
 
+import html as html_lib
 import json
+import re
 
 from bs4 import BeautifulSoup
 
@@ -55,6 +61,16 @@ _BADGE_SCRIPT = """
 })();
 """
 
+_PRINT_SCRIPT = "window.addEventListener('load',function(){setTimeout(function(){window.print();},400);});"
+_PLACEHOLDER_TITLES = {"", "生成页面"}
+
+# <head> 里要跳过的原文块：注释、脚本、样式、标题里的文字都可能出现 "</head>" 或 "<meta" 字样。
+_HEAD_TOKEN = re.compile(r"<!--|<(script|style|title|textarea|noscript)\b|</head\s*>", re.I)
+_CLOSE_TAG = {name: re.compile(rf"</{name}\s*>", re.I) for name in ("script", "style", "title", "textarea", "noscript")}
+# 属性值里可以有 ">"，按引号配对整段跳过。
+_META_TAG = re.compile(r"<meta\b(?:[^>\"']|\"[^\"]*\"|'[^']*')*>", re.I)
+_ATTR = re.compile(r"""([^\s=/>"']+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""")
+
 
 def inject_share_meta(
     html: str,
@@ -75,6 +91,168 @@ def inject_share_meta(
     report_url 有值时浮标旁多一个「举报」。force_title 为真时（用户自定义了分享标题）连页面 <title> 一起换掉，
     微信等只读 <title> 的地方显示的也是用户写的标题。
     """
+    options = dict(
+        title=title,
+        description=description,
+        image_url=image_url,
+        page_url=page_url,
+        print_after_load=print_after_load,
+        remix_url=remix_url,
+        poster_url=poster_url,
+        report_url=report_url,
+        force_title=force_title,
+    )
+    fast = inject_share_meta_fast(html, **options)
+    return fast if fast is not None else inject_share_meta_with_soup(html, **options)
+
+
+def inject_share_meta_fast(
+    html: str,
+    *,
+    title: str,
+    description: str,
+    image_url: str | None = None,
+    page_url: str | None = None,
+    print_after_load: bool = False,
+    remix_url: str | None = None,
+    poster_url: str | None = None,
+    report_url: str | None = None,
+    force_title: bool = False,
+) -> str | None:
+    """不解析整页的版本，结果与 inject_share_meta 相同。找不到完整的 <head> 时返回 None，调用方改用 BeautifulSoup。"""
+    scan = _scan_head(html)
+    if scan is None:
+        return None
+    head_end, skipped, title_span = scan
+
+    metas: list[tuple[str, str, str]] = [
+        ("property", "og:title", title),
+        ("property", "og:description", description),
+        ("property", "og:type", "website"),
+    ]
+    if page_url:
+        metas.append(("property", "og:url", page_url))
+    if image_url:
+        metas.append(("property", "og:image", image_url))
+    metas.append(("name", "description", description))
+    replaced = {key for _attr, key, _value in metas}
+
+    edits: list[tuple[int, int, str]] = []
+    for match in _META_TAG.finditer(html, 0, head_end):
+        if _inside(match.start(), skipped):
+            continue
+        attrs = _attrs(match.group(0))
+        key = (attrs.get("property") or attrs.get("name") or "").strip().lower()
+        if key in replaced:
+            edits.append((match.start(), match.end(), ""))
+
+    block = "".join(f'<meta {attr}="{key}" content="{_attr_escape(value)}">' for attr, key, value in metas)
+    if title_span is None:
+        block += f"<title>{html_lib.escape(title, quote=False)}</title>"
+    else:
+        inner_start, inner_end = title_span
+        current = html_lib.unescape(html[inner_start:inner_end]).strip()
+        if not current or (title and (force_title or current in _PLACEHOLDER_TITLES)):
+            edits.append((inner_start, inner_end, html_lib.escape(title, quote=False)))
+    edits.append((head_end, head_end, block))
+
+    script: str | None = None
+    if print_after_load:
+        script = _PRINT_SCRIPT
+    elif remix_url:
+        script = build_badge_script(remix_url=remix_url, poster_url=poster_url, report_url=report_url)
+    if script is not None:
+        lowered = html.lower()
+        at = lowered.rfind("</body")
+        if at < head_end:
+            at = lowered.rfind("</html")
+        if at < head_end:
+            at = len(html)
+        edits.append((at, at, f"<script>{script}</script>"))
+
+    edits.sort(key=lambda item: (item[0], item[1]))
+    parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in edits:
+        parts.append(html[cursor:start])
+        parts.append(replacement)
+        cursor = end
+    parts.append(html[cursor:])
+    return "".join(parts)
+
+
+def extract_title(html: str) -> str:
+    """页面 <title> 的文字（去掉首尾空白），没有就返回空串。只看页面头部。"""
+    scan = _scan_head(html)
+    if scan is None:
+        soup = BeautifulSoup(html, "html.parser")
+        return soup.title.get_text(" ", strip=True) if soup.title else ""
+    title_span = scan[2]
+    if title_span is None:
+        return ""
+    return " ".join(html_lib.unescape(html[title_span[0] : title_span[1]]).split())
+
+
+def _scan_head(html: str) -> tuple[int, list[tuple[int, int]], tuple[int, int] | None] | None:
+    """返回 (</head> 的位置, 要跳过的原文块, 第一个 <title> 的文字范围)。没有 </head> 或块没闭合时返回 None。"""
+    skipped: list[tuple[int, int]] = []
+    title_span: tuple[int, int] | None = None
+    pos = 0
+    while True:
+        match = _HEAD_TOKEN.search(html, pos)
+        if match is None:
+            return None
+        token = match.group(0)
+        if token.startswith("</"):
+            return match.start(), skipped, title_span
+        if token == "<!--":
+            close = html.find("-->", match.end())
+            if close == -1:
+                return None
+            skipped.append((match.start(), close + 3))
+            pos = close + 3
+            continue
+        name = match.group(1).lower()
+        open_end = html.find(">", match.end())
+        close_match = _CLOSE_TAG[name].search(html, open_end + 1) if open_end != -1 else None
+        if close_match is None:
+            return None
+        skipped.append((match.start(), close_match.end()))
+        if name == "title" and title_span is None:
+            title_span = (open_end + 1, close_match.start())
+        pos = close_match.end()
+
+
+def _inside(position: int, spans: list[tuple[int, int]]) -> bool:
+    return any(start <= position < end for start, end in spans)
+
+
+def _attrs(tag: str) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for match in _ATTR.finditer(tag, 5):
+        value = next((group for group in match.groups()[1:] if group is not None), "")
+        found.setdefault(match.group(1).lower(), html_lib.unescape(value))
+    return found
+
+
+def _attr_escape(value: str) -> str:
+    return html_lib.escape(value or "", quote=True)
+
+
+def inject_share_meta_with_soup(
+    html: str,
+    *,
+    title: str,
+    description: str,
+    image_url: str | None = None,
+    page_url: str | None = None,
+    print_after_load: bool = False,
+    remix_url: str | None = None,
+    poster_url: str | None = None,
+    report_url: str | None = None,
+    force_title: bool = False,
+) -> str:
+    """整页解析的版本：页面结构不规整、快速插入做不了时用。"""
     soup = BeautifulSoup(html, "html.parser")
     head = soup.head
     if head is None:
