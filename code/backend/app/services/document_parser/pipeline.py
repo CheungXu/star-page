@@ -13,10 +13,12 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, or_, select, update
@@ -25,15 +27,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.executors import parse_executor
 from app.models.entities import Conversation, GenerationBatch, GenerationTask, PageAsset, User
+from app.services.document_parser.child import run_parse_subprocess
 from app.services.document_parser.errors import DocumentParseError
 from app.services.document_parser.limits import BATCH_MAX_SNAPSHOTS, PARSE_TIMEOUT_SECONDS
 from app.services.document_parser.parse import parse_document
 from app.services.document_parser.types import IMAGE_PLACEHOLDER, SNAPSHOT_PLACEHOLDER, ParsedDocument, StagedDocument
 from app.services.storage.factory import create_storage_provider
 
+_DEFAULT_PARSE_DOCUMENT = parse_document
+
 STAGING_PREFIX = "batch-uploads"
 SNAPSHOT_PREFIX = "batch-private"
 CANCELLED_PARSE_MESSAGE = "已停止生成"
+REPEATED_PARSE_FAILURE_MESSAGE = "该文件多次解析失败，请检查后重新上传"
+MAX_PARSE_ATTEMPTS = 2
 # 别的 worker 在解析时，多久查一次它做完没有。
 PARSE_WAIT_POLL_SECONDS = 1.0
 PROCESS_WORKER_ID = f"{socket.gethostname()[:32]}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
@@ -58,9 +65,16 @@ async def stage_documents(documents: list[StagedDocument]) -> list[dict[str, Any
     try:
         for index, document in enumerate(documents):
             key = staging_key(staging_id, index, document.extension)
-            await storage.put_bytes(key, document.data, "application/octet-stream")
+            if document.file is not None:
+                await storage.put_stream(key, document.file, "application/octet-stream")
+                byte_size = document.byte_size
+            elif document.data is not None:
+                await storage.put_bytes(key, document.data, "application/octet-stream")
+                byte_size = len(document.data)
+            else:
+                raise ValueError(f"{document.filename} 缺少可暂存的文件内容")
             staged.append(
-                {"storage_key": key, "filename": document.filename, "extension": document.extension, "byte_size": len(document.data)}
+                {"storage_key": key, "filename": document.filename, "extension": document.extension, "byte_size": byte_size}
             )
     except Exception:
         await discard_staged(staged)
@@ -119,6 +133,18 @@ def hand_over_on_exit() -> None:
     """进程退出前调用：之后被取消的解析不记失败，交给别的 worker 接手。"""
     global _handing_over
     _handing_over = True
+
+
+async def shutdown_parse_jobs(timeout: float = 3.0) -> None:
+    """进程退出时取消仍在运行的批次解析任务（触发子进程强杀与续期交出），并在关闭连接池前等收尾完成。"""
+    hand_over_on_exit()
+    for checker in list(_background):
+        checker.cancel()
+    tasks = [job.task for job in list(_jobs.values()) if not job.task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.wait(tasks, timeout=timeout)
 
 
 def active_parse_jobs() -> int:
@@ -214,25 +240,36 @@ async def _run_parse(batch_id: uuid.UUID) -> None:
         await asyncio.sleep(PARSE_WAIT_POLL_SECONDS)
 
 
+def _claimable_clause(lease: timedelta):
+    return or_(
+        GenerationBatch.parse_status == "pending",
+        (GenerationBatch.parse_status == "running")
+        & or_(
+            GenerationBatch.parse_heartbeat_at.is_(None),
+            GenerationBatch.parse_heartbeat_at < func.now() - lease,
+        ),
+    )
+
+
 async def _claim_parse(batch_id: uuid.UUID) -> str:
     """返回 done（不用解析或已解析完）、mine（本进程抢到了）、busy（别的 worker 在做）。解析失败直接抛错。"""
     lease = timedelta(seconds=max(1.0, get_settings().generation_worker_lease_seconds))
+    claimable = _claimable_clause(lease)
     async with _new_session() as session:
         claimed = (
             await session.execute(
                 update(GenerationBatch)
                 .where(
                     GenerationBatch.id == batch_id,
-                    or_(
-                        GenerationBatch.parse_status == "pending",
-                        (GenerationBatch.parse_status == "running")
-                        & or_(
-                            GenerationBatch.parse_heartbeat_at.is_(None),
-                            GenerationBatch.parse_heartbeat_at < func.now() - lease,
-                        ),
-                    ),
+                    GenerationBatch.parse_attempts < MAX_PARSE_ATTEMPTS,
+                    claimable,
                 )
-                .values(parse_status="running", parse_worker_id=PROCESS_WORKER_ID, parse_heartbeat_at=func.now())
+                .values(
+                    parse_status="running",
+                    parse_worker_id=PROCESS_WORKER_ID,
+                    parse_heartbeat_at=func.now(),
+                    parse_attempts=GenerationBatch.parse_attempts + 1,
+                )
                 .returning(GenerationBatch.id)
                 .execution_options(synchronize_session=False)
             )
@@ -242,7 +279,12 @@ async def _claim_parse(batch_id: uuid.UUID) -> str:
             return "mine"
         row = (
             await session.execute(
-                select(GenerationBatch.parse_status, GenerationBatch.parse_error).where(GenerationBatch.id == batch_id)
+                select(
+                    GenerationBatch.parse_status,
+                    GenerationBatch.parse_error,
+                    GenerationBatch.parse_attempts,
+                    claimable.label("is_claimable"),
+                ).where(GenerationBatch.id == batch_id)
             )
         ).first()
         await session.commit()
@@ -250,7 +292,51 @@ async def _claim_parse(batch_id: uuid.UUID) -> str:
         return "done"
     if row.parse_status == "failed":
         raise DocumentParseError(row.parse_error or "文件解析失败，请重新上传")
+    if row.is_claimable and row.parse_attempts >= MAX_PARSE_ATTEMPTS:
+        await _fail_exhausted_parse(batch_id, lease)
     return "busy"
+
+
+async def _fail_exhausted_parse(batch_id: uuid.UUID, lease: timedelta) -> None:
+    """毒文件保护：尝试次数已满且上一轮又失联时，直接标记失败、清理原件并退回一次免费次数，不再接手重做。"""
+    claimable = _claimable_clause(lease)
+    staged: list[dict[str, Any]] = []
+    snapshots: list[dict[str, Any]] = []
+    should_cleanup = False
+    error_message = REPEATED_PARSE_FAILURE_MESSAGE
+    async with _new_session() as session:
+        locked = (
+            await session.execute(
+                select(GenerationBatch, claimable.label("is_claimable"))
+                .where(GenerationBatch.id == batch_id)
+                .with_for_update()
+            )
+        ).first()
+        if locked is None:
+            return
+        batch, is_claimable = locked
+        if batch.parse_status in {"none", "succeeded"}:
+            await session.commit()
+            return
+        if batch.parse_status == "failed":
+            error_message = batch.parse_error or REPEATED_PARSE_FAILURE_MESSAGE
+            await session.commit()
+            raise DocumentParseError(error_message)
+        if not is_claimable or batch.parse_attempts < MAX_PARSE_ATTEMPTS:
+            await session.commit()
+            return
+        staged = list(batch.staged_uploads or [])
+        snapshots = list(batch.visual_snapshots or [])
+        batch.parse_status = "failed"
+        batch.parse_error = REPEATED_PARSE_FAILURE_MESSAGE
+        batch.staged_uploads = []
+        await session.commit()
+        await refund_free_trial_once(session, batch_id)
+        should_cleanup = True
+    if should_cleanup:
+        await discard_staged(staged)
+        await discard_snapshots(snapshots)
+    raise DocumentParseError(error_message)
 
 
 async def _parse_heartbeat(batch_id: uuid.UUID) -> None:
@@ -275,13 +361,20 @@ async def _parse_heartbeat(batch_id: uuid.UUID) -> None:
 
 
 async def _hand_over_parse(batch_id: uuid.UUID) -> None:
-    """进程退出时解析没做完：状态留在 running、作废续期，原件不删，别的 worker 马上可以接手重做。"""
+    """进程退出时解析没做完：状态留在 running、作废续期并退回本次主动交出的尝试计数，原件不删，别的 worker 马上可以接手重做。"""
     try:
         async with _new_session() as session:
             await session.execute(
                 update(GenerationBatch)
-                .where(GenerationBatch.id == batch_id, GenerationBatch.parse_worker_id == PROCESS_WORKER_ID)
-                .values(parse_heartbeat_at=None)
+                .where(
+                    GenerationBatch.id == batch_id,
+                    GenerationBatch.parse_status == "running",
+                    GenerationBatch.parse_worker_id == PROCESS_WORKER_ID,
+                )
+                .values(
+                    parse_heartbeat_at=None,
+                    parse_attempts=func.greatest(GenerationBatch.parse_attempts - 1, 0),
+                )
                 .execution_options(synchronize_session=False)
             )
             await session.commit()
@@ -318,6 +411,7 @@ async def _parse_owned(batch_id: uuid.UUID) -> bool:
 
         stored_assets: list[PageAsset] = []
         snapshots: list[dict[str, Any]] = []
+        committed = False
         try:
             # 归属和原件清单先读出来并提交。后面的下载、解析、上传不再占着连接。
             owner_id = await _batch_owner_id(session, batch)
@@ -326,6 +420,7 @@ async def _parse_owned(batch_id: uuid.UUID) -> bool:
 
             parsed = await _parse_staged(staged)
             text, documents_meta = await _store_outputs(batch, owner_id, parsed, stored_assets, snapshots)
+            parsed.clear()
             if not await _lock_if_owner(session, batch_id):
                 await session.rollback()
                 await _discard_lost_outputs(stored_assets)
@@ -342,9 +437,13 @@ async def _parse_owned(batch_id: uuid.UUID) -> bool:
                 update(GenerationTask).where(GenerationTask.batch_id == batch_id).values(extracted_file_text=text)
             )
             await session.commit()
+            committed = True
             await discard_staged(staged)
             return True
         except asyncio.CancelledError:
+            if committed:
+                await asyncio.shield(discard_staged(staged))
+                return True
             if _handing_over:
                 # 先删再交出：交出后接手的 worker 会按同样的键重新上传快照。
                 await _delete_keys([asset.storage_key for asset in stored_assets] + [item.get("storage_key") for item in snapshots])
@@ -375,23 +474,39 @@ async def _parse_staged(staged: list[dict[str, Any]]) -> list[ParsedDocument]:
     parsed: list[ParsedDocument] = []
     for item in staged:
         filename = item.get("filename") or "未命名文件"
-        data = await storage.get_bytes(item["storage_key"])
-        try:
-            # 线程里的解析超时后无法强行中止，只能不再等它；上限保证了单个文件的工作量有界。
-            loop = asyncio.get_running_loop()
-            document = await asyncio.wait_for(
-                loop.run_in_executor(parse_executor(), parse_document, filename, item.get("extension") or "", data),
-                timeout=PARSE_TIMEOUT_SECONDS,
+        extension = item.get("extension") or ""
+        # 单测显式替换了 pipeline.parse_document 时保留进程内钩子；默认走独立受限子进程。
+        if parse_document is not _DEFAULT_PARSE_DOCUMENT:
+            data = await storage.get_bytes(item["storage_key"])
+            parsed.append(await _parse_in_thread(filename, extension, data))
+            continue
+        with tempfile.TemporaryDirectory(prefix="sp-stage-") as tmp_dir:
+            input_path = Path(tmp_dir) / f"source{extension}"
+            await storage.download_file(item["storage_key"], input_path)
+            document = await run_parse_subprocess(
+                filename=filename,
+                extension=extension,
+                input_path=input_path,
+                timeout_seconds=PARSE_TIMEOUT_SECONDS,
             )
-        except TimeoutError as exc:
-            raise DocumentParseError(f"{filename} 解析超时，请精简后再上传", detail=f"超过 {PARSE_TIMEOUT_SECONDS}s") from exc
-        except Exception as exc:  # noqa: BLE001
-            hint = "；扫描件请确认每页都能正常打开" if item.get("extension") == ".pdf" else ""
-            raise DocumentParseError(
-                f"{filename} 解析失败，请确认文件未加密且内容可读取{hint}", detail=f"{type(exc).__name__}: {exc}"
-            ) from exc
-        parsed.append(document)
+            parsed.append(document)
     return parsed
+
+
+async def _parse_in_thread(filename: str, extension: str, data: bytes) -> ParsedDocument:
+    try:
+        loop = asyncio.get_running_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(parse_executor(), parse_document, filename, extension, data),
+            timeout=PARSE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise DocumentParseError(f"{filename} 解析超时，请精简后再上传", detail=f"超过 {PARSE_TIMEOUT_SECONDS}s") from exc
+    except Exception as exc:  # noqa: BLE001
+        hint = "；扫描件请确认每页都能正常打开" if extension == ".pdf" else ""
+        raise DocumentParseError(
+            f"{filename} 解析失败，请确认文件未加密且内容可读取{hint}", detail=f"{type(exc).__name__}: {exc}"
+        ) from exc
 
 
 async def _batch_owner_id(session: AsyncSession, batch: GenerationBatch) -> uuid.UUID:
@@ -422,12 +537,15 @@ async def _store_outputs(
             placeholder = IMAGE_PLACEHOLDER.format(index=index)
             existing = stored_by_hash.get(image.sha256)
             if existing is not None:
+                image.data = b""
                 text = text.replace(placeholder, anchor_for_image(existing, image.label, image.width, image.height, image.core))
                 continue
             asset_id = uuid.uuid4()
             stored_by_hash[image.sha256] = asset_id
             key = f"page-assets/{asset_id}{image.extension}"
+            byte_size = len(image.data)
             await storage.put_bytes(key, image.data, image.content_type)
+            image.data = b""
             asset = PageAsset(
                 id=asset_id,
                 owner_user_id=owner_id,
@@ -436,7 +554,7 @@ async def _store_outputs(
                 content_type=image.content_type,
                 filename=document.filename[:255],
                 role="doc",
-                byte_size=len(image.data),
+                byte_size=byte_size,
                 training_consent=batch.training_consent,
                 source_kind="doc_embedded",
                 width=image.width,
@@ -451,11 +569,13 @@ async def _store_outputs(
         for index, snapshot in enumerate(document.snapshots):
             placeholder = SNAPSHOT_PLACEHOLDER.format(index=index)
             if len(snapshots) >= BATCH_MAX_SNAPSHOTS:
+                snapshot.data = b""
                 text = text.replace(placeholder, "")
                 continue
             snap_id = f"{batch.id.hex[:8]}-{len(snapshots) + 1}"
             key = snapshot_key(batch.id, snap_id)
             await storage.put_bytes(key, snapshot.data, "image/png")
+            snapshot.data = b""
             snapshots.append(
                 {
                     "snap_id": snap_id,

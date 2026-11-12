@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import BinaryIO
 
 # 解析器在正文里先留占位，入库拿到资源 ID 后再换成锚点文本。
 IMAGE_PLACEHOLDER = "⟦IMG:{index}⟧"
@@ -47,11 +48,21 @@ class ParsedDocument:
 
 @dataclass(frozen=True)
 class StagedDocument:
-    """创建请求里通过预检、等待后台解析的文档。"""
+    """创建请求里通过预检、等待后台解析的文档。
+
+    走 multipart 上传时直接持有 Starlette 的临时文件对象 file，不在进程内存里拷整份字节；
+    直接传 bytes 的调用方（如单测）仍可填 data。
+    """
 
     filename: str
     extension: str
-    data: bytes
+    data: bytes | None = None
+    file: BinaryIO | None = None
+    byte_size: int = 0
+
+    def __post_init__(self) -> None:
+        if self.byte_size == 0 and self.data is not None:
+            object.__setattr__(self, "byte_size", len(self.data))
 
 
 @dataclass(frozen=True)

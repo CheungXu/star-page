@@ -83,15 +83,13 @@ def normalize_image(data: bytes, *, max_edge: int = STORED_IMAGE_MAX_EDGE) -> No
 
 
 def normalize_pil(image: Image.Image, *, max_edge: int = STORED_IMAGE_MAX_EDGE) -> NormalizedImage | None:
-    """pdfium 渲染出的 PIL 图直接编码。"""
+    """pdfium 渲染出的 PIL 图直接编码一次并计算哈希，不再先额外压一遍 PNG。"""
     if min(image.size) < MIN_IMAGE_SIDE or image.width * image.height > MAX_IMAGE_PIXELS:
         return None
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return _reencode(image, max_edge, hashlib.sha256(buffer.getvalue()).hexdigest())
+    return _reencode(image, max_edge, None)
 
 
-def _reencode(image: Image.Image, max_edge: int, digest: str) -> NormalizedImage:
+def _reencode(image: Image.Image, max_edge: int, digest: str | None) -> NormalizedImage:
     image = ImageOps.exif_transpose(image)
     if max(image.size) > max_edge:
         image = image.copy()
@@ -104,7 +102,10 @@ def _reencode(image: Image.Image, max_edge: int, digest: str) -> NormalizedImage
     else:
         image.convert("RGB").save(buffer, format="JPEG", quality=88, optimize=True)
         content_type, extension = "image/jpeg", ".jpg"
-    return NormalizedImage(buffer.getvalue(), content_type, extension, image.width, image.height, digest)
+    encoded = buffer.getvalue()
+    if digest is None:
+        digest = hashlib.sha256(encoded).hexdigest()
+    return NormalizedImage(encoded, content_type, extension, image.width, image.height, digest)
 
 
 def to_data_url(data: bytes, *, max_edge: int = 1536) -> str | None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+from pathlib import Path
 
 from lxml import etree
 from pptx import Presentation
@@ -22,8 +23,8 @@ ROW_BUCKET_RATIO = 0.05
 _A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
 
-def parse_pptx(filename: str, data: bytes, content_sha256: str) -> ParsedDocument:
-    presentation = Presentation(io.BytesIO(data))
+def parse_pptx(filename: str, source: bytes | Path, content_sha256: str) -> ParsedDocument:
+    presentation = Presentation(str(source) if isinstance(source, Path) else io.BytesIO(source))
     slide_width = int(presentation.slide_width or 12192000)
     slide_height = int(presentation.slide_height or 6858000)
     slide_area = max(slide_width * slide_height, 1)

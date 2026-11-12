@@ -53,7 +53,7 @@ journalctl -u 'star-page-worker@*' -u 'star-page-web@*' -f
 journalctl -u 'star-page-*' --since -10min -o cat | grep '^\[metrics\]'   # 每个进程每分钟一行运行指标
 ```
 
-每个进程每 `METRICS_INTERVAL_SECONDS`（默认 60，0 关闭）打印一行 `[metrics]`：事件循环延迟（平均 / 最大毫秒）、默认线程池的线程数和排队数、连接池借出数和突发数、内存（`rss_mb`）、文件描述符数；web 另有事件流订阅数和分享页缓存（条数、MB、命中、未命中），worker 另有 `worker_id`、在跑任务数、是否在排空、在做的批次解析数。代码在 `app/core/metrics.py`。
+每个进程每 `METRICS_INTERVAL_SECONDS`（默认 60，0 关闭）打印一行 `[metrics]`：事件循环延迟（平均 / 最大毫秒）、默认线程池的线程数和排队数、连接池借出数和突发数、内存（`rss_mb`）、文件描述符数；web 另有事件流订阅数和分享页缓存（条数、MB、命中、未命中），worker 另有 `worker_id`、在跑任务数、是否在排空、在做的批次解析数，以及解析子进程指标（`parse_waiting`、`parse_procs`、`parse_last_rss_mb`、`parse_last_ms`、`parse_timeouts`、`parse_ooms`）。代码在 `app/core/metrics.py`。
 
 > 备忘（重要）：常驻服务直接从仓库目录运行且**未开 `--reload`**，只在启动时加载一次代码，改完后端代码必须重启。按改动范围选：
 > - 只改接口、分享页、计费展示、登录等请求路径上的代码：`script/restart_web.sh`。
@@ -63,10 +63,11 @@ journalctl -u 'star-page-*' --since -10min -o cat | grep '^\[metrics\]'   # 每�
 >
 > 滚动重启一定要等前一个实例恢复、再等过 Nginx 的 `fail_timeout`（5 秒）才动下一个，否则 Nginx 会把两个实例同时算作不可用。`script/restart_web.sh` 已经按这个顺序做。
 
-同步代码不能在事件循环里跑，统一放进线程：
+同步代码不能在事件循环里跑，按轻重分层隔离：
 
-- 默认线程池在启动时放大到 `THREAD_POOL_SIZE`（默认 32，`app/core/executors.py`），`asyncio.to_thread` 都用它。文档完整解析用单独的小池 `DOCUMENT_PARSE_THREADS`（默认 3），慢文档不会占满通用池。
-- OSS 客户端按配置在进程内复用（`storage/factory.py`），连接池 64。读对象时 `get_object` 和 `.read()` 在同一个线程里做完：`get_object` 只读完响应头就返回。
+- 默认线程池在启动时放大到 `THREAD_POOL_SIZE`（默认 32，`app/core/executors.py`），`asyncio.to_thread`（OSS 读写、流式预检、微信支付、分享图等）都用它。
+- 文档完整解析不跑在 worker 进程线程里，而是由 `app/services/document_parser/child.py` 按单份文件拉起**受限子进程**（`nice(10)` + `RLIMIT_AS`，默认 `DOCUMENT_PARSE_MAX_MEMORY_MB=1536`），由信号量限制单 worker 并发 `DOCUMENT_PARSE_CONCURRENCY`（默认 1，兼容旧环境变量名 `DOCUMENT_PARSE_THREADS`）。原件从 OSS 直接流式落盘到临时文件再交给子进程，超时或取消时 `SIGKILL` 进程组并用 `os.wait4` 回收及采集 `ru_maxrss`，既不抢父进程 GIL 也不留内存碎片。
+- OSS 客户端按配置在进程内复用（`storage/factory.py`），连接池 64。上传原件走 `put_stream` 直接读 Starlette 的 `SpooledTemporaryFile`，下载原件走 `download_file` 按块写临时文件；读小对象正文时 `get_object` 和 `.read()` 在同一个线程里做完。
 - 纯 Python 的 HTML 解析放进线程只是不卡事件循环，同一进程内仍只用一个核，要多核靠多开 web 实例。
 
 访问者 IP（匿名额度、短信防刷）只读 Nginx 用 `$remote_addr` 写入的 `X-Real-IP`，不读客户端能伪造的 `X-Forwarded-For`；本地没有 Nginx 时用连接对端地址。新建匿名身份时同一网络当天超限抛的 `AnonLimitError`，由 `main.py` 的全局处理统一回 402 + `need_login`。
@@ -175,8 +176,8 @@ journalctl -u 'star-page-*' --since -10min -o cat | grep '^\[metrics\]'   # 每�
 
 上传资料的处理分三段，细节见 `app/services/document_parser/README.md`：
 
-1. **创建请求只做预检**：文件头、能否打开、是否加密、PDF 不超过 30 页、PPTX 不超过 40 页、DOCX 不超过 2000 段、Office 文件解压后不超过 150MB。不合格直接 4xx，不建批次、不扣免费次数。图片直接入 `page_assets`，文档原件暂存私有存储，接口立即返回。
-2. **后台解析一次，全批共用**：第一个开跑的模型拉起解析任务，同批其他模型等同一个结果；停掉某个模型不会打断解析，只有同批已经没有排队或在跑的任务时才取消。PDF 用 pdfplumber + pypdfium2，PPTX / DOCX / Excel 各有专门解析器。文档配图（每个文档最多 20 张）进 `page_assets`；少字大图页、扫描页渲染成整页快照，存私有键，`/assets` 读不到。原件解析完即删。
+1. **创建请求只做流式轻预检**：先用 `UploadFile.size` 拦截空文件与超限文件，再直接基于 Starlette 落盘的临时文件流检查文件头、能否打开、是否加密、PDF 不超过 30 页、PPTX 不超过 40 页、DOCX 流式 `iterparse` 不超过 2000 段、Office 文件解压后不超过 150MB。不合格直接 4xx，不建批次、不扣免费次数。图片直接入 `page_assets`，文档原件经 `put_stream` 流式暂存私有存储，web 进程内存不驻留整份文档，接口立即返回。
+2. **后台受限子进程解析一次，全批共用**：第一个开跑的模型拉起解析任务，同批其他模型等同一个结果；停掉某个模型不会打断解析，只有同批已经没有排队或在跑的任务时才取消（取消或排空退出时立即 `SIGKILL` 解析子进程）。PDF 用 pdfplumber（逐页 `flush_cache`）+ 单次打开的 pypdfium2，PPTX / DOCX（收满 20 张图即停）/ Excel（`iter_rows` 流式统计画像）各有专门解析器。文档配图（每个文档最多 20 张）上传后立即释放字节并进 `page_assets`；少字大图页、扫描页渲染成整页快照，存私有键，`/assets` 读不到。原件解析完即删。
 3. **每轮同模型提取**：会话线上只要有文档，每一轮、每个模型都用自己（关闭思考、纯文本、不附图）结合「全部资料 + 历次需求 + 本轮需求」提取本轮用得上的内容；与资料无关时输出 `<EMPTY/>`，这一轮不塞资料。提取用量并入该模型这次生成的用量计费。
 
 写码阶段的图片走两个通道：文档配图在消息里列出 `/assets/{id}` 供页面使用（快照从不列地址）；能读图的模型在本轮新上传了图片、或提取结果点名了某些资料图片时，会收到缩小后的原图（最多 6 张），续写轮次不重复附历史图片。不能读图的模型只收到文字和地址，进度里提示一句。
@@ -208,7 +209,7 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - **执行器与认领**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后，`all` 角色立即认领一轮（`kick`）；`web` 角色发派发通知，收到的 worker 各认领一轮。名额存在库里：**全站上限** `GENERATION_MAX_CONCURRENCY`（默认 48）比的是 `status = 'running'` 的任务数，**个人上限**（默认 `GENERATION_USER_CONCURRENCY=10`，`users.generation_concurrency` 有值时以它为准，会员放宽限制时写这一列或改 `user_concurrency_limit`）比的是该用户 `running` 的任务数。认领在一个事务里做，先拿咨询锁 `pg_advisory_xact_lock`，所有 worker 排着来：按 `created_at, id` 取最早的 `pending` 任务（最多 500 条、每人最多 64 条），个人名额满的跳过（不占全站名额，一个人提交再多也挤不到别人），全站名额满的不再选，选中的用 `UPDATE … WHERE status = 'pending' AND cancel_requested_at IS NULL` 改成 `running` 并记下 `worker_id`。同一批的任务按选模型的顺序错开 1 微秒写 `created_at`，所以按提交顺序开始。没轮到的写一条 `queued` 事件（`reason` 为 `user_limit` 或 `global_limit`，每种原因只写一次），轮到后写 `started`。任务一结束就补领一轮，并通知其他 worker 也补领（`sp_gen_dispatch`，内容 `slot`）。上限调大（改库或改配置）后下一轮认领立即生效。各 worker 的 `GENERATION_*` 上限要一致；`GENERATION_MAX_CONCURRENCY=0` 等于暂停接新任务。每个任务一个 `asyncio.Task`、各自一个数据库会话。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
 - **续期与接手**（迁移 `026`）：worker 每 `GENERATION_HEARTBEAT_SECONDS`（默认 10 秒）把手上任务的 `heartbeat_at` 刷成现在。超过 `GENERATION_WORKER_LEASE_SECONDS`（默认 45 秒）没续期的 `running` 任务，说明那个 worker 已经不在了：其他 worker 每次定时扫描（默认 5 秒）都会接手，规则同下面的启动扫尾（重跑一次或标失败）。扫尾拿 `pg_try_advisory_xact_lock`，同一时刻只有一个 worker 做；锁放在单独一个会话的事务里，因为扫尾过程中要多次提交。worker 续期时发现任务已经不归自己（被接手后退回 `pending` 或换了 `worker_id`），就停掉本地协程，不写库。续期最多 10 秒才发现一次，所以还有一道写入前的确认：`GenerationService(owner=worker_id)` 写成功、失败、停止这三种终态之前，先 `SELECT … FOR UPDATE` 锁住任务行，确认仍是 `running` 且 `worker_id` 是自己，不是就回滚整个事务（版本、结算、终态都不写）并抛 `TaskLost`；执行器兜底收尾也带上 `owner`。扫尾这边同样在行锁下重新确认任务确实过期才重置或标失败（`_reset_for_rerun`、`finish_unfinished_task(stale_before=…)`），防止查出来到动手之间执行者又续上了期。
 - **排空**（`app/worker.py`）：worker 收到 SIGTERM 后不再认领，停止请求和续期照常处理，等手上的任务和批次解析都结束再退出，最多 `WORKER_DRAIN_TIMEOUT_SECONDS`（默认 360 秒）。超时或排空中再收到一次信号时，取消剩下的协程，不改状态，把它们的 `heartbeat_at` 改成 1970 年，其他 worker 下一次扫描（5 秒内）就接手重跑；被 SIGKILL 时等 45 秒续期过期。systemd 的 `TimeoutStopSec` 设成 390 秒。
-- **批次解析跨 worker**（`app/services/document_parser/pipeline.py`）：同一批的几个模型可能分在不同 worker 上，资料只解析一次。用原子更新抢解析（`parse_status` 是 `pending`，或是 `running` 但 `parse_heartbeat_at` 超过续期时限），抢到的每 10 秒续期，其余的每秒查一次结果。进程退出时没做完的解析清空续期、不删原件，留给别的 worker 马上接手；只有用户停止时才记失败。写成功或失败结果前先锁住批次行，确认 `parse_worker_id` 仍是本进程；已被接手就只删本进程上传的配图（快照键按批次固定，接手方会写同一个键，不能删），不碰原件，回去等接手方的结果。
+- **批次解析跨 worker 与防毒文件**（`app/services/document_parser/pipeline.py`，迁移 `027`）：同一批的几个模型可能分在不同 worker 上，资料只解析一次。用原子更新抢解析（`parse_attempts < 2` 且 `parse_status` 是 `pending` 或续期已过期），抢到时 `parse_attempts + 1` 并每 10 秒续期，其余的每秒查一次结果。进程正常退出交接（`_hand_over_parse`）时清空续期并退回本次尝试计数、不删原件，留给别的 worker 马上接手；若某份异常文件连续两次让 worker 崩溃失联（`parse_attempts >= 2` 且续期再次过期），下一个检查的 worker 直接把批次标 `failed`（「该文件多次解析失败，请检查后重新上传」）、删原件并退回一次免费次数，不再反复接手导致连环崩溃。写成功或失败结果前先锁住批次行，确认 `parse_worker_id` 仍是本进程；已被接手就只删本进程上传的配图（快照键按批次固定，接手方会写同一个键，不能删），不碰原件，回去等接手方的结果。
 - **停止**：先协作式中止，在两个模型 chunk 之间检查，写成 `cancelled`；3 秒内模型没吐下一个 chunk 就直接取消协程，再由兜底写库。模型已经完整输出后不再响应停止，页面照常发布。
 - **停止接口**（`GenerationService.request_cancel`，所有角色都走它）：对每个未结束的任务加行锁，按锁内看到的状态处理。还是 `pending` 的直接写成已停止并解开冻结（认领条件是 `status = 'pending'`，之后不会再被领走），并发一条批次通知，让挂在其他 web 实例上的事件流马上看到「已停止」；已是 `running` 的只写 `generation_tasks.cancel_requested_at`（迁移 `025`），`all` 角色直接停本进程的协程，`web` 角色通知所有 worker，跑它的那个停下并写终态。不能对 `running` 直接调用 `finish_unfinished_task`：它也会写终态，和 worker 抢着写会把状态改回、重复结算。worker 收到的停止通知不是自己手上的任务时记下 60 秒：可能是本进程刚在库里认领、还没登记，登记时补上停止标志。
 - **终态与收尾事件同事务**：`completed` / `failed` / `cancelled` 事件和任务终态在同一个事务里提交。事件流据此判断「任务结束」，不会出现状态已结束却漏掉 `completed` 的情况。

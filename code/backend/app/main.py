@@ -68,7 +68,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if bus is not None:
         await bus.stop()
     # 退出时只取消协程、不改状态，交给其他 worker 或下次启动接手。
-    await generation_runner.shutdown()
+    if settings.runs_generation:
+        from app.services.document_parser.pipeline import hand_over_on_exit, shutdown_parse_jobs
+
+        hand_over_on_exit()
+        await generation_runner.shutdown()
+        await shutdown_parse_jobs()
+    else:
+        await generation_runner.shutdown()
 
 
 def _web_metrics(bus: GenerationBus | None) -> dict[str, object]:
@@ -82,7 +89,10 @@ def _web_metrics(bus: GenerationBus | None) -> dict[str, object]:
     if bus is not None:
         values["bus"] = int(bus.healthy)
     else:
+        from app.services.document_parser.child import parse_subprocess_stats
+
         values["running"] = len(generation_runner._tasks)
+        values.update(parse_subprocess_stats())
     return values
 
 

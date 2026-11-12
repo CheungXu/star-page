@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import statistics
+from pathlib import Path
 
 import docx
 from lxml import etree
@@ -35,26 +36,51 @@ def _xp(element, expression: str) -> list:
     return etree._Element.xpath(element, expression, namespaces=_NS)
 
 
-def parse_docx(filename: str, data: bytes, content_sha256: str) -> ParsedDocument:
-    document: DocxDocument = docx.Document(io.BytesIO(data))
+def parse_docx(filename: str, source: bytes | Path, content_sha256: str) -> ParsedDocument:
+    docx_input = str(source) if isinstance(source, Path) else io.BytesIO(source)
+    document: DocxDocument = docx.Document(docx_input)
     page_area = _page_area(document)
     body_size = _body_font_size(document)
 
     blocks: list[str] = []
-    pending_images: list[tuple[bytes, float, int]] = []  # (blob, 占页面比例, 插入到 blocks 的位置)
+    images: list[ParsedImage] = []
+    seen: set[str] = set()
+    heading = ""
     textbox_seen: set[str] = set()
     for item in document.iter_inner_content():
         if isinstance(item, Paragraph):
             text = _paragraph_text(item, body_size)
             if text:
+                if text.startswith("#"):
+                    heading = text.lstrip("# ").strip()[:30]
                 blocks.append(text)
             for box in _textboxes(item):
                 if box not in textbox_seen:
                     textbox_seen.add(box)
                     blocks.append(f"（文本框）{box}")
-            for blob, ratio in _paragraph_images(document, item, page_area):
-                pending_images.append((blob, ratio, len(blocks)))
-                blocks.append("")
+            # 有效配图收满上限后立即停止抽取后续图片，避免在内存里囤积整份文档的全部图片字节。
+            if len(images) < DOC_MAX_IMAGES:
+                for blob, ratio in _paragraph_images(document, item, page_area):
+                    if len(images) >= DOC_MAX_IMAGES:
+                        break
+                    normalized = normalize_image(blob)
+                    if normalized is None or normalized.sha256 in seen:
+                        continue
+                    seen.add(normalized.sha256)
+                    images.append(
+                        ParsedImage(
+                            data=normalized.data,
+                            content_type=normalized.content_type,
+                            extension=normalized.extension,
+                            width=normalized.width,
+                            height=normalized.height,
+                            sha256=normalized.sha256,
+                            label=filename + (f"「{heading}」附近" if heading else ""),
+                            area_ratio=ratio,
+                            core=False,
+                        )
+                    )
+                    blocks.append(IMAGE_PLACEHOLDER.format(index=len(images) - 1))
         elif isinstance(item, Table):
             table = _table_text(item)
             if table:
@@ -62,36 +88,9 @@ def parse_docx(filename: str, data: bytes, content_sha256: str) -> ParsedDocumen
 
     char_count = len(re.sub(r"\s+", "", "".join(blocks)))
     low_text = char_count < LOW_TEXT_DOC_CHARS
-    images: list[ParsedImage] = []
-    seen: set[str] = set()
-    heading = ""
-    headings_at: dict[int, str] = {}
-    for index, block in enumerate(blocks):
-        if block.startswith("#"):
-            heading = block.lstrip("# ").strip()[:30]
-        headings_at[index] = heading
-    for blob, ratio, position in pending_images:
-        if len(images) >= DOC_MAX_IMAGES:
-            break
-        normalized = normalize_image(blob)
-        if normalized is None or normalized.sha256 in seen:
-            continue
-        seen.add(normalized.sha256)
-        near = headings_at.get(position, "")
-        images.append(
-            ParsedImage(
-                data=normalized.data,
-                content_type=normalized.content_type,
-                extension=normalized.extension,
-                width=normalized.width,
-                height=normalized.height,
-                sha256=normalized.sha256,
-                label=filename + (f"「{near}」附近" if near else ""),
-                area_ratio=ratio,
-                core=low_text and ratio >= CORE_IMAGE_RATIO,
-            )
-        )
-        blocks[position] = IMAGE_PLACEHOLDER.format(index=len(images) - 1)
+    if low_text:
+        for image in images:
+            image.core = image.area_ratio >= CORE_IMAGE_RATIO
 
     return ParsedDocument(
         filename=filename,

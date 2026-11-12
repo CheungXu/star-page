@@ -44,7 +44,12 @@ async def store_uploaded_images(
 
     prepared: list[tuple[bytes, str, str, str, str, int | None, int | None]] = []
     for index, upload in enumerate(files):
-        data = await upload.read()
+        if upload.size is not None:
+            if upload.size <= 0:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="有一张图片是空的，请重新选择")
+            if upload.size > MAX_IMAGE_BYTES:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="单张图片不能超过 2MB")
+        data = await upload.read(MAX_IMAGE_BYTES + 1)
         if not data:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="有一张图片是空的，请重新选择")
         if len(data) > MAX_IMAGE_BYTES:

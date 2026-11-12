@@ -1,4 +1,4 @@
-"""进程内的线程池：默认池给 asyncio.to_thread 用，文档解析另用一个小池。"""
+"""进程内的线程池：默认池给 asyncio.to_thread 用；文档完整解析已改为独立受限子进程。"""
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +19,7 @@ def install_default_executor() -> None:
 
 
 def executor_load() -> dict[str, int]:
-    """监控用：两个池各自已起的线程数和排队的任务数。"""
+    """监控用：线程池已起的线程数和排队的任务数。"""
     load: dict[str, int] = {}
     for name, pool in (("io", _default_executor), ("parse", _parse_executor)):
         if pool is not None:
@@ -31,6 +31,6 @@ def executor_load() -> dict[str, int]:
 def parse_executor() -> ThreadPoolExecutor:
     global _parse_executor
     if _parse_executor is None:
-        size = max(1, get_settings().document_parse_threads)
+        size = max(1, get_settings().document_parse_concurrency)
         _parse_executor = ThreadPoolExecutor(max_workers=size, thread_name_prefix="sp-parse")
     return _parse_executor

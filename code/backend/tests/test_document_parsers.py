@@ -320,3 +320,64 @@ def test_precheck_rejects_docx_with_too_many_blocks() -> None:
     buffer = io.BytesIO()
     document.save(buffer)
     assert "段落和表格过多" in _expect(422, [("long.docx", buffer.getvalue())])
+
+
+def test_precheck_docx_iterparse_counts_only_direct_body_blocks() -> None:
+    """表格单元格内部的段落不应计入顶层段落上限，避免大表格被误判超限。"""
+    import docx
+
+    document = docx.Document()
+    table = document.add_table(rows=limits.DOCX_MAX_BLOCKS // 2 + 10, cols=3)
+    table.cell(0, 0).text = "表头"
+    buffer = io.BytesIO()
+    document.save(buffer)
+    documents, _images = precheck_uploads([("big_table.docx", buffer.getvalue())])
+    assert len(documents) == 1
+
+
+def test_precheck_upload_file_checks_size_before_reading_and_streams_temp_file() -> None:
+    import tempfile
+    from starlette.datastructures import UploadFile
+
+    class _ExplodingFile(io.BytesIO):
+        def read(self, *_args, **_kwargs):
+            raise AssertionError("超限文件不应触发文件体读取")
+
+    oversized = UploadFile(file=_ExplodingFile(b"x"), size=limits.MAX_FILE_SIZE_BYTES + 1, filename="huge.pdf")
+    with pytest.raises(HTTPException) as caught:
+        precheck_uploads([oversized])
+    assert caught.value.status_code == 413
+    assert "超过 50MB" in str(caught.value.detail)
+
+    raw_pdf = _two_column_pdf()
+    spool = tempfile.SpooledTemporaryFile(max_size=128)
+    spool.write(raw_pdf)
+    spool.seek(0)
+    upload = UploadFile(file=spool, size=len(raw_pdf), filename="streamed.pdf")
+    documents, images = precheck_uploads([upload])
+    assert images == []
+    assert len(documents) == 1
+    assert documents[0].data is None
+    assert documents[0].file is spool
+    assert documents[0].byte_size == len(raw_pdf)
+
+
+def test_docx_stops_collecting_images_at_limit() -> None:
+    import docx
+    from docx.shared import Inches
+
+    document = docx.Document()
+    document.add_heading("多图文档", 1)
+    for index in range(limits.DOC_MAX_IMAGES + 6):
+        document.add_paragraph(f"第 {index} 段说明")
+        document.add_picture(
+            io.BytesIO(jpeg_bytes(240 + index, 180, ((index * 19) % 255, 90, 150))),
+            width=Inches(2),
+        )
+    buffer = io.BytesIO()
+    document.save(buffer)
+    parsed = parse_document("many.docx", ".docx", buffer.getvalue())
+    assert len(parsed.images) == limits.DOC_MAX_IMAGES
+    assert f"⟦IMG:{limits.DOC_MAX_IMAGES - 1}⟧" in parsed.text
+    assert f"⟦IMG:{limits.DOC_MAX_IMAGES}⟧" not in parsed.text
+

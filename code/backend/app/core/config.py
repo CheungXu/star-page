@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import Field, computed_field, field_validator
+from pydantic import AliasChoices, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.services.llm.types import LlmModelConfig
@@ -119,8 +119,13 @@ class Settings(BaseSettings):
     worker_drain_timeout_seconds: float = Field(default=360, alias="WORKER_DRAIN_TIMEOUT_SECONDS")
     # asyncio.to_thread 用的默认线程池。OSS 读写、微信支付、HTML 清洗、分享图都在这里，Python 默认只有 8 个。
     thread_pool_size: int = Field(default=32, alias="THREAD_POOL_SIZE")
-    # 文档完整解析单独的线程池：解析慢且吃 CPU，单独限量，不占上面那个池，免得堵住其他任务的上传和清洗。
-    document_parse_threads: int = Field(default=3, alias="DOCUMENT_PARSE_THREADS")
+    # 单进程同时跑的文档解析子进程数上限（兼容旧环境变量名 DOCUMENT_PARSE_THREADS）。
+    document_parse_concurrency: int = Field(
+        default=1,
+        validation_alias=AliasChoices("DOCUMENT_PARSE_CONCURRENCY", "DOCUMENT_PARSE_THREADS"),
+    )
+    # 单个文档解析子进程的虚拟地址空间上限（MB），超限立即在子进程内触发 MemoryError 终止，不伤父进程。
+    document_parse_max_memory_mb: int = Field(default=1536, alias="DOCUMENT_PARSE_MAX_MEMORY_MB")
     # 每个进程缓存生成页 HTML 原文的上限（字节，按 Python 字符串实际占用算）。0 表示不缓存。
     page_html_cache_max_bytes: int = Field(default=64 * 1024 * 1024, alias="PAGE_HTML_CACHE_MAX_BYTES")
     # 每隔多少秒往日志写一行 [metrics]（事件循环延迟、线程池、连接池等）。0 表示不写。
@@ -274,6 +279,11 @@ class Settings(BaseSettings):
     def runs_generation(self) -> bool:
         """本进程是否调用模型、持有生成名额。web 角色只派发给 worker。"""
         return self.app_role in {"all", "worker"}
+
+    @property
+    def document_parse_threads(self) -> int:
+        """向后兼容旧属性名。"""
+        return self.document_parse_concurrency
 
 
 @lru_cache(maxsize=1)

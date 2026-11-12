@@ -17,10 +17,14 @@ Environment=FRONTEND_ORIGIN=https://stars-page.com
 Environment=APP_ROLE=worker
 Environment=DB_POOL_SIZE=20
 Environment=DB_MAX_OVERFLOW=30
+Environment=DOCUMENT_PARSE_THREADS=1
 ExecStart=/root/star-page/code/backend/.venv/bin/python -m app.worker
 Restart=always
 # 每路模型流式调用、OSS、数据库连接都占一个文件描述符，默认软上限 1024。
 LimitNOFILE=65536
+# 内存兜底（含解析子进程）：超过 2G 开始回收，到 3G 只杀当前 worker，不连累整机。
+MemoryHigh=2G
+MemoryMax=3G
 RestartSec=3
 # 退出时先排空：不领新任务，等手上的跑完（WORKER_DRAIN_TIMEOUT_SECONDS 默认 360 秒），超时的交给别的 worker 接手。
 # 停止超时要比排空时限长，否则排空到一半就被强杀（强杀也不丢任务，只是要等 45 秒续期过期才被接手）。

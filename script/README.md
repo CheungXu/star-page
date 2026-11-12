@@ -272,6 +272,15 @@ code/backend/.venv/bin/python script/compact_generation_events.py
 code/backend/.venv/bin/python script/compact_generation_events.py --apply
 ```
 
+## 文档解析隔离压测：`parse_stress.py`
+
+现场构造 30 页双栏图文 PDF、1000 张图 + 1900 段 DOCX、5 万行 × 100 列 XLSX、40 页 PPTX 四份近上限压力样本，分别测量 web 流式预检、worker 父进程事件循环延迟（`loop_lag_max_ms`）与解析子进程峰值内存（`ru_maxrss`），以及双 worker 同时解析的峰值合计。不连数据库、不碰线上存储。
+
+```bash
+code/backend/.venv/bin/python script/parse_stress.py
+code/backend/.venv/bin/python script/parse_stress.py --json
+```
+
 ## 在脚本进程里补跑（备用）
 
 `resume_stuck_generations.py` 在脚本进程里直接调用模型，把某个批次里仍是 `running`、还没写完页面的任务再跑一遍，结果写回原来的任务和页面。只在后端没法接手时用，不要对后端正在跑的任务用。

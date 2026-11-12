@@ -233,9 +233,10 @@ class GenerationBatch(Base):
     # none（没有文档或老数据）/ pending / running / succeeded / failed
     parse_status: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 正在解析的 worker 和最近一次续期时间：同批的模型可能分在不同 worker 上，只能有一个去解析。
+    # 正在解析的 worker、最近一次续期时间与已尝试次数：同批模型分在不同 worker 上只解析一次，毒文件超过上限不再接手。
     parse_worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parse_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    parse_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     # 整页快照只给模型看，存私有键，不进 page_assets，/assets 读不到。
     visual_snapshots: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
     # 每个文件的内容哈希及其在 extracted_file_text 里的起止位置，多轮按文件去重用。

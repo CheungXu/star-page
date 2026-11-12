@@ -50,6 +50,21 @@ class ParsedGenerationRequest:
 @router.post("", response_model=GenerationCreateResponse)
 async def create_generation(request: Request, response: Response) -> GenerationCreateResponse:
     parsed = await _parse_create_generation_request(request)
+    try:
+        return await _create_generation_from_parsed(request, response, parsed)
+    finally:
+        for item in (*parsed.files, *parsed.images):
+            try:
+                await item.close()
+            except Exception:  # noqa: BLE001
+                continue
+
+
+async def _create_generation_from_parsed(
+    request: Request,
+    response: Response,
+    parsed: ParsedGenerationRequest,
+) -> GenerationCreateResponse:
     scene = get_scene(parsed.scene_key) if parsed.scene_key else None
     if parsed.scene_key and scene is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="未知场景")
@@ -72,10 +87,10 @@ async def create_generation(request: Request, response: Response) -> GenerationC
         if len(composed_prompt.strip()) < 3:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="prompt 不能为空")
 
-        # 预检只做便宜的检查，坏文件在这里直接 4xx；完整解析放到后台，创建请求立即返回。
-        uploads = [(item.filename or "", await item.read()) for item in parsed.files if item.filename]
-        documents, general_images = await asyncio.to_thread(precheck_uploads, uploads)
-        input_file_names = [name for name, _data in uploads]
+        # 预检只做便宜的检查，坏文件在这里直接 4xx；直接复用上传的临时文件流，不在进程里读整份字节。
+        upload_files = [item for item in parsed.files if item.filename]
+        documents, general_images = await asyncio.to_thread(precheck_uploads, upload_files)
+        input_file_names = [item.filename or "" for item in upload_files]
 
         model_prompt = composed_prompt
         stored_images = []

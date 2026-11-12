@@ -107,7 +107,9 @@ def env(monkeypatch, tmp_path):
     recorder = Recorder()
     storage = LocalStorageProvider(str(tmp_path))
     orig_put = storage.put_bytes
+    orig_put_stream = storage.put_stream
     orig_get = storage.get_bytes
+    orig_download = storage.download_file
     orig_text = storage.get_text
 
     async def put_bytes(key, content, content_type):
@@ -117,10 +119,19 @@ def env(monkeypatch, tmp_path):
             recorder.checked_puts += 1
         return await orig_put(key, content, content_type)
 
+    async def put_stream(key, stream, content_type):
+        assert_external_call_idle(required=False)
+        return await orig_put_stream(key, stream, content_type)
+
     async def get_bytes(key):
         assert_external_call_idle(required=True)
         recorder.checked_gets += 1
         return await orig_get(key)
+
+    async def download_file(key, destination):
+        assert_external_call_idle(required=True)
+        recorder.checked_gets += 1
+        return await orig_download(key, destination)
 
     async def get_text(key):
         # 读上一版页面的失败会被调用方吞掉，所以先记下，测试里再断言。
@@ -134,7 +145,9 @@ def env(monkeypatch, tmp_path):
         return await orig_text(key)
 
     storage.put_bytes = put_bytes  # type: ignore[method-assign]
+    storage.put_stream = put_stream  # type: ignore[method-assign]
     storage.get_bytes = get_bytes  # type: ignore[method-assign]
+    storage.download_file = download_file  # type: ignore[method-assign]
     storage.get_text = get_text  # type: ignore[method-assign]
     for module in (pipeline, attachments_module):
         monkeypatch.setattr(module, "create_storage_provider", lambda: storage)
@@ -625,8 +638,163 @@ def test_parse_lost_to_other_worker_writes_nothing(env, monkeypatch):
             # 让本进程下一轮还能抢到。
             async with factory() as session:
                 await session.execute(
-                    update(GenerationBatch).where(GenerationBatch.id == batch_id).values(parse_heartbeat_at=None)
+                    update(GenerationBatch)
+                    .where(GenerationBatch.id == batch_id)
+                    .values(parse_heartbeat_at=None, parse_attempts=0)
                 )
                 await session.commit()
 
     _run(flow)
+
+
+def test_toxic_file_exceeding_max_attempts_fails_and_refunds_once(env):
+    """毒文件让两个 worker 先后失联（超过 MAX_PARSE_ATTEMPTS=2 次）后，第三次直接标记失败、删原件并退回一次免费次数。"""
+
+    async def flow(factory, _runner):
+        user = await _user(factory, anonymous=True)
+        async with factory() as session:
+            session.add(CreditAccount(user_id=user.id, free_generations_used=1))
+            await session.commit()
+        creation, staged = await _create(factory, user, ["vis-a"], [("report.pdf", _report_pdf())])
+        batch_id = creation.batch_id
+
+        async def expire_heartbeat() -> None:
+            async with factory() as session:
+                await session.execute(
+                    update(GenerationBatch)
+                    .where(GenerationBatch.id == batch_id)
+                    .values(parse_heartbeat_at=datetime.now(UTC) - timedelta(minutes=5))
+                )
+                await session.commit()
+
+        # 第 1 次抢占后模拟进程 OOM 崩溃（续期过期）
+        assert await pipeline._claim_parse(batch_id) == "mine"
+        await expire_heartbeat()
+
+        # 第 2 次抢占：在续期内别的 worker 仍看到 busy，不会提前判失败
+        assert await pipeline._claim_parse(batch_id) == "mine"
+        assert await pipeline._claim_parse(batch_id) == "busy"
+        await expire_heartbeat()
+
+        # 第 2 次也崩溃失联后，下一个来接手的直接判失败并退款，不再开启第 3 次解析
+        with pytest.raises(DocumentParseError) as caught:
+            await pipeline._claim_parse(batch_id)
+        assert "多次解析失败" in caught.value.user_message
+
+        async with factory() as session:
+            batch = await session.get(GenerationBatch, batch_id)
+            account = await session.get(CreditAccount, user.id)
+        assert batch.parse_status == "failed"
+        assert batch.parse_attempts == pipeline.MAX_PARSE_ATTEMPTS
+        assert batch.staged_uploads == []
+        assert batch.free_trial_refunded is True
+        assert account.free_generations_used == 0
+        assert not (env.root / staged[0]["storage_key"]).exists()
+
+    _run(flow)
+
+
+def test_worker_shutdown_kills_hung_parse_subprocess_and_hands_over(env, monkeypatch):
+    """排空超时进入退出交接时，卡死的解析子进程被立即强杀，不阻塞退出，且交出后原件和尝试次数保留给接手方。"""
+    from app.services.document_parser import child as child_module
+
+    orig_run_subproc = child_module.run_parse_subprocess
+
+    async def hung_subproc(**kwargs):
+        return await orig_run_subproc(**kwargs, extra_args=["--simulate-hang"])
+
+    async def flow(factory, runner):
+        # 恢复默认 parse_document，使 _parse_staged 走真实子进程路径
+        monkeypatch.setattr(pipeline, "parse_document", pipeline._DEFAULT_PARSE_DOCUMENT)
+        monkeypatch.setattr(pipeline, "run_parse_subprocess", hung_subproc)
+        monkeypatch.setattr(pipeline, "_handing_over", False)
+        child_module.reset_parse_subprocess_stats()
+
+        user = await _user(factory)
+        creation, staged = await _create(factory, user, ["vis-a"], [("report.pdf", _report_pdf())])
+        await _start(factory, runner, user, 10)
+
+        deadline = asyncio.get_running_loop().time() + 10.0
+        while child_module.parse_subprocess_stats()["parse_procs"] == 0:
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.03)
+
+        # 模拟 worker 收到退出信号：短排空超时后立即走 hand_over_on_exit + shutdown
+        drained = await runner.drain(0.2, busy=lambda: pipeline.active_parse_jobs() > 0)
+        assert drained is False
+
+        t0 = asyncio.get_running_loop().time()
+        pipeline.hand_over_on_exit()
+        try:
+            await runner.shutdown()
+            await pipeline.shutdown_parse_jobs()
+        finally:
+            monkeypatch.setattr(pipeline, "_handing_over", False)
+
+        # 子进程已被强杀，没有拖满 60 秒解析超时
+        assert asyncio.get_running_loop().time() - t0 < 2.0
+        assert child_module.parse_subprocess_stats()["parse_procs"] == 0
+
+        async with factory() as session:
+            batch = await session.get(GenerationBatch, creation.batch_id)
+        assert batch.parse_status == "running"
+        assert batch.parse_heartbeat_at is None
+        assert batch.parse_attempts == 0
+        assert (env.root / staged[0]["storage_key"]).exists()
+
+    _run(flow)
+
+
+def test_post_commit_cancellation_preserves_succeeded_outputs(env, monkeypatch):
+    """解析结果已提交成功后，若在清理原件期间被取消（进程退出交接或用户停止），已入库的配图与快照必须保留，状态不回退。"""
+    orig_discard_staged = pipeline.discard_staged
+
+    async def flow(factory, _runner):
+        user = await _user(factory)
+        for handing_over in (True, False):
+            entered = asyncio.Event()
+            release = asyncio.Event()
+
+            async def slow_discard_staged(staged_items):
+                entered.set()
+                try:
+                    await release.wait()
+                finally:
+                    await orig_discard_staged(staged_items)
+
+            monkeypatch.setattr(pipeline, "discard_staged", slow_discard_staged)
+            monkeypatch.setattr(pipeline, "_handing_over", handing_over)
+            try:
+                creation, staged = await _create(factory, user, ["vis-a"], [("report.pdf", _report_pdf())])
+                batch_id = creation.batch_id
+                assert await pipeline._claim_parse(batch_id) == "mine"
+
+                task = asyncio.create_task(pipeline._parse_owned(batch_id))
+                await asyncio.wait_for(entered.wait(), timeout=10.0)
+
+                # 此时 session.commit() 已完成，正在清理暂存原件；注入取消信号。
+                task.cancel()
+                release.set()
+                assert await task is True
+
+                async with factory() as session:
+                    batch = await session.get(GenerationBatch, batch_id)
+                    assets = (
+                        await session.execute(select(PageAsset).where(PageAsset.batch_id == batch_id))
+                    ).scalars().all()
+
+                assert batch.parse_status == "succeeded"
+                assert batch.parse_attempts == 1
+                assert len(assets) >= 1
+                for asset in assets:
+                    assert (env.root / asset.storage_key).exists()
+                assert len(batch.visual_snapshots) >= 1
+                for snap in batch.visual_snapshots:
+                    assert (env.root / snap["storage_key"]).exists()
+                assert not (env.root / staged[0]["storage_key"]).exists()
+            finally:
+                monkeypatch.setattr(pipeline, "_handing_over", False)
+                monkeypatch.setattr(pipeline, "discard_staged", orig_discard_staged)
+
+    _run(flow)
+

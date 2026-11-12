@@ -14,7 +14,8 @@ from app.core.config import get_settings
 from app.core.database import engine
 from app.core.executors import install_default_executor
 from app.core.metrics import start_metrics
-from app.services.document_parser.pipeline import active_parse_jobs, hand_over_on_exit
+from app.services.document_parser.child import parse_subprocess_stats
+from app.services.document_parser.pipeline import active_parse_jobs, hand_over_on_exit, shutdown_parse_jobs
 from app.services.generation_bus import CHANNEL_CANCEL, CHANNEL_DISPATCH, GenerationBus
 from app.services.generation_runner import generation_runner
 
@@ -63,7 +64,12 @@ async def run_worker() -> None:
     metrics = start_metrics(
         "worker",
         settings.metrics_interval_seconds,
-        lambda: {**generation_runner.stats(), "parse_jobs": active_parse_jobs(), "bus": int(bus.healthy)},
+        lambda: {
+            **generation_runner.stats(),
+            "parse_jobs": active_parse_jobs(),
+            **parse_subprocess_stats(),
+            "bus": int(bus.healthy),
+        },
     )
     if metrics is not None:
         background.append(metrics)
@@ -86,6 +92,7 @@ async def run_worker() -> None:
     finally:
         hand_over_on_exit()
         await generation_runner.shutdown()
+        await shutdown_parse_jobs()
         for task in background:
             task.cancel()
         await bus.stop()

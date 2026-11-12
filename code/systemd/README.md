@@ -20,7 +20,7 @@ systemctl status star-page-analytics.timer
 
 机器是 4 核：3 个 web 加 2 个 worker 刚好每核都有活。再加实例前先看 `[metrics]` 日志（每个进程每分钟一行，见 `code/backend/README.md`）：web 的 `loop_lag_max_ms` 常在 100 以上才值得加 web；worker 的 `running` 常贴着全站上限、或 `loop_lag` 高才值得加 worker。
 
-后端 unit 都设了 `LimitNOFILE=65536`。systemd 默认软上限只有 1024，每条事件流、模型调用、OSS 和数据库连接各占一个。改 unit 后要 `systemctl daemon-reload` 并重启进程，用 `grep 'open files' /proc/<PID>/limits` 确认。
+后端 unit 都设了 `LimitNOFILE=65536` 与 cgroup 内存兜底（worker 设 `MemoryHigh=2G`、`MemoryMax=3G` 并设 `DOCUMENT_PARSE_THREADS=1`；web 设 `MemoryMax=1G`）。systemd 默认文件描述符软上限只有 1024，每条事件流、模型调用、OSS 和数据库连接各占一个；内存封顶保证极端坏文件也只重启单个实例，不会触发整机无 swap 下的内核 OOM。改 unit 后要 `systemctl daemon-reload` 并重启进程。
 
 ## 改了代码要重启哪个
 

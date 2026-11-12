@@ -10,6 +10,7 @@ import re
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pdfplumber
 import pypdfium2 as pdfium
@@ -67,17 +68,17 @@ class _PageInfo:
     images: list[tuple[float, float, int]] = field(default_factory=list)  # (top, 占页面比例, 图片对象序号)
 
 
-def parse_pdf(filename: str, data: bytes, content_sha256: str) -> ParsedDocument:
-    pages = _read_layout(data)
-    _drop_headers_and_footers(pages)
-    body_size = _body_font_size(pages)
-    total_chars = sum(page.chars for page in pages)
-
+def parse_pdf(filename: str, source: bytes | Path, content_sha256: str) -> ParsedDocument:
     images: list[ParsedImage] = []
     snapshots: list[ParsedSnapshot] = []
     page_texts: list[str] = []
-    pdf = pdfium.PdfDocument(data)
+    pdf = pdfium.PdfDocument(source)
     try:
+        pages = _read_layout(source, pdf)
+        _drop_headers_and_footers(pages)
+        body_size = _body_font_size(pages)
+        total_chars = sum(page.chars for page in pages)
+
         for info in pages:
             page = pdf[info.number - 1]
             try:
@@ -92,6 +93,7 @@ def parse_pdf(filename: str, data: bytes, content_sha256: str) -> ParsedDocument
                     page_texts.append(f"【第 {info.number} 页】\n{body}" if len(pages) > 1 else body)
             finally:
                 page.close()
+                del page
     finally:
         pdf.close()
 
@@ -105,44 +107,49 @@ def parse_pdf(filename: str, data: bytes, content_sha256: str) -> ParsedDocument
     )
 
 
-def _read_layout(data: bytes) -> list[_PageInfo]:
+def _read_layout(source: bytes | Path, pdf: pdfium.PdfDocument) -> list[_PageInfo]:
     result: list[_PageInfo] = []
-    pdf_images = _collect_pdfium_images(data)
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        for index, page in enumerate(pdf.pages[:PDF_MAX_PAGES]):
-            info = _PageInfo(number=index + 1, width=float(page.width), height=float(page.height))
-            info.chars = len(re.sub(r"\s+", "", "".join(char.get("text", "") for char in page.chars)))
-            info.vectors = len(page.curves) + len(page.rects) + len(page.lines)
-            info.blocks = _page_blocks(page)
-            info.images = pdf_images.get(index, [])
-            result.append(info)
+    pdf_images = _collect_pdfium_images(pdf)
+    plumber_input = source if isinstance(source, Path) else io.BytesIO(source)
+    with pdfplumber.open(plumber_input) as plumber_pdf:
+        for index, page in enumerate(plumber_pdf.pages[:PDF_MAX_PAGES]):
+            try:
+                info = _PageInfo(number=index + 1, width=float(page.width), height=float(page.height))
+                info.chars = len(re.sub(r"\s+", "", "".join(char.get("text", "") for char in page.chars)))
+                info.vectors = len(page.curves) + len(page.rects) + len(page.lines)
+                info.blocks = _page_blocks(page)
+                info.images = pdf_images.get(index, [])
+                result.append(info)
+            finally:
+                page.flush_cache()
+                if hasattr(page, "get_textmap") and hasattr(page.get_textmap, "cache_clear"):
+                    page.get_textmap.cache_clear()
     return result
 
 
-def _collect_pdfium_images(data: bytes) -> dict[int, list[tuple[float, float, int]]]:
+def _collect_pdfium_images(pdf: pdfium.PdfDocument) -> dict[int, list[tuple[float, float, int]]]:
     """先只记每页图片的位置和占比（第几个图片对象），真正取位图放到后面按需做。"""
     found: dict[int, list[tuple[float, float, int]]] = {}
-    pdf = pdfium.PdfDocument(data)
-    try:
-        for index in range(min(len(pdf), PDF_MAX_PAGES)):
-            page = pdf[index]
-            try:
-                width, height = page.get_size()
-                area = max(width * height, 1.0)
-                entries = []
-                objects = page.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE], max_depth=5)
-                for order, obj in enumerate(objects):
-                    try:
-                        left, bottom, right, top = obj.get_bounds()
-                    except Exception:  # noqa: BLE001 - 个别对象取不到位置，跳过
-                        continue
-                    ratio = max(0.0, (right - left) * (top - bottom)) / area
-                    entries.append((height - top, min(ratio, 1.0), order))
-                found[index] = entries
-            finally:
-                page.close()
-    finally:
-        pdf.close()
+    for index in range(min(len(pdf), PDF_MAX_PAGES)):
+        page = pdf[index]
+        objects = None
+        try:
+            width, height = page.get_size()
+            area = max(width * height, 1.0)
+            entries = []
+            objects = page.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE], max_depth=5)
+            for order, obj in enumerate(objects):
+                try:
+                    left, bottom, right, top = obj.get_bounds()
+                except Exception:  # noqa: BLE001 - 个别对象取不到位置，跳过
+                    continue
+                ratio = max(0.0, (right - left) * (top - bottom)) / area
+                entries.append((height - top, min(ratio, 1.0), order))
+            found[index] = entries
+        finally:
+            del objects
+            page.close()
+            del page
     return found
 
 
@@ -384,32 +391,40 @@ def _page_images(page, info: _PageInfo, filename: str, images: list[ParsedImage]
     seen = {image.sha256 for image in images}
     low_text = info.chars < LOW_TEXT_PAGE_CHARS
     objects = list(page.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE], max_depth=5))
-    for _top, ratio, order in sorted(info.images, key=lambda item: item[0]):
-        if len(images) >= DOC_MAX_IMAGES:
-            break
-        if scanned and ratio >= SCAN_IMAGE_RATIO:
-            continue
-        pil = _object_bitmap(objects, order)
-        if pil is None or min(pil.size) < MIN_IMAGE_SIDE:
-            continue
-        normalized = normalize_pil(pil)
-        if normalized is None or normalized.sha256 in seen:
-            continue
-        seen.add(normalized.sha256)
-        images.append(
-            ParsedImage(
-                data=normalized.data,
-                content_type=normalized.content_type,
-                extension=normalized.extension,
-                width=normalized.width,
-                height=normalized.height,
-                sha256=normalized.sha256,
-                label=f"{filename} 第 {info.number} 页",
-                area_ratio=ratio,
-                core=low_text and ratio >= 0.25,
+    try:
+        for _top, ratio, order in sorted(info.images, key=lambda item: item[0]):
+            if len(images) >= DOC_MAX_IMAGES:
+                break
+            if scanned and ratio >= SCAN_IMAGE_RATIO:
+                continue
+            pil = _object_bitmap(objects, order)
+            if pil is None:
+                continue
+            try:
+                if min(pil.size) < MIN_IMAGE_SIDE:
+                    continue
+                normalized = normalize_pil(pil)
+            finally:
+                pil.close()
+            if normalized is None or normalized.sha256 in seen:
+                continue
+            seen.add(normalized.sha256)
+            images.append(
+                ParsedImage(
+                    data=normalized.data,
+                    content_type=normalized.content_type,
+                    extension=normalized.extension,
+                    width=normalized.width,
+                    height=normalized.height,
+                    sha256=normalized.sha256,
+                    label=f"{filename} 第 {info.number} 页",
+                    area_ratio=ratio,
+                    core=low_text and ratio >= 0.25,
+                )
             )
-        )
-        placeholders.append(IMAGE_PLACEHOLDER.format(index=len(images) - 1))
+            placeholders.append(IMAGE_PLACEHOLDER.format(index=len(images) - 1))
+    finally:
+        objects.clear()
     return placeholders
 
 
