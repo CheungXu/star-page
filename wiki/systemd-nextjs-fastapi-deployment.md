@@ -58,6 +58,14 @@ Environment=FRONTEND_ORIGIN=https://stars-page.com
 - 用 `curl -D - http://域名/p/...` 验证后端是否能返回 HTML；若返回 `200` 但浏览器预览失败，优先怀疑同源/CSP，而不是模型生成失败。
 - 修改 systemd 单元里的 `PUBLIC_BASE_URL` / `FRONTEND_ORIGIN` 后，必须 `systemctl daemon-reload` 并重启后端；前端 URL 归一化代码变更则需要 `npm run build` 后重启前端。
 
+## 反向代理后的真实客户端 IP
+
+限频、匿名额度、防刷逻辑不能读 `X-Forwarded-For` 第一段——客户端可以自己在请求头里填任意 IP 绕过限制。
+
+- Nginx 在反代层用 `proxy_set_header X-Real-IP $remote_addr;` 覆盖写入真实连接 IP。
+- 后端只读 `X-Real-IP`；本地开发没有 Nginx 时再退回 `request.client.host`。
+- 注意：如果有 CDN 或多层代理，需在 Nginx 层配置 `set_real_ip_from` 信任上游代理网段后再取 `$remote_addr`。
+
 ## SSE / 长连接与停止超时
 
 后端有 SSE 长连接（生成过程事件流）。老版本 uvicorn 收到 SIGTERM 会等长连接自己断开，systemd 要等到默认 `TimeoutStopSec`（90s）才 SIGKILL。实测 uvicorn 0.47 + Starlette 1.1 会给还在推送的流式响应发断开信号，挂着 SSE 也在 0.2 秒内退出，不需要再加 `--timeout-graceful-shutdown`；换版本后用一个最小 SSE 应用加 `curl -N` 重测一次即可。
