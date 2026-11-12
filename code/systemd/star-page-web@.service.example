@@ -1,0 +1,28 @@
+[Unit]
+Description=星页 StarPage · Web API（端口 %i）
+After=network-online.target star-page-worker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/star-page/code/backend
+EnvironmentFile=/root/star-page/config/db.env
+EnvironmentFile=/root/star-page/config/oss.env
+EnvironmentFile=/root/star-page/config/llm.env
+EnvironmentFile=-/root/star-page/config/aliyun.env
+EnvironmentFile=-/root/star-page/config/huoshan.env
+Environment=PUBLIC_BASE_URL=https://stars-page.com
+Environment=FRONTEND_ORIGIN=https://stars-page.com
+# 不跑生成、不做启动扫尾：新批次和停止请求通知 worker，事件流靠 worker 的批次通知唤醒。可以开多个、逐个重启。
+Environment=APP_ROLE=web
+Environment=GENERATION_STARTUP_SWEEP=false
+Environment=DB_POOL_SIZE=10
+Environment=DB_MAX_OVERFLOW=10
+ExecStart=/root/star-page/code/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port %i
+Restart=always
+RestartSec=3
+# 有 SSE 长连接，优雅关闭会等连接断开；缩短停止超时。浏览器的事件流会自动重连到另一个实例。
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,10 @@
 [Unit]
-Description=星页 StarPage · FastAPI Backend
+Description=星页 StarPage · FastAPI Backend（单进程，回滚用）
 After=network-online.target
 Wants=network-online.target
+
+# 拆分前的单进程形态：接请求也跑生成（APP_ROLE 默认 all）。线上已改为
+# star-page-worker.service + star-page-web@8000/8001，这个文件只在回滚时启用，不要和它们同时运行。
 
 [Service]
 Type=simple
@@ -9,6 +12,8 @@ WorkingDirectory=/root/star-page/code/backend
 EnvironmentFile=/root/star-page/config/db.env
 EnvironmentFile=/root/star-page/config/oss.env
 EnvironmentFile=/root/star-page/config/llm.env
+EnvironmentFile=-/root/star-page/config/aliyun.env
+EnvironmentFile=-/root/star-page/config/huoshan.env
 Environment=PUBLIC_BASE_URL=https://stars-page.com
 Environment=FRONTEND_ORIGIN=https://stars-page.com
 ExecStart=/root/star-page/code/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000

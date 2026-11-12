@@ -1,6 +1,6 @@
 [Unit]
 Description=星页 StarPage · Next.js Frontend
-After=network-online.target star-page-backend.service
+After=network-online.target star-page-web@8000.service star-page-web@8001.service
 Wants=network-online.target
 
 [Service]
@@ -8,7 +8,8 @@ Type=simple
 WorkingDirectory=/root/star-page/code/frontend
 Environment=HOSTNAME=127.0.0.1
 Environment=PORT=3000
-Environment=BACKEND_INTERNAL_URL=http://127.0.0.1:8000
+# 服务端取数走 Nginx 的本机内部入口，由它在两个 web 实例之间转发；重启其中一个时不中断。
+Environment=BACKEND_INTERNAL_URL=http://127.0.0.1:8080
 ExecStartPre=/bin/bash -lc 'mkdir -p .next/standalone/.next && rm -rf .next/standalone/.next/static .next/standalone/public && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/'
 ExecStart=/usr/local/bin/node .next/standalone/server.js
 Restart=always
