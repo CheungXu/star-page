@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 
@@ -53,7 +54,7 @@ async def store_uploaded_images(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="图片仅支持 PNG、JPEG、WEBP、GIF")
         content_type, extension = detected
         try:
-            width, height = image_size(data)
+            width, height = await asyncio.to_thread(image_size, data)
         except Exception:  # noqa: BLE001 - 尺寸只用于提示，读不到不拦截
             width = height = None
         role = roles[index].strip() if index < len(roles) and roles[index].strip() else "image"

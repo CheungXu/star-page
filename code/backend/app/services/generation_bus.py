@@ -73,6 +73,7 @@ class GenerationBus:
         )
         self._handlers: dict[str, list[Handler]] = {}
         self._on_connect: list[Callable[[], None]] = []
+        self._on_disconnect: list[Callable[[], None]] = []
         self._task: asyncio.Task[None] | None = None
         self._conn: asyncpg.Connection | None = None
         self._stopping = False
@@ -89,6 +90,10 @@ class GenerationBus:
     def on_connect(self, callback: Callable[[], None]) -> None:
         """每次（重新）连上后调用。断线期间的通知已经丢了，回调里应当把可能漏掉的状态补读一遍。"""
         self._on_connect.append(callback)
+
+    def on_disconnect(self, callback: Callable[[], None]) -> None:
+        """连接刚断开（healthy 已是 False）时调用。正在等通知的订阅者要靠它马上改成定时读库。"""
+        self._on_disconnect.append(callback)
 
     async def start(self) -> None:
         if self._task is None:
@@ -160,8 +165,11 @@ class GenerationBus:
                 if not self._stopping:
                     print(f"[bus] 监听连接断开，{backoff:.0f} 秒后重连：{exc!r}", flush=True)
             finally:
-                self.healthy = False
+                was_healthy, self.healthy = self.healthy, False
                 await self._close()
+                if was_healthy and not self._stopping:
+                    for callback in self._on_disconnect:
+                        self._safe_call(callback)
             if self._stopping:
                 return
             await asyncio.sleep(backoff)

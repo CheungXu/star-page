@@ -60,6 +60,14 @@ journalctl -u star-page-worker -u 'star-page-web@*' -f
 >
 > 滚动重启一定要等前一个实例恢复、再等过 Nginx 的 `fail_timeout`（5 秒）才动下一个，否则 Nginx 会把两个实例同时算作不可用。`script/restart_web.sh` 已经按这个顺序做。
 
+同步代码不能在事件循环里跑，统一放进线程：
+
+- 默认线程池在启动时放大到 `THREAD_POOL_SIZE`（默认 32，`app/core/executors.py`），`asyncio.to_thread` 都用它。文档完整解析用单独的小池 `DOCUMENT_PARSE_THREADS`（默认 3），慢文档不会占满通用池。
+- OSS 客户端按配置在进程内复用（`storage/factory.py`），连接池 64。读对象时 `get_object` 和 `.read()` 在同一个线程里做完：`get_object` 只读完响应头就返回。
+- 纯 Python 的 HTML 解析放进线程只是不卡事件循环，同一进程内仍只用一个核，要多核靠多开 web 实例。
+
+访问者 IP（匿名额度、短信防刷）只读 Nginx 用 `$remote_addr` 写入的 `X-Real-IP`，不读客户端能伪造的 `X-Forwarded-For`；本地没有 Nginx 时用连接对端地址。新建匿名身份时同一网络当天超限抛的 `AnonLimitError`，由 `main.py` 的全局处理统一回 402 + `need_login`。
+
 ## 关键接口
 
 - `POST /api/auth/sms/send`：向手机号发送登录验证码。

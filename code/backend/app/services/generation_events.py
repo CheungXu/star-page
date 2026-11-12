@@ -126,10 +126,15 @@ async def stream_task_events(
     signal_key: uuid.UUID,
     last_event_id: str | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
-    debounce_seconds: float = WAKE_DEBOUNCE_SECONDS,
+    debounce_seconds: float | None = None,
     poll_seconds: float = POLL_FALLBACK_SECONDS,
 ) -> AsyncIterator[SseEvent | Heartbeat]:
-    """订阅一组任务的事件，直到每个任务都发出收尾事件（completed / failed / cancelled），最后发 batch_done。"""
+    """订阅一组任务的事件，直到每个任务都发出收尾事件（completed / failed / cancelled），最后发 batch_done。
+
+    debounce_seconds 不传时：单进程按 WAKE_DEBOUNCE_SECONDS 攒一下；web 进程收到的通知发送方已经合并过，不再等。
+    """
+    if debounce_seconds is None:
+        debounce_seconds = 0.0 if runner.wakes_are_merged() else WAKE_DEBOUNCE_SECONDS
     ids = ordered_task_ids(task_ids)
     cursors = decode_cursor(last_event_id, ids)
     finished: set[uuid.UUID] = set()

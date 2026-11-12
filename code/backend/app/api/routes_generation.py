@@ -20,7 +20,7 @@ from app.schemas.generation import GenerationCreateRequest, GenerationCreateResp
 from app.services.billing.errors import AnonLimitError, BillingError, InsufficientCreditsError, ModelNotAllowedError
 from app.services.document_parser.pipeline import discard_staged, stage_documents
 from app.services.document_parser.precheck import precheck_uploads
-from app.services.generation_bus import CHANNEL_CANCEL, CHANNEL_DISPATCH, send, send_in_session
+from app.services.generation_bus import CHANNEL_CANCEL, CHANNEL_DISPATCH, send
 from app.services.generation_events import HEARTBEAT, stream_task_events
 from app.services.generation_runner import CANCELLED_ERROR_MESSAGE, generation_runner, user_concurrency_limit
 from app.services.generation_service import CANCELLED_USER_MESSAGE, TERMINAL_STATUSES, GenerationService
@@ -147,9 +147,8 @@ async def create_generation(request: Request, response: Response) -> GenerationC
                 user_limit=user_concurrency_limit(user),
             )
         else:
-            # 任务已经提交，worker 收到通知时一定读得到；通知丢了由 worker 的定时扫描补上。
-            await send_in_session(session, CHANNEL_DISPATCH, str(creation.batch_id))
-            await session.commit()
+            # 批次已提交、积分已冻结，通知发不出去也不能报错（用户会重试、重复建批次）：worker 的定时扫描会补上。
+            await send(CHANNEL_DISPATCH, str(creation.batch_id))
 
         return GenerationCreateResponse(
             conversation_id=creation.conversation_id,

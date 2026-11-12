@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.executors import parse_executor
 from app.models.entities import Conversation, GenerationBatch, GenerationTask, PageAsset, User
 from app.services.document_parser.errors import DocumentParseError
 from app.services.document_parser.limits import BATCH_MAX_SNAPSHOTS, PARSE_TIMEOUT_SECONDS
@@ -237,8 +238,9 @@ async def _parse_staged(staged: list[dict[str, Any]]) -> list[ParsedDocument]:
         data = await storage.get_bytes(item["storage_key"])
         try:
             # 线程里的解析超时后无法强行中止，只能不再等它；上限保证了单个文件的工作量有界。
+            loop = asyncio.get_running_loop()
             document = await asyncio.wait_for(
-                asyncio.to_thread(parse_document, filename, item.get("extension") or "", data),
+                loop.run_in_executor(parse_executor(), parse_document, filename, item.get("extension") or "", data),
                 timeout=PARSE_TIMEOUT_SECONDS,
             )
         except TimeoutError as exc:

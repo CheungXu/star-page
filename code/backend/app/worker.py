@@ -11,6 +11,7 @@ import signal
 
 from app.core.config import get_settings
 from app.core.database import engine
+from app.core.executors import install_default_executor
 from app.services.generation_bus import CHANNEL_CANCEL, CHANNEL_DISPATCH, GenerationBus
 from app.services.generation_runner import generation_runner
 
@@ -20,6 +21,7 @@ async def run_worker() -> None:
     if settings.app_role != "worker":
         raise SystemExit("worker 进程必须设置 APP_ROLE=worker")
 
+    install_default_executor()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

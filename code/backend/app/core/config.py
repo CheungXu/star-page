@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     # 监听连接的探活间隔与超时。探活失败就断开重连，期间 web 的事件流改为定时读库。
     generation_bus_ping_seconds: float = Field(default=20, alias="GENERATION_BUS_PING_SECONDS")
     generation_bus_ping_timeout_seconds: float = Field(default=3, alias="GENERATION_BUS_PING_TIMEOUT_SECONDS")
+    # asyncio.to_thread 用的默认线程池。OSS 读写、微信支付、HTML 清洗、分享图都在这里，Python 默认只有 8 个。
+    thread_pool_size: int = Field(default=32, alias="THREAD_POOL_SIZE")
+    # 文档完整解析单独的线程池：解析慢且吃 CPU，单独限量，不占上面那个池，免得堵住其他任务的上传和清洗。
+    document_parse_threads: int = Field(default=3, alias="DOCUMENT_PARSE_THREADS")
     # 启动扫尾：把上次进程留下的 pending/running 任务收尾。共用线上库的非生产实例必须关掉。
     generation_startup_sweep: bool = Field(default=True, alias="GENERATION_STARTUP_SWEEP")
     # 最近活动在这个窗口内、且还没自动重跑过的中断任务从头重跑一次，其余标失败。

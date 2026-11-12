@@ -245,6 +245,10 @@ class GenerationRunner:
         """订阅者能否指望被及时唤醒。web 进程的监听连接断开时，事件流要改为定时读库。"""
         return self._bus is None or self._bus.healthy
 
+    def wakes_are_merged(self) -> bool:
+        """接了通知总线时，唤醒来自其他进程合并过的批次通知，订阅者被唤醒后不用再等一会儿攒事件。"""
+        return self._bus is not None
+
     # ---- 跨进程 ----
 
     def attach_bus(self, bus: GenerationBus | None) -> None:
@@ -315,7 +319,10 @@ class GenerationRunner:
         return self._start_rows(rows, limits)
 
     async def scan_once(self) -> int:
-        """兜底：补上没收到派发通知的 pending 任务，处理没收到停止通知的停止请求。返回新启动的个数。"""
+        """兜底：补上没收到派发通知的 pending 任务，处理没收到停止通知的停止请求。返回新启动的个数。
+
+        停止请求有两种：在跑的任务库里有停止标记；排队中的任务已被 web 直接写成终态，本进程还排着它的协程。
+        """
         if self._shutting_down:
             return 0
         async with self._session() as session:
@@ -341,9 +348,25 @@ class GenerationRunner:
                         )
                     ).scalars()
                 )
+            settled: list[uuid.UUID] = []
+            queued = [task_id for task_id in self._tasks if task_id not in self._claimed]
+            if queued:
+                settled = list(
+                    (
+                        await session.execute(
+                            select(GenerationTask.id).where(
+                                GenerationTask.id.in_(queued), GenerationTask.status.in_(TERMINAL_STATUSES)
+                            )
+                        )
+                    ).scalars()
+                )
         started = self._start_rows(rows, limits)
         for task_id in flagged:
             await self.cancel(task_id)
+        for task_id in settled:
+            # 认领前取消协程：它不写库，排着的名额随之作废。
+            if task_id not in self._claimed:
+                await self.cancel(task_id)
         if started:
             print(f"[generation] 兜底扫描补上 {started} 个任务", flush=True)
         return started

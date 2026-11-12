@@ -324,16 +324,77 @@ def test_stream_polls_while_listener_is_down_and_bus_reconnects():
         received = await asyncio.wait_for(consumer, timeout=10)
         assert [item.event for item in received if item is not HEARTBEAT][-1] == "batch_done"
 
-        # 监听连接被中途掐断：探活发现后断开重连，重连后回调里补读。
+        # 监听连接被中途掐断：探活发现后断开重连，断开时回调一次（让等待中的事件流改为读库），重连后回调里补读。
         connects: list[int] = []
+        disconnects: list[bool] = []
         bus = make_bus(ping_seconds=0.2, ping_timeout_seconds=1)
         bus.subscribe(CHANNEL_CANCEL, lambda _payload: None)
         bus.on_connect(lambda: connects.append(1))
+        bus.on_disconnect(lambda: disconnects.append(bus.healthy))
         await bus.start()
         await _wait_healthy(bus)
         await bus.drop_connection()
         await _wait_healthy(bus, False)
         await _wait_healthy(bus, True)
         assert len(connects) == 2
+        assert disconnects == [False]
+
+    _run(flow)
+
+
+def test_listener_drop_wakes_waiting_stream_into_polling():
+    async def flow(factory, worker, web, make_bus):
+        bus = make_bus(ping_seconds=0.2, ping_timeout_seconds=1)
+        bus.subscribe(CHANNEL_BATCH, web.handle_batch_notice)
+        bus.on_disconnect(web.wake_all)
+        web.attach_bus(bus)
+        await bus.start()
+        await _wait_healthy(bus)
+
+        creation = await _create_batch(factory, ["ok"])
+        task_ids = [creation.runs[0].task_id]
+
+        async def consume():
+            # 心跳一分钟：断线后要靠断开回调唤醒，才能在 2 秒轮询里看到 worker 写入的事件。
+            return [
+                item
+                async for item in stream_task_events(
+                    session_factory=factory,
+                    runner=web,
+                    task_ids=task_ids,
+                    signal_key=creation.batch_id,
+                    heartbeat_seconds=60,
+                    poll_seconds=0.2,
+                )
+            ]
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(0.3)
+        # 事件流已经在按 60 秒心跳等通知。掐断监听并让它重连不上，再让 worker 跑：只有断开回调能让事件流及时改为读库。
+        bus._dsn = "postgresql://postgres:wrong@127.0.0.1:1/none"
+        await bus.drop_connection()
+        await _wait_healthy(bus, False)
+        worker.start(task_ids, creation.batch_id, user_id=await _owner(factory, creation), user_limit=1)
+        received = await asyncio.wait_for(consumer, timeout=10)
+        assert [item.event for item in received if item is not HEARTBEAT][-1] == "batch_done"
+
+    _run(flow)
+
+
+def test_scan_drops_queued_task_cancelled_without_notice():
+    async def flow(factory, worker, _web, _make_bus):
+        creation = await _create_batch(factory, ["slow-a", "slow-b"])
+        first, second = (run.task_id for run in creation.runs)
+        worker.start([first, second], creation.batch_id, user_id=await _owner(factory, creation), user_limit=1)
+        await _wait_status(factory, first, {"running"})
+        # 第二个在 worker 里排队；web 把它写成已停止，但停止通知丢了。
+        assert await _request_cancel(factory, second) == "cancelled"
+        assert second in worker._tasks
+        await worker.scan_once()
+        await _wait_until(lambda: _async_bool(second not in worker._tasks))
+        assert (await _task(factory, second)).status == "cancelled"
+        assert await _count_events(factory, second, "cancelled") == 1
+        # 在跑的不受影响。
+        assert (await _task(factory, first)).status == "running"
 
     _run(flow)

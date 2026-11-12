@@ -98,7 +98,12 @@ def clear_anon_cookie(response: Response) -> None:
 
 
 def get_client_ip(request: Request) -> str | None:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip() or None
+    """访问者 IP，用于匿名额度和短信防刷。
+
+    只信 Nginx 用 $remote_addr 覆盖写入的 X-Real-IP。X-Forwarded-For 的前几段是客户端自己能填的，不能用。
+    后端只监听本机，没有 Nginx 在前面时（本地开发）退回连接对端地址。
+    """
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        return real_ip
     return request.client.host if request.client else None
