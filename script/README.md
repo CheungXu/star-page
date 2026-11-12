@@ -4,14 +4,25 @@
 
 ## 逐个重启后端 web 实例
 
-`restart_web.sh` 依次重启 `star-page-web@8000` 和 `star-page-web@8001`：重启一个、等它健康检查通过、再等过 Nginx 的 `fail_timeout`（5 秒），才动下一个，对外服务不中断。不会重启生成 worker。
+`restart_web.sh` 依次重启所有正在运行的 `star-page-web@<端口>`（现在是 8000、8001、8002）：重启一个、等它健康检查通过、再等过 Nginx 的 `fail_timeout`（5 秒），才动下一个，对外服务不中断。不会重启生成 worker。
 
 ```bash
-script/restart_web.sh          # 默认 8000 8001
+script/restart_web.sh          # 默认：所有在跑的 web 实例，按端口从小到大
 script/restart_web.sh 8001     # 只重启一个
 ```
 
-不要手动连着重启两个实例：前一个刚恢复的 5 秒内 Nginx 仍把它当作不可用，第二个一停就两边同时不可用。2026-11-12 上线时间隔 4 秒手动重启过一次，场景页的服务端渲染因此返回了约 1.5 秒的 404。
+不要手动连着重启两个实例：前一个刚恢复的 5 秒内 Nginx 仍把它当作不可用，第二个一停就可能全部不可用。2026-11-12 上线时间隔 4 秒手动重启过一次，场景页的服务端渲染因此返回了约 1.5 秒的 404。
+
+## 逐个重启生成 worker
+
+`restart_worker.sh` 依次重启所有正在运行的 `star-page-worker@<编号>`（现在是 1、2）。每个 worker 收到停止信号后先排空：不领新任务，等手上的生成跑完再退出（最多 6 分钟），这期间其他 worker 照常领新任务；等它重新启动完成（日志出现 `[worker] 已启动`）再重启下一个。脚本会把每个 worker 是「已排空」还是「排空超时」打出来；超时的任务交给其他 worker 从头重跑一次。
+
+```bash
+script/restart_worker.sh       # 默认：所有在跑的 worker
+script/restart_worker.sh 2     # 只重启一个
+```
+
+手上有长任务时一个 worker 要等几分钟，`systemctl restart` 会一直阻塞到它退出，这是正常的。
 
 ## 数据库连接测试
 
@@ -240,12 +251,12 @@ python ../../script/promo-capture/compose_xhs_images.py
 
 ## 重跑卡住的生成（推荐）
 
-生成 worker 启动时会扫尾：最近活动在 120 分钟内、还没自动重跑过的中断任务从头重跑一次，其余标失败（见 `code/backend/README.md` 的「后台生成」）。`requeue_stuck_generations.py` 用来把更早卡住的批次交给下一次启动扫尾：给指定批次里没完成的任务各写一条 `requeued` 事件，把最近活动刷成现在。
+生成 worker 每 5 秒检查一次续期过期（45 秒没续期）的 `running` 任务：最近活动在 120 分钟内、还没自动重跑过的从头重跑一次，其余标失败（见 `code/backend/README.md` 的「后台生成」）。`requeue_stuck_generations.py` 用来把更早卡住的批次重新交给这个检查：给指定批次里没完成的任务各写一条 `requeued` 事件，把最近活动刷成现在。
 
 ```bash
 code/backend/.venv/bin/python script/requeue_stuck_generations.py --batch f8433bce --batch c3522807 --dry-run   # 先预演
 code/backend/.venv/bin/python script/requeue_stuck_generations.py --batch f8433bce --batch c3522807
-systemctl restart star-page-worker.service   # 必须在 120 分钟内；扫尾只在 worker 里做
+# 不用重启 worker：几秒内就会被接手重跑。卡在 pending 的任务本来就会被认领。
 ```
 
 批次 id 可写前 8 位。已经自动重跑过一次的 `running` 任务会被提示，扫尾仍会把它标失败。重跑会再消耗一次模型 token。

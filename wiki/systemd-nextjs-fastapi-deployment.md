@@ -5,8 +5,8 @@
 ## 服务拆分
 
 - 前端服务：运行 Next.js standalone，监听 `127.0.0.1:3000`。
-- 后端 web 服务：用 systemd 模板单元 `star-page-web@.service` 开两个实例，分别监听 `127.0.0.1:8000`、`127.0.0.1:8001`，只接请求。
-- 后端 worker 服务：`star-page-worker.service`，跑长任务，不监听端口，只开一个。
+- 后端 web 服务：用 systemd 模板单元 `star-page-web@.service` 开三个实例，分别监听 `127.0.0.1:8000`、`8001`、`8002`，只接请求。
+- 后端 worker 服务：模板单元 `star-page-worker@.service` 开两个实例（`@1`、`@2`），跑长任务，不监听端口。停止时先排空，`TimeoutStopSec` 要比排空时限长（本项目 390 秒）。
 - Nginx：只暴露公网 `80/443`，按路径转发到前端或后端的 `upstream`；另开一个只监听本机的入口（本项目 `127.0.0.1:8080`），给前端服务端取数用，同样走 `upstream`。
 
 模板单元（文件名带 `@`）的好处：一份文件起多个实例，`%i` 就是端口号，`systemctl restart star-page-web@8000` 单独重启其中一个。
@@ -97,14 +97,14 @@ systemd 启动的服务默认软上限 `LimitNOFILE` 是 1024（硬上限很高�
 ## 常用命令
 
 ```bash
-systemctl status star-page-worker.service 'star-page-web@*'
+systemctl status 'star-page-worker@*' 'star-page-web@*'
 systemctl status star-page-frontend.service
 
-script/restart_web.sh                        # 逐个重启 web
-systemctl restart star-page-worker.service   # 重启 worker（在跑的任务由启动扫尾处理）
+script/restart_web.sh        # 逐个重启所有在跑的 web（自动发现端口）
+script/restart_worker.sh     # 逐个重启 worker（每个先跑完手上的任务）
 systemctl restart star-page-frontend.service
 
-journalctl -u star-page-worker.service -u 'star-page-web@*' -f
+journalctl -u 'star-page-worker@*' -u 'star-page-web@*' -f
 journalctl -u star-page-frontend.service -f
 ```
 
@@ -121,9 +121,9 @@ cd code/backend && set -a && . ../../config/db.env && . ../../config/oss.env && 
   && .venv/bin/python -m app.db.migrate
 
 # 2) 重启后端并验证（生成相关改动才需要重启 worker）
-systemctl restart star-page-worker.service
+script/restart_worker.sh
 script/restart_web.sh
-curl -s http://127.0.0.1:8000/healthz && curl -s http://127.0.0.1:8001/healthz
+for port in 8000 8001 8002; do curl -s http://127.0.0.1:$port/healthz; echo; done
 curl -s http://127.0.0.1:8000/api/skills   # 确认技能数符合预期
 
 # 3) 前端：先 build 再重启（standalone 需复制 .next/static，由 ExecStartPre 完成）

@@ -39,22 +39,25 @@ docker push "$ACR:backend-latest"
 
 `python -m app.db.migrate` 每次都按文件名重跑全部 SQL，语句必须能重复执行。要删掉某张表上的索引时，除了新增 `DROP INDEX IF EXISTS`，还得删掉最初那份迁移里的 `CREATE INDEX`，否则下次迁移会先把索引建回来。`generation_events` 的 `(task_id, sequence)` 已有唯一约束，不要再加一条同样列的普通索引。
 
-线上后端按角色拆成三个常驻进程（`APP_ROLE`，不设时为 `all`，即单进程既接请求又跑生成，本地开发、测试和预览都用它）：
+线上后端按角色拆成两类常驻进程，每类都可以开多个（`APP_ROLE`，不设时为 `all`，即单进程既接请求又跑生成，本地开发、测试和预览都用它）：
 
 | 服务 | 角色 | 做什么 |
 | --- | --- | --- |
-| `star-page-web@8000`、`star-page-web@8001` | `web` | 接 HTTP 请求、推事件流、返回生成页与分享页。不跑生成、不做启动扫尾，可以逐个重启 |
-| `star-page-worker` | `worker` | `python -m app.worker`，跑全部生成、持有排队名额、做启动扫尾。不对外提供 HTTP，只能开一个 |
+| `star-page-web@8000`、`@8001`、`@8002` | `web` | 接 HTTP 请求、推事件流、返回生成页与分享页。不跑生成、不做启动扫尾，可以逐个重启 |
+| `star-page-worker@1`、`@2` | `worker` | `python -m app.worker`，认领并跑生成、给手上的任务续期、接手失联 worker 的任务。不对外提供 HTTP。重启时先排空，生成不中断 |
 
 ```bash
-script/restart_web.sh                        # 逐个重启两个 web，不中断对外服务
-systemctl restart star-page-worker.service   # 重启 worker：在跑的生成会被打断，由启动扫尾重跑
-journalctl -u star-page-worker -u 'star-page-web@*' -f
+script/restart_web.sh       # 逐个重启所有在跑的 web，不中断对外服务
+script/restart_worker.sh    # 逐个重启所有 worker：每个先跑完手上的再退出，其他 worker 照常领新任务
+journalctl -u 'star-page-worker@*' -u 'star-page-web@*' -f
+journalctl -u 'star-page-*' --since -10min -o cat | grep '^\[metrics\]'   # 每个进程每分钟一行运行指标
 ```
+
+每个进程每 `METRICS_INTERVAL_SECONDS`（默认 60，0 关闭）打印一行 `[metrics]`：事件循环延迟（平均 / 最大毫秒）、默认线程池的线程数和排队数、连接池借出数和突发数、内存（`rss_mb`）、文件描述符数；web 另有事件流订阅数和分享页缓存（条数、MB、命中、未命中），worker 另有 `worker_id`、在跑任务数、是否在排空、在做的批次解析数。代码在 `app/core/metrics.py`。
 
 > 备忘（重要）：常驻服务直接从仓库目录运行且**未开 `--reload`**，只在启动时加载一次代码，改完后端代码必须重启。按改动范围选：
 > - 只改接口、分享页、计费展示、登录等请求路径上的代码：`script/restart_web.sh`。
-> - 改了生成相关代码（prompt、模型调用、解析、结算、`generation_service` / `generation_runner`）：还要重启 worker，挑没人在生成的时候，在跑的任务会按启动扫尾的规则重跑。
+> - 改了生成相关代码（prompt、模型调用、解析、结算、`generation_service` / `generation_runner`）：还要 `script/restart_worker.sh`。在跑的生成不会被打断，但一个 worker 手上有长任务时要等它跑完（最多 6 分钟）。
 > - 两边都改了，或改了模型目录、`config/*.env`：两者都重启。
 > 计费倍率（`config/billing.json`）不用重启：各进程每 5 秒按文件修改时间检查一次。
 >
@@ -87,6 +90,8 @@ journalctl -u star-page-worker -u 'star-page-web@*' -f
 - `GET /api/pages`：旧版页面级历史接口，当前左侧历史已切到会话级接口。
 - `GET /api/pages/{page_id}`：获取页面元数据。
 - `GET /p/{conversation_id}/{page_id}`：页面访问网关，校验节点归属会话后从私有 OSS 读取 HTML 并返回（带展示型沙箱 CSP）。是否失效只看节点自己的 `deleted_at`：删会话会级联软删节点（404），被分叉会话继承的历史节点除外。返回前会补上 Open Graph 标题和描述；`?print=1` 会在加载后调起打印。
+  - **怎么补**（`app/services/share_meta.py`）：默认不解析整页，只扫 `<head>`（跳过注释、`script`、`style`、`title`、`textarea`、`noscript` 里的文字），删掉同名的 `og:*` / `description` 标签，在 `</head>` 前插入新标签，浮标或打印脚本插在最后一个 `</body>` 前。50KB 页面约 0.4 毫秒，直接在事件循环里做；找不到完整 `<head>` 的不规整页面才退回 BeautifulSoup（约 9 毫秒，放到线程里）。上线前对线上 210 个页面比对过，没有一个需要退回。
+  - **原文缓存**（`app/services/page_cache.py`）：`/p/`、`/u/` 和发布时取标题都先读进程内缓存，按存储键缓存页面原文。页面版本的存储键带版本 id、写入后不再改，所以不会读到旧内容，也不用跨进程失效；删除、下架、权限、改分享标题都在读缓存前查库判断。按字节淘汰最久没用的，总量 `PAGE_HTML_CACHE_MAX_BYTES`（默认 64MB，0 关闭），单页超过总量的 1/8 不缓存。同一个键同时很多请求时只下载一次。
 - `GET /api/scenes`、`GET /api/scenes/{key}`：场景目录与案例。生成请求可带 `scene_key`，新建会话时按 `config/scenes.json` 强制技能。
 - `POST /api/publications`、`GET /u/{slug}`：把某个已完成节点发布成固定链接。重新发布只切换版本。同路径下有 `og.png`、`poster.png`、`qr.png`。返回里除链接外还带分享卡片的生效值 `title` / `subtitle` / `align` 与默认值 `default_title`（生成页 `<title>`）/ `default_subtitle`（场景标语或「由星页 StarPage 生成」）。
 - `PATCH /api/publications/{slug}`（仅本人）：改写分享卡片的 `title` / `subtitle` / `align`（`left` / `center` / `right`），只改请求里带上的字段，传 `null` 或空串恢复默认；保存后重画 `poster.png` 与 `og.png`。用户改写的值存在 `page_publications.custom_title` / `custom_subtitle` / `card_align`（迁移 `020_share_card_custom.sql`），重新发布另一个版本时保留；`title` / `og_description` 存生效值。自定义了标题时，`/u/{slug}` 连页面 `<title>` 一起替换（微信等只读 `<title>` 的地方也显示用户写的标题）。
@@ -200,19 +205,22 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 
 - **web 与 worker 怎么通信**（`app/services/generation_bus.py`）：用 PostgreSQL `LISTEN/NOTIFY`，不依赖 Redis。三个频道：`sp_gen_dispatch`（web 提交批次后发，内容是批次 id）、`sp_gen_cancel`（web 收到停止后发，内容是任务 id）、`sp_gen_batch`（批次有新事件时发，web 据此唤醒挂着的事件流；worker 同一批次 200 毫秒内只发一次）。收：每个进程一条 asyncpg 专用连接，不占连接池，每 `GENERATION_BUS_PING_SECONDS`（默认 20 秒）`SELECT 1` 探活，`GENERATION_BUS_PING_TIMEOUT_SECONDS`（默认 3 秒）内没回就断开重连，重连后补读一遍。发：走连接池的普通会话，提交时送达，所以收到通知时数据已经可见；也就不依赖发送方自己的监听连接是否健康。通知只是提速，丢了由下面两条兜底：worker 每 `GENERATION_DISPATCH_SCAN_SECONDS`（默认 5 秒）扫一次没人领的 `pending` 任务和带停止标记的任务；web 的监听连接断开期间，事件流改为每 2 秒读一次库。
 - **连接池**：`create_async_engine` 默认 `DB_POOL_SIZE=30`、`DB_MAX_OVERFLOW=40`（本进程最多同时借出 70 条，等 30 秒），`DB_POOL_RECYCLE_SECONDS=1800`（超过 30 分钟的连接在下次借出前换新）。线上按角色在 systemd 里覆盖：每个 web 10 + 10，worker 20 + 30。SQLAlchemy 在事务 `commit` 后把连接还回池。流式等待模型吐字、下载原件、解析、上传配图、续写提取和附图下载期间都不占连接。预览实例如果和线上连同一个 RDS，把 `DB_POOL_SIZE` 和 `DB_MAX_OVERFLOW` 都调成 5。
-- **执行器**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后，`all` 角色立即 `start`；`web` 角色发派发通知，由 worker 读出这一批的 `pending` 任务后 `start`。每个任务一个 `asyncio.Task`、各自一个数据库会话。名额分两层，都按先来后到排队：先过**个人上限**（每个用户同时生成的模型数，默认 `GENERATION_USER_CONCURRENCY=10`，`users.generation_concurrency` 有值时以它为准，会员放宽限制时写这一列或改 `user_concurrency_limit`），再过**全站上限** `GENERATION_MAX_CONCURRENCY`（默认 48）。个人名额没轮到的任务不占全站名额，一个人提交再多也挤不到别人。排队时写一条 `queued` 事件（`reason` 为 `user_limit` 或 `global_limit`，`message` 是给用户看的说明），轮到后写 `started`，任务在库里一直是 `pending`。同一用户的任务按提交顺序开始；每次提交都会按最新上限调整，调大后排队的立即补上。认领用原子更新 `pending → running`，同一任务不会跑两次。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
+- **执行器与认领**（`app/services/generation_runner.py`）：`POST /api/generations` 提交批次后，`all` 角色立即认领一轮（`kick`）；`web` 角色发派发通知，收到的 worker 各认领一轮。名额存在库里：**全站上限** `GENERATION_MAX_CONCURRENCY`（默认 48）比的是 `status = 'running'` 的任务数，**个人上限**（默认 `GENERATION_USER_CONCURRENCY=10`，`users.generation_concurrency` 有值时以它为准，会员放宽限制时写这一列或改 `user_concurrency_limit`）比的是该用户 `running` 的任务数。认领在一个事务里做，先拿咨询锁 `pg_advisory_xact_lock`，所有 worker 排着来：按 `created_at, id` 取最早的 `pending` 任务（最多 500 条、每人最多 64 条），个人名额满的跳过（不占全站名额，一个人提交再多也挤不到别人），全站名额满的不再选，选中的用 `UPDATE … WHERE status = 'pending' AND cancel_requested_at IS NULL` 改成 `running` 并记下 `worker_id`。同一批的任务按选模型的顺序错开 1 微秒写 `created_at`，所以按提交顺序开始。没轮到的写一条 `queued` 事件（`reason` 为 `user_limit` 或 `global_limit`，每种原因只写一次），轮到后写 `started`。任务一结束就补领一轮，并通知其他 worker 也补领（`sp_gen_dispatch`，内容 `slot`）。上限调大（改库或改配置）后下一轮认领立即生效。各 worker 的 `GENERATION_*` 上限要一致；`GENERATION_MAX_CONCURRENCY=0` 等于暂停接新任务。每个任务一个 `asyncio.Task`、各自一个数据库会话。生成器没把任务写到终态（被硬取消、数据库异常）时，`finally` 用新会话补写。
+- **续期与接手**（迁移 `026`）：worker 每 `GENERATION_HEARTBEAT_SECONDS`（默认 10 秒）把手上任务的 `heartbeat_at` 刷成现在。超过 `GENERATION_WORKER_LEASE_SECONDS`（默认 45 秒）没续期的 `running` 任务，说明那个 worker 已经不在了：其他 worker 每次定时扫描（默认 5 秒）都会接手，规则同下面的启动扫尾（重跑一次或标失败）。扫尾拿 `pg_try_advisory_xact_lock`，同一时刻只有一个 worker 做；锁放在单独一个会话的事务里，因为扫尾过程中要多次提交。worker 续期时发现任务已经不归自己（被接手后退回 `pending` 或换了 `worker_id`），就停掉本地协程，不写库。
+- **排空**（`app/worker.py`）：worker 收到 SIGTERM 后不再认领，停止请求和续期照常处理，等手上的任务和批次解析都结束再退出，最多 `WORKER_DRAIN_TIMEOUT_SECONDS`（默认 360 秒）。超时或排空中再收到一次信号时，取消剩下的协程，不改状态，把它们的 `heartbeat_at` 改成 1970 年，其他 worker 下一次扫描（5 秒内）就接手重跑；被 SIGKILL 时等 45 秒续期过期。systemd 的 `TimeoutStopSec` 设成 390 秒。
+- **批次解析跨 worker**（`app/services/document_parser/pipeline.py`）：同一批的几个模型可能分在不同 worker 上，资料只解析一次。用原子更新抢解析（`parse_status` 是 `pending`，或是 `running` 但 `parse_heartbeat_at` 超过续期时限），抢到的每 10 秒续期，其余的每秒查一次结果。进程退出时没做完的解析清空续期、不删原件，留给别的 worker 马上接手；只有用户停止时才记失败。
 - **停止**：先协作式中止，在两个模型 chunk 之间检查，写成 `cancelled`；3 秒内模型没吐下一个 chunk 就直接取消协程，再由兜底写库。模型已经完整输出后不再响应停止，页面照常发布。
-- **web 角色下的停止**（`GenerationService.request_cancel`）：对每个未结束的任务加行锁，按锁内看到的状态处理。还是 `pending` 的直接写成已停止并解开冻结，再通知 worker 丢掉排队中的协程，并发一条批次通知，让挂在其他 web 实例上的事件流马上看到「已停止」；已是 `running` 的只写 `generation_tasks.cancel_requested_at`（迁移 `025`）并通知 worker，终态由 worker 写。不能对 `running` 直接调用 `finish_unfinished_task`：它也会写终态，和 worker 抢着写会把状态改回、重复结算。worker 收到停止时，若任务刚在库里认领、还没在本进程登记，只设停止标志，等登记后按停止收尾，不直接取消协程，否则会留下一条永远停在 `running` 的任务。
+- **停止接口**（`GenerationService.request_cancel`，所有角色都走它）：对每个未结束的任务加行锁，按锁内看到的状态处理。还是 `pending` 的直接写成已停止并解开冻结（认领条件是 `status = 'pending'`，之后不会再被领走），并发一条批次通知，让挂在其他 web 实例上的事件流马上看到「已停止」；已是 `running` 的只写 `generation_tasks.cancel_requested_at`（迁移 `025`），`all` 角色直接停本进程的协程，`web` 角色通知所有 worker，跑它的那个停下并写终态。不能对 `running` 直接调用 `finish_unfinished_task`：它也会写终态，和 worker 抢着写会把状态改回、重复结算。worker 收到的停止通知不是自己手上的任务时记下 60 秒：可能是本进程刚在库里认领、还没登记，登记时补上停止标志。
 - **终态与收尾事件同事务**：`completed` / `failed` / `cancelled` 事件和任务终态在同一个事务里提交。事件流据此判断「任务结束」，不会出现状态已结束却漏掉 `completed` 的情况。
 - **事件流**（`app/services/generation_events.py`）：只读数据库，每个任务各有一个游标。原因是 `sequence` 全局递增，多个任务并发写入时提交顺序和 `sequence` 顺序不一致，用一个全局游标会永久漏掉晚提交的小号事件。续传 id 是按任务 id 排序后各任务游标用点连接的字符串。一次提交可以包含多行，同一任务内的行序就是序号顺序。思考碎片先在进程里合并再落库：该任务第一段立即写入，之后满 `GENERATION_REASONING_FLUSH_SECONDS`（默认 5 秒）或缓冲满 `GENERATION_REASONING_FLUSH_CHARS`（默认 8000 字）再写一行；其它事件写入前会把缓冲放进同一个事务。硬取消不刷缓冲。输出中每 50 token 的进度另受 `GENERATION_PROGRESS_FLUSH_SECONDS`（默认 2 秒）限制，开始时的 0 token 和完成时的真实用量不限制。回放时仍把同一任务连续的 `reasoning_delta` 合成一条。执行器每次提交后唤醒订阅者，唤醒后等 0.2 秒合批再读库；空闲时每 15 秒发一行 `: ping`，避开 nginx 420 秒读超时。响应头带 `Cache-Control: no-cache, no-transform`，防止中间层压缩把实时事件攒住。
-- **启动扫尾**（`all` 角色在 lifespan 里做，`worker` 角色在 `app/worker.py` 启动时做，都受 `GENERATION_STARTUP_SWEEP` 控制，默认开；`web` 角色永远不做）：处理上一个进程留下的 `pending` / `running` 任务。带停止标记的直接写成已停止，不再重跑。其余按最近活动时间（最后一条事件、`started_at`、`created_at` 取最晚）判断，在 `GENERATION_RESUME_WINDOW_MINUTES`（默认 120）内的：没开始过的直接排队；中途被打断且 `retry_count < 1` 的清掉旧事件、写一条 `restarted`、从头重跑一次；其余标 `failed`（「服务重启中断」，不扣积分）。最后把任务都已结束、批次却还停在进行中的批次重算一次状态。进程退出时不改任务状态，全部留给下次启动处理。
-- **只能有一个进程跑生成**：任务登记表和名额都在内存里，线上只能开一个 worker；单进程部署时只能开一个 uvicorn 进程（不要加 `--workers`）。要多台机器跑生成，见 `alternatives/backend-process-model/README.md` 的方案二。
+- **启动扫尾**（`all` 角色在 lifespan 里做，`worker` 角色在 `app/worker.py` 启动时做，都受 `GENERATION_STARTUP_SWEEP` 控制，默认开；`web` 角色永远不做）：和定时接手是同一段代码，只是多处理 `pending`。`running` 的只看续期已过期的，在线 worker 手上的不碰。带停止标记的直接写成已停止，不再重跑。其余按最近活动时间（最后一条事件、`started_at`、`created_at` 取最晚）判断，在 `GENERATION_RESUME_WINDOW_MINUTES`（默认 120）内的：没开始过的直接排队；中途被打断且 `retry_count < 1` 的清掉旧事件、写一条 `restarted`、从头重跑一次；其余标 `failed`（「服务重启中断」，不扣积分）。最后把任务都已结束、批次却还停在进行中的批次重算一次状态。
+- **单进程部署**：`all` 角色只能开一个 uvicorn 进程（不要加 `--workers`），它没有通知总线，停止请求只在本进程处理。要多开就按线上拆成 web 和 worker。
 - **预览实例注意**：在 worktree 里起后端预览时，如果连的是线上库，必须设 `GENERATION_STARTUP_SWEEP=false`，否则一启动就会去重跑或标记线上的任务；也绝不能用 `APP_ROLE=worker`，它的定时扫描会把线上的 `pending` 任务领走。最好连独立测试库。连同一个 RDS 时，把 `DB_POOL_SIZE` 和 `DB_MAX_OVERFLOW` 调成 5，避免预览进程和线上一起把连接池打满。
-- **补救卡住的任务**：`script/requeue_stuck_generations.py --batch <id>` 给指定批次没完成的任务刷新最近活动时间，随后在窗口内重启 worker，由扫尾重跑（见 `script/README.md`）。
-- **重启耗时**：有 SSE 连接时 uvicorn 会等连接关闭，systemd 到 `TimeoutStopSec=10s` 才强杀；浏览器的事件流会自动重连到另一个 web 实例。worker 收到 SIGTERM 后最多等 3 秒协程收尾。强杀不影响正确性，被打断的任务由下次启动扫尾处理。
+- **补救卡住的任务**：`script/requeue_stuck_generations.py --batch <id>` 给指定批次没完成的任务刷新最近活动时间，worker 的定时接手几秒内就把续期过期的任务重跑（见 `script/README.md`）。
+- **重启耗时**：有 SSE 连接时 uvicorn 会等连接关闭，systemd 到 `TimeoutStopSec=10s` 才强杀；浏览器的事件流会自动重连到另一个 web 实例。worker 先排空，见上。强杀不影响正确性，被打断的任务由其他 worker 接手。
 - **改某个用户的上限**：暂无管理界面，直接改库，例如 `UPDATE users SET generation_concurrency = 30 WHERE phone = '...'`；改回默认设为 `NULL`。下次提交生效（迁移 `021_user_generation_concurrency.sql`）。
 - **历史事件**：`script/compact_generation_events.py` 把已结束超过 10 分钟的任务收短。连续思考行合并成一行，文本保留；同一阶段、同一状态的连续进度（输出中每 50 token 一条）收成最后一行。序号都留在这段的最后一行（续传只会多发、不会漏发）。默认只统计，`--apply` 才写入，写完执行 `VACUUM (ANALYZE)`。不要在有人还在看这条任务的事件时合并，所以留了 10 分钟。
-- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器、名额闸门、个人上限取值）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾、个人上限排队与补位、调大上限立即补上、全站上限排队原因、思考碎片合并后序号仍在正式输出之前、历史思考行合并且不碰还在跑的任务），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。`tests/test_web_worker_split_db.py` 在同一个测试里分别构造 web 和 worker 两侧的执行器，用真实的 `LISTEN/NOTIFY` 验证：派发通知丢了由扫描补上；停止排队中和运行中的任务；停止与认领同时发生时只有一方写终态；收到停止时还没登记认领也能停下；扫尾按停止标记收尾并重算停在进行中的批次；跨进程唤醒事件流；监听断开时退回轮询、断线后重连。`tests/test_billing_config_reload.py` 验证计费配置按文件修改时间重载。
+- **测试**：`tests/test_generation_runner.py` 是纯逻辑单测（扫尾分流、事件合并、续传游标、唤醒器、个人上限取值）；`tests/test_generation_runner_db.py` 用假模型客户端跑真实数据库流程（认领只成功一次、后台跑完并续传、实时跟进、协作式停止、硬取消、排队中停止、HTTP 批次流与停止接口、启动扫尾、个人上限排队与补位、调大上限立即补上、全站上限排队原因、思考碎片合并后序号仍在正式输出之前、历史思考行合并且不碰还在跑的任务），需要 `TEST_DATABASE_URL`，建库方式同上方「会话分叉」的测试说明。该测试会改测试库里所有未结束任务，**不要指向线上库**。`tests/test_web_worker_split_db.py` 在同一个测试里分别构造 web 和 worker 两侧的执行器，用真实的 `LISTEN/NOTIFY` 验证：派发通知丢了由扫描补上；停止排队中和运行中的任务；停止与认领同时发生时只有一方写终态；收到停止时还没登记认领也能停下；扫尾按停止标记收尾并重算停在进行中的批次；跨进程唤醒事件流；监听断开时退回轮询、断线后重连；以及多个 worker：共用全站名额并按顺序补位、退出时交给另一个 worker 马上重跑、在线 worker 的任务不被扫尾、续期发现被接手后停手不写库、排空时跑完手上的且不领新的、排空超时。DB 测试会捡起库里所有 `pending` 任务，每个用例前后都把遗留的未结束任务收掉。`tests/test_document_flow_db.py` 另测了批次解析的跨 worker 抢占与交接。`tests/test_page_delivery_fast.py` 测分享信息快速插入（各种不规整写法、退回兜底）、取标题和分享页原文缓存。`tests/test_billing_config_reload.py` 验证计费配置按文件修改时间重载。
 
 ## 生成过程事件
 
