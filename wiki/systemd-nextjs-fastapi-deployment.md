@@ -60,14 +60,31 @@ Environment=FRONTEND_ORIGIN=https://stars-page.com
 
 ## SSE / 长连接与停止超时
 
-后端有 SSE 长连接（生成过程事件流）。uvicorn 收到 SIGTERM 会**优雅关闭、等连接断开**；若客户端连接还挂着，systemd 会等到默认 `TimeoutStopSec`（90s）才 SIGKILL，导致 `systemctl restart` 长时间卡住。
+后端有 SSE 长连接（生成过程事件流）。老版本 uvicorn 收到 SIGTERM 会等长连接自己断开，systemd 要等到默认 `TimeoutStopSec`（90s）才 SIGKILL。实测 uvicorn 0.47 + Starlette 1.1 会给还在推送的流式响应发断开信号，挂着 SSE 也在 0.2 秒内退出，不需要再加 `--timeout-graceful-shutdown`；换版本后用一个最小 SSE 应用加 `curl -N` 重测一次即可。
 
 处理原则：
 
-- 给这类服务显式设较短的 `TimeoutStopSec`（本项目后端设为 `10s`），让停止在合理时间内强制收尾。
-- 日志里出现 `State 'stop-sigterm' timed out. Killing.` 属预期，不是故障。
+- 仍给这类服务显式设较短的 `TimeoutStopSec`（本项目 web 设为 `10s`），防止某个请求卡住时停止拖到 90 秒。
+- 日志里出现 `State 'stop-sigterm' timed out. Killing.` 说明有请求没能及时结束，偶发属预期，频繁出现要查是哪个接口。
 - 强杀的前提是长任务不依赖进程退出时的收尾：进程内后台任务在退出时不改状态，留给下次启动扫尾重跑或标失败（见 `sse-background-job-streaming.md`）。
 - Python 里用 `print` 写的运维日志，进程 stdout 不是终端时会被块缓冲，重启前的几行可能晚出现甚至丢失；关键日志加 `flush=True`。
+
+## 文件描述符上限
+
+systemd 启动的服务默认软上限 `LimitNOFILE` 是 1024（硬上限很高，但 Python 不会自己调到硬上限）。每条 SSE、每条到模型厂商的流式请求、每条 OSS 和数据库连接都占一个描述符，几百个并发浏览者就能碰到 `Too many open files`。滚动重启时流量会全压到剩下那个实例上，更容易碰到。
+
+- 在 unit 的 `[Service]` 里写 `LimitNOFILE=65536`，`daemon-reload` 后重启进程才生效。
+- 用 `cat /proc/<PID>/limits | grep 'open files'` 看运行中进程的实际值，不要只看 `systemctl show`。
+
+## Python 异步服务的线程池
+
+`asyncio.to_thread` 用的默认线程池只有 `min(32, CPU 数 + 4)` 个线程，4 核机器上是 8 个。对象存储 SDK、支付 SDK、HTML 解析、图片处理都挤在这 8 个里，慢的一多，快的也要排队。
+
+- 进程启动后用 `loop.set_default_executor(ThreadPoolExecutor(max_workers=32))` 放大默认池。
+- 又慢又吃 CPU 的活（完整文档解析）单独给一个小池，用 `loop.run_in_executor(专用池, ...)`，免得占满通用池。
+- 线程池不能绕过 GIL：纯 Python 的解析（如 BeautifulSoup 的 `html.parser`）放进线程只是不再卡死事件循环，同一进程里的总吞吐还是一个核。真要多核得多开进程。
+- 同步 SDK 返回「流式响应对象」时要特别注意：例如 `oss2` 的 `bucket.get_object()` 只读完响应头就返回，`.read()` 才读正文。只把 `get_object` 放进线程、回到事件循环再 `.read()`，等于在事件循环里同步读网络。要把两步放在同一个线程函数里。
+- 同理，SDK 客户端（`oss2.Bucket`）要在进程里复用，每次新建会丢掉连接池、每次都重新握手。连接池大小要不小于线程池大小。
 
 ## 常用命令
 

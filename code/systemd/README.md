@@ -18,6 +18,8 @@ systemctl status star-page-analytics.timer
 
 各进程的连接池在 unit 里按角色设置：每个 web 常驻 10、突发 10；worker 常驻 20、突发 30。
 
+后端 unit 都设了 `LimitNOFILE=65536`。systemd 默认软上限只有 1024，每条事件流、模型调用、OSS 和数据库连接各占一个。改 unit 后要 `systemctl daemon-reload` 并重启进程，用 `grep 'open files' /proc/<PID>/limits` 确认。
+
 ## 改了代码要重启哪个
 
 常驻服务不开 `--reload`，改完代码必须重启。

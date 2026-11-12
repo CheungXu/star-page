@@ -18,6 +18,7 @@ Environment=PUBLIC_BASE_URL=https://stars-page.com
 Environment=FRONTEND_ORIGIN=https://stars-page.com
 ExecStart=/root/star-page/code/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
+LimitNOFILE=65536
 RestartSec=3
 # 后端有 SSE 长连接，优雅关闭会等连接断开；缩短停止超时，避免 restart 卡到默认 90s。
 TimeoutStopSec=10s

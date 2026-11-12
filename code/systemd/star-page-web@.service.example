@@ -20,6 +20,8 @@ Environment=DB_POOL_SIZE=10
 Environment=DB_MAX_OVERFLOW=10
 ExecStart=/root/star-page/code/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port %i
 Restart=always
+# 每条 SSE、OSS、数据库连接都占一个文件描述符。默认软上限 1024，重启另一个实例时流量全压到这一个上，不够用。
+LimitNOFILE=65536
 RestartSec=3
 # 有 SSE 长连接，优雅关闭会等连接断开；缩短停止超时。浏览器的事件流会自动重连到另一个实例。
 TimeoutStopSec=10s
