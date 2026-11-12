@@ -108,6 +108,24 @@ journalctl -u 'star-page-worker@*' -u 'star-page-web@*' -f
 journalctl -u star-page-frontend.service -f
 ```
 
+## 新老 Worker 切换规范（滚动排空 vs 停旧启新）
+
+多 worker 常驻部署上线时，最容易出事故的环节是**新老 worker 交接**。动手前先确认本次改动是否碰了 worker 间的协调协议（认领锁、心跳续期、超时阈值、扫尾规则）：
+
+1. **日常兼容发布（滚动排空，零中断）**
+   - 条件：协调协议未变，仅改业务逻辑（prompt、技能、解析、结算等）。
+   - 做法：直接执行 `script/restart_worker.sh`，脚本按实例编号逐个重启——被重启的实例收到 SIGTERM 后停领新任务、继续给在途任务续期并响应用户停止，跑完再退出；其余实例照常接单；新进程打出启动日志后再动下一个。
+   - 注意：排空期间（最长 `WORKER_DRAIN_TIMEOUT_SECONDS`，默认 6 分钟）新老代码同时读写数据库。数据库变更必须采用扩张兼容写法（如 `ADD COLUMN IF NOT EXISTS` 可空列），不允许在还有旧 worker 排空时删列或改死旧字段语义。
+
+2. **不兼容协议切换或跨代回滚（必须先停旧、确认归零、再启新）**
+   - 条件：首次从无租约单 worker 切到多 worker、修改咨询锁 key、把租约超时改得比旧版心跳间隔还短、或者**把代码回滚到无租约的旧版本**。
+   - 为什么不能滚动混跑：无租约的旧 worker 不更新 `heartbeat_at`，新 worker 会在 45 秒后误判失联接手重跑，而旧 worker 跑完不验归属直接覆盖写库，导致**重复生成、重复扣费**；反过来回滚时若新 worker 还在跑，旧 worker 一启动扫尾（不看 `heartbeat_at`）就会把在跑任务全部重置。
+   - 标准操作顺序：
+     1. 查库确认当前 `generation_tasks`（`status='running'`）与 `generation_batches`（`parse_status='running'`）数量。
+     2. 停止全部旧 worker（新版支持排空等待；旧单进程无排空，需等 `running=0` 时停）。
+     3. 复查确认 `running` 任务与 `running` 解析均已归零（`pending` 任务保留在库里即可，这期间新提交的请求只会进入 `pending` 排队，不会报错丢失）。
+     4. 跑数据库迁移、`daemon-reload`（如改了 unit），再启动新 worker，积压的 `pending` 会被立即认领。
+
 ## 一次完整发布流程（含迁移与验证）
 
 改了后端代码/技能文件、或新增 SQL 迁移时，按此顺序发布（在仓库根执行）：

@@ -24,6 +24,8 @@ script/restart_worker.sh 2     # 只重启一个
 
 手上有长任务时一个 worker 要等几分钟，`systemctl restart` 会一直阻塞到它退出，这是正常的。
 
+> 注意：滚动重启期间（最长 6 分钟）新老 worker 代码会同时在线。如果本次变更改了 worker 协调协议（认领锁、续期超时、扫尾规则）或回退到无续期的旧版本，**不能用滚动重启**，必须走「先停全部旧 worker → 确认在跑任务与解析归零 → 再启动新 worker」，详见 `code/systemd/README.md` 的「新老 Worker 切换规范」。
+
 ## 数据库连接测试
 
 `check_postgres_connection.sh` 用于从当前服务器验证 PostgreSQL/RDS 连接。

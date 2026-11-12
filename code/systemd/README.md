@@ -54,9 +54,50 @@ systemctl restart star-page-frontend.service
 
 加一个 web：`systemctl enable --now star-page-web@<端口>`，再在 `config/nginx/star-page.conf` 的 `upstream star_page_api` 里加一行同样写法的 `server`，`nginx -t` 后 reload，并把端口加进前端 unit 的 `After=`。加一个 worker：`systemctl enable --now star-page-worker@<编号>`，不用改别处。减少时先停实例再删 Nginx 那一行。
 
-2026-11-13 从单个 `star-page-worker.service` 切到 `worker@` 模板时，先确认库里没有 `pending` / `running` 任务，再 `systemctl disable --now star-page-worker.service`，之后才启动 `@1`、`@2`。不能让老 worker 和新 worker 同时在线：老代码不续期，新 worker 会把它手上跑了 45 秒以上的任务当成失联接手重跑。
-
 Nginx 需要同时换成 `config/nginx/star-page.conf`（定义 `upstream star_page_api`、埋点限流和 `127.0.0.1:8080` 内部入口）和 `config/nginx/star-page-locations.conf`，`nginx -t` 通过后 `systemctl reload nginx`。
+
+## 新老 Worker 切换规范（重点）
+
+切换 worker 前，先判断本次变更属于哪一类——选错方式会导致在途生成被重复执行甚至重复扣费：
+
+### 1. 日常发版：协调协议不变 → 滚动排空（`script/restart_worker.sh`）
+
+适用：改 prompt、技能、模型调用、解析逻辑、计费公式等业务代码，且认领锁、续期时长、终态归属校验规则不变。
+
+- 直接跑 `script/restart_worker.sh`：先对 `@1` 发 SIGTERM，它停领新活、保持续期与停止响应，等手上的任务和解析跑完（最多 360 秒）再退出，期间 `@2` 照常接新活；`@1` 新进程打出 `[worker] 已启动` 后再同样重启 `@2`。
+- **并存窗口注意**：第一个新 worker 启动到最后一个旧 worker 排空退出之间（最长 6 分钟），**新老代码同时在线读写同一个库**。因此涉及表结构或事件 payload 变更时，必须保证新字段向后兼容（可空或有默认值），先跑 `python -m app.db.migrate`，再滚 worker，最后滚 web。
+
+### 2. 协议不兼容升级或回退旧版 → 必须「先停旧、确认归零、再启新」
+
+适用：认领/续期/扫尾规则有不兼容改动（如 2026-11-13 从不续期的单 worker 切到多 worker `worker@` 模板、修改咨询锁键、大幅缩短 `GENERATION_WORKER_LEASE_SECONDS`），或**连代码一起回退到 11-13 之前的版本**。
+
+**严禁新老同时在线的原因**：
+1. 老代码不刷 `heartbeat_at`（也无写终态前的行锁归属校验），新 worker 会在 45 秒后把它手上的任务当成失联接手重跑，老 worker 跑完仍照写不误——同一任务生成两个版本、结算两次。
+2. 老代码的启动扫尾不看 `heartbeat_at`，一旦在新 worker 还在跑任务时启动老 worker，老 worker 会把所有在跑任务当成中断清掉重跑。
+3. 新老并发上限算法不同（老版算进程内存，新版数库里 `running` 行），混跑会使限流失效。
+
+标准切换步骤：
+
+```bash
+# 1) 先查库里在途任务与批次解析数
+set -a && source config/db.env && set +a
+psql -X -At -c "
+  SELECT status, coalesce(worker_id, '-'), count(*)
+  FROM generation_tasks WHERE status IN ('pending', 'running') GROUP BY 1, 2;
+  SELECT parse_status, count(*)
+  FROM generation_batches WHERE parse_status = 'running' GROUP BY 1;
+"
+
+# 2) 停掉所有旧 worker（新版会自己排空；旧单实例无排空，最好等上面 running=0 再停）
+systemctl disable --now star-page-worker.service          # 若从旧单实例切出
+# 或：systemctl stop 'star-page-worker@*'                 # 若停多实例模板
+
+# 3) 再次执行第 1 步 SQL，确认 running 任务和 running 解析都为 0（pending 可留给新 worker 领）
+
+# 4) 执行数据库迁移、切换代码与 unit，再启动新 worker
+systemctl daemon-reload
+systemctl enable --now star-page-worker@1.service star-page-worker@2.service
+```
 
 查看日志：
 
