@@ -55,6 +55,9 @@ async def create_generation(request: Request, response: Response) -> GenerationC
 
     async with AsyncSessionLocal() as session:
         user = await resolve_actor(session, request, response)
+        # 回访的匿名访客只查了用户，事务还开着。先还连接，再做预检和上传。
+        if session.in_transaction():
+            await session.commit()
 
         composed_prompt = parsed.prompt
         if scene is not None and parsed.conversation_id is None:

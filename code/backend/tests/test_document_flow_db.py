@@ -29,7 +29,16 @@ if TEST_DATABASE_URL:
     from sqlalchemy import select  # noqa: E402
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 
-    from app.models.entities import CreditAccount, GenerationBatch, GenerationEvent, GenerationTask, PageAsset, User  # noqa: E402
+    from app.models.entities import (  # noqa: E402
+        CreditAccount,
+        GenerationBatch,
+        GenerationEvent,
+        GenerationTask,
+        Page,
+        PageAsset,
+        PageVersion,
+        User,
+    )
     from app.services import generation_service as service_module  # noqa: E402
     from app.services.billing.account import BillingService  # noqa: E402
     from app.services.document_parser import attachments as attachments_module  # noqa: E402
@@ -44,6 +53,7 @@ if TEST_DATABASE_URL:
     from app.services.storage.local import LocalStorageProvider  # noqa: E402
 
     from doc_fixtures import build_pdf, jpeg_bytes, png_bytes  # noqa: E402
+    from idle_txn import assert_external_call_idle  # noqa: E402
 
 HTML = "<!DOCTYPE html><html><head><title>t</title></head><body>ok</body></html>"
 
@@ -54,6 +64,11 @@ class Recorder:
         self.extractions: list[dict] = []
         self.parses = 0
         self.extraction_reply: ExtractionResult | None = None
+        self.checked_puts = 0
+        self.checked_gets = 0
+        self.checked_extracts = 0
+        self.text_reads: list[str] = []
+        self.txn_failures: list[str] = []
 
 
 class FakeClient:
@@ -89,9 +104,40 @@ async def _fake_upload(self, page, html):
 def env(monkeypatch, tmp_path):
     recorder = Recorder()
     storage = LocalStorageProvider(str(tmp_path))
+    orig_put = storage.put_bytes
+    orig_get = storage.get_bytes
+    orig_text = storage.get_text
+
+    async def put_bytes(key, content, content_type):
+        # 快照只在后台解析里上传，必须能找到会话。测试自己暂存原件时没有会话，不强制。
+        found = assert_external_call_idle(required=key.startswith("batch-private/"))
+        if found and (key.startswith("page-assets/") or key.startswith("batch-private/")):
+            recorder.checked_puts += 1
+        return await orig_put(key, content, content_type)
+
+    async def get_bytes(key):
+        assert_external_call_idle(required=True)
+        recorder.checked_gets += 1
+        return await orig_get(key)
+
+    async def get_text(key):
+        # 读上一版页面的失败会被调用方吞掉，所以先记下，测试里再断言。
+        try:
+            assert_external_call_idle(required=True)
+        except AssertionError as exc:
+            recorder.txn_failures.append(str(exc))
+            raise
+        recorder.checked_gets += 1
+        recorder.text_reads.append(key)
+        return await orig_text(key)
+
+    storage.put_bytes = put_bytes  # type: ignore[method-assign]
+    storage.get_bytes = get_bytes  # type: ignore[method-assign]
+    storage.get_text = get_text  # type: ignore[method-assign]
     for module in (pipeline, attachments_module):
         monkeypatch.setattr(module, "create_storage_provider", lambda: storage)
     monkeypatch.setattr("app.services.image_assets.create_storage_provider", lambda: storage)
+    monkeypatch.setattr(service_module, "create_storage_provider", lambda: storage)
     monkeypatch.setattr(BillingService, "ensure_can_start_batch", _noop)
     monkeypatch.setattr(
         BillingService,
@@ -124,6 +170,8 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "parse_document", counting_parse)
 
     async def fake_extract(*, model_key, document_text, history, current):
+        assert_external_call_idle(required=True)
+        recorder.checked_extracts += 1
         recorder.extractions.append({"model": model_key, "history": history, "current": current, "text": document_text})
         if recorder.extraction_reply is not None:
             return recorder.extraction_reply
@@ -266,6 +314,46 @@ def test_first_round_parses_once_and_feeds_both_channels(env):
         progress = [payload for kind, payload in await _events(factory, second.runs[0].task_id) if kind == "progress"]
         assert any(item["step"] == "compress_document" and item["text"] == "本轮需求与资料无关，未引用资料" for item in progress)
         assert not any(item["step"] == "parse_file" for item in progress)
+        assert env.recorder.checked_extracts == len(env.recorder.extractions) >= 3
+        assert env.recorder.checked_puts >= 1
+        assert env.recorder.checked_gets >= 1
+
+    _run(flow)
+
+
+def test_continuation_reads_parent_html_outside_transaction(env):
+    """上一版没有留存模型输出时，从对象存储读 HTML，读的时候不能还开着事务。"""
+
+    async def flow(factory, runner):
+        user = await _user(factory)
+        creation, _staged = await _create(factory, user, ["vis-a"], [], prompt="做一个年报网页")
+        runner.start([creation.runs[0].task_id], creation.batch_id, user_id=user.id, user_limit=10)
+        await _wait_idle(runner)
+
+        parent_html = "<!DOCTYPE html><html><head><title>上一版</title></head><body>parent-marker-77</body></html>"
+        async with factory() as session:
+            task = await session.get(GenerationTask, creation.runs[0].task_id)
+            page = await session.get(Page, creation.runs[0].page_id)
+            version = await session.get(PageVersion, page.current_version_id)
+            task.model_output_text = None
+            await session.commit()
+            storage_key = version.storage_key
+        await env.storage.put_text(storage_key, parent_html)
+
+        before = len(env.recorder.text_reads)
+        second, _staged = await _create(
+            factory, user, ["vis-a"], [], conversation_id=creation.conversation_id, prompt="把主色改成墨绿"
+        )
+        runner.start([second.runs[0].task_id], second.batch_id, user_id=user.id, user_limit=10)
+        await _wait_idle(runner)
+
+        assert not env.recorder.txn_failures, env.recorder.txn_failures
+        assert env.recorder.text_reads[before:] == [storage_key]
+        assistant = [item for item in env.recorder.messages["vis-a"][-1] if item.role == "assistant"]
+        assert assistant and "parent-marker-77" in assistant[0].content
+        async with factory() as session:
+            follow = await session.get(GenerationTask, second.runs[0].task_id)
+        assert follow.status == "succeeded", follow.error_message
 
     _run(flow)
 
@@ -407,5 +495,39 @@ def test_stopping_one_model_does_not_interrupt_shared_parse(env):
         assert other.status == "succeeded"
         assert batch.parse_status == "succeeded"
         assert env.recorder.parses == 1
+
+    _run(flow)
+
+
+def test_returning_anon_create_uploads_without_open_transaction(env, monkeypatch):
+    import httpx
+
+    from app.api import routes_generation
+    from app.core.config import get_settings
+    from app.main import app
+    from app.services.anon_service import AnonService
+
+    async def flow(factory, _runner):
+        monkeypatch.setattr(routes_generation, "AsyncSessionLocal", factory)
+        monkeypatch.setattr(routes_generation.generation_runner, "start", lambda *_args, **_kwargs: None)
+        async with factory() as session:
+            visitor, cookie = await AnonService(session).create_visitor(sign_ip=None, user_agent="test")
+            owner_id = visitor.id
+            await session.commit()
+        before = env.recorder.checked_puts
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set(get_settings().anon_cookie_name, cookie)
+            response = await client.post(
+                "/api/generations",
+                data={"prompt": "做一个年报网页", "models": "vis-a"},
+                files={"images": ("logo.png", png_bytes(), "image/png")},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["runs"][0]["model_key"] == "vis-a"
+        assert env.recorder.checked_puts > before
+        async with factory() as session:
+            assets = list((await session.execute(select(PageAsset).where(PageAsset.owner_user_id == owner_id))).scalars())
+        assert any(asset.source_kind == "scene_slot" for asset in assets)
 
     _run(flow)

@@ -29,7 +29,12 @@ from app.services.billing import BillingService
 from app.services.billing.account import SettleResult
 from app.services.consent_service import CONSENT_GRANTED, training_consent_for
 from app.services.conversation_tree import ForkSource, pick_fallback_parent, view_batches
-from app.services.document_parser.attachments import DocumentContext, build_document_context, load_attachments
+from app.services.document_parser.attachments import (
+    DocumentContext,
+    build_document_context,
+    materialize_attachments,
+    select_attachment_visuals,
+)
 from app.services.document_parser.context import LineageMaterial, collect_lineage
 from app.services.document_parser.errors import DocumentStageError
 from app.services.document_parser.extractor_agent import extract_for_round
@@ -509,9 +514,11 @@ class GenerationService:
         if page and page.current_version_id:
             version = await self.session.get(PageVersion, page.current_version_id)
             if version is not None:
+                storage_key = version.storage_key
+                await self._release_read_txn("读取上一版页面")
                 try:
                     storage = create_storage_provider()
-                    return await storage.get_text(version.storage_key)
+                    return await storage.get_text(storage_key)
                 except Exception:
                     return None
         return None
@@ -639,8 +646,10 @@ class GenerationService:
 
             llm_client = create_llm_client(task.model_key)
             model_config = get_model_registry().get(task.model_key or "")
-            images, vision_skipped = await load_attachments(
-                self.session, batch, doc_context, supports_vision=bool(model_config and model_config.supports_vision)
+            visuals = await select_attachment_visuals(self.session, batch, doc_context)
+            await self._release_read_txn("附图下载")
+            images, vision_skipped = await materialize_attachments(
+                visuals, doc_context, supports_vision=bool(model_config and model_config.supports_vision)
             )
             if vision_skipped:
                 yield await self._record_event(task.id, "status", {"type": "status", "text": VISION_SKIPPED_MESSAGE})
@@ -981,6 +990,14 @@ class GenerationService:
     async def _progress(self, task_id: uuid.UUID, step: str, status: str, text: str) -> SseEvent:
         return await self._record_event(task_id, "progress", {"type": "progress", "step": step, "status": status, "text": text})
 
+    async def _release_read_txn(self, reason: str) -> None:
+        """只读查完后把连接还回池。会话里还有没提交的修改时不动，避免把写入悄悄提交或丢掉。"""
+        if self.session.new or self.session.dirty or self.session.deleted:
+            print(f"[generation] 跳过结束只读事务（{reason}）：会话有未提交修改", flush=True)
+            return
+        if self.session.in_transaction():
+            await self.session.commit()
+
     async def _await_cancellable(self, awaitable: Any) -> Any:
         """等解析、提取这类较长的步骤时也响应停止：每隔一会儿检查一次，停止时取消等待。"""
         waiter = asyncio.ensure_future(awaitable)
@@ -1003,6 +1020,7 @@ class GenerationService:
         if material.visual_only and material.current_batch_has_documents:
             return build_document_context(material, None, visual_direct=True)
         history = await self._collect_ancestor_instructions(page.parent_page_id) if page.parent_page_id else []
+        await self._release_read_txn("资料提取")
         extraction = await self._await_cancellable(
             extract_for_round(
                 model_key=task.model_key or "",

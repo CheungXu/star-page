@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not TEST_DATABASE_URL, reason="未设置 TEST_DATABASE_URL")
@@ -37,6 +38,8 @@ if TEST_DATABASE_URL:
     from app.services.llm.types import LlmStreamChunk  # noqa: E402
     from app.services.skills.selector import SkillSelectionResult  # noqa: E402
 
+    from idle_txn import assert_external_call_idle  # noqa: E402
+
 HTML = "<!DOCTYPE html><html><head><title>测试</title></head><body><p>ok</p></body></html>"
 
 
@@ -47,6 +50,7 @@ class FakeClient:
         self.mode = model_key.split("-")[0]
 
     async def stream_text(self, _messages):
+        assert_external_call_idle(required=True)
         if self.mode == "ok":
             yield LlmStreamChunk(type="reasoning_delta", provider="fake", model="fake", reasoning_text="想一想")
             yield LlmStreamChunk(type="text_delta", provider="fake", model="fake", text=HTML)

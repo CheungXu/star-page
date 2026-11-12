@@ -191,15 +191,19 @@ async def _run_parse(batch_id: uuid.UUID) -> None:
             update(GenerationBatch).where(GenerationBatch.id == batch_id).values(parse_status="running")
         )
         await session.commit()
-        await session.refresh(batch)
 
         stored_assets: list[PageAsset] = []
         snapshots: list[dict[str, Any]] = []
         try:
-            parsed = await _parse_staged(batch.staged_uploads or [])
+            # 归属和原件清单先读出来并提交。后面的下载、解析、上传不再占着连接。
             owner_id = await _batch_owner_id(session, batch)
-            text, documents_meta = await _store_outputs(session, batch, owner_id, parsed, stored_assets, snapshots)
             staged = list(batch.staged_uploads or [])
+            await session.commit()
+
+            parsed = await _parse_staged(staged)
+            text, documents_meta = await _store_outputs(batch, owner_id, parsed, stored_assets, snapshots)
+            for asset in stored_assets:
+                session.add(asset)
             batch.extracted_file_text = text
             batch.parsed_documents = documents_meta
             batch.visual_snapshots = snapshots
@@ -256,14 +260,13 @@ async def _batch_owner_id(session: AsyncSession, batch: GenerationBatch) -> uuid
 
 
 async def _store_outputs(
-    session: AsyncSession,
     batch: GenerationBatch,
     owner_id: uuid.UUID,
     parsed: list[ParsedDocument],
     stored_assets: list[PageAsset],
     snapshots: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
-    """配图写 page_assets，快照写私有键，占位换成锚点，拼出带锚点的合并原文。"""
+    """配图和快照先上传，占位换成锚点。这里不碰数据库；调用方再用一次短事务写入。"""
     storage = create_storage_provider()
     # 同一批里多份文档出现同一张图：只存一份，后面的文档复用这个资源 ID 写锚点。
     stored_by_hash: dict[str, uuid.UUID] = {}
@@ -301,7 +304,6 @@ async def _store_outputs(
                 content_hash=image.sha256,
             )
             sort_order += 1
-            session.add(asset)
             stored_assets.append(asset)
             text = text.replace(placeholder, anchor_for_image(asset_id, image.label, image.width, image.height, image.core))
         for index, snapshot in enumerate(document.snapshots):
@@ -342,7 +344,6 @@ async def _store_outputs(
                 "snapshot_count": len(document.snapshots),
             }
         )
-    await session.flush()
     return "\n\n".join(blocks), documents_meta
 
 

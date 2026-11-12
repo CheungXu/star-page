@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=30, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=40, alias="DB_MAX_OVERFLOW")
     db_pool_timeout_seconds: int = Field(default=30, alias="DB_POOL_TIMEOUT_SECONDS")
+    # 超过这个秒数的连接在下次借出前关掉换新的，避免用到被数据库端断开的旧连接。
+    db_pool_recycle_seconds: int = Field(default=1800, alias="DB_POOL_RECYCLE_SECONDS")
 
     default_user_name: str = Field(default="default_test", alias="DEFAULT_USER_NAME")
     default_user_email: str = Field(default="default_test@example.local", alias="DEFAULT_USER_EMAIL")

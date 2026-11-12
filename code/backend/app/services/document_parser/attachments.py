@@ -129,14 +129,12 @@ def _asset_visual(asset: PageAsset) -> _Visual:
     )
 
 
-async def load_attachments(
+async def select_attachment_visuals(
     session: AsyncSession,
     batch: GenerationBatch | None,
     context: DocumentContext,
-    *,
-    supports_vision: bool,
-) -> tuple[tuple[LlmImagePart, ...], bool]:
-    """取本轮要附带的图片并转成 data URL。返回 (图片, 是否因模型不支持视觉而跳过)。"""
+) -> list[_Visual]:
+    """查出本轮要附的存储键和标签。只查库，不下载。"""
     visuals: list[_Visual] = []
     if batch is not None:
         result = await session.execute(
@@ -155,6 +153,16 @@ async def load_attachments(
                 )
             )
     visuals += context.doc_visuals
+    return visuals
+
+
+async def materialize_attachments(
+    visuals: list[_Visual],
+    context: DocumentContext,
+    *,
+    supports_vision: bool,
+) -> tuple[tuple[LlmImagePart, ...], bool]:
+    """把已经查好的图片下载并转成 data URL。不使用数据库会话。"""
     if not visuals:
         return (), False
     if not supports_vision:
