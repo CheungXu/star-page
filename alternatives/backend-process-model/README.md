@@ -71,3 +71,4 @@ APP_ROLE=web .venv/bin/uvicorn app.main:app --port 8096 &
 | 日期 | 结论 |
 | --- | --- |
 | 2026-11-12 | 上线方案一；方案二、方案三记录在案，按上面的触发条件再评估 |
+| 2026-11-13 | 复查方案一并修补；在升级到方案二之前，先做「worker 排空后退出」和「排队名额搬进数据库」（不新增服务即可多 worker），见 `doc/20261113/backend-review-fixes.md` |
