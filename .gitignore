@@ -6,9 +6,11 @@ skills/ori-page-skills/
 # 本地与服务器真实环境变量，包含数据库、OSS、LLM、短信等密钥
 config/*.env
 
-# Python 虚拟环境
-.venv/
-code/backend/.venv/
+# Python 虚拟环境与字节码。不带结尾斜杠：worktree 里常把 .venv 建成指向主目录的软链接，
+# 带斜杠只忽略目录、软链接会被提交，合并回主目录时 git 会删掉真正的虚拟环境换成软链接。
+.venv
+__pycache__/
+*.py[cod]
 
 # hyperframes 视频工程的中间产物（逐句配音、检查截帧、渲染日志）
 data/视频/**/assets/voice-parts/
