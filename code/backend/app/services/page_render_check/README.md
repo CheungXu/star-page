@@ -31,7 +31,8 @@
 - `PAGE_RENDER_CHECK_MODE`：
   - `off`（代码默认）：不运行无头浏览器检查。
   - `observe`（灰度观察档）：正常执行渲染检查并将结果写入 `page_versions.render_check`（标记 `"mode": "observe", "expose_issue": false`），**不触发模型修复、不向前端下发 `render_issue` 标签**。用于评估线上误报率，切到 `repair` 后历史 `observe` 记录也不会被回溯打标。
-  - `repair`（自动修复档）：检测到问题自动让模型修复 1 次并复检；复检仍失败时照常发布，并在 `completed` 事件和会话详情中下发 `render_issue`。
+  - `repair`（自动修复档）：检测到问题自动让模型修复 1 次并复检；复检仍失败时照常发布，并在 `completed` 事件和会话详情中下发 `render_issue`。复检问题数没有减少时退回修前页面发布（`render_check` 记 `repair_applied: false, repair_reverted: true`）；修复轮上游报错或用户中途停止，同样发布修前页面。
+  - 停止请求：渲染检查（含复检）期间页面已完整生成，用户点停止只中断检查（`status: skipped, skip_reason: cancelled`），页面照常发布并按成功结算。
 - `PAGE_RENDER_CHECK_CONCURRENCY`：单 worker 同时运行的渲染检查子进程上限（默认 `2`，4 核双 worker 机器上勿盲目调大）。
 - `PAGE_RENDER_CHECK_TIMEOUT_SECONDS`：单次检查硬超时秒数（默认 `15.0`）。
 - `PAGE_RENDER_CHECK_MAX_QUEUE`：单 worker 最大排队等待数，超限直接 `skipped(queue_full)`（默认 `8`）。

@@ -67,7 +67,7 @@ from app.services.page_edit import (
     normalize_newlines,
     parse_edit_blocks,
 )
-from app.services.page_render_check import check_page_render
+from app.services.page_render_check import RenderCheckResult, check_page_render
 from app.services.scenes.catalog import get_scene
 from app.services.skills.registry import get_skill_registry
 from app.services.skills.selector import SkillSelectionResult, select_skill_for_prompt
@@ -1066,7 +1066,7 @@ class GenerationService:
                     },
                 )
                 await self._release_read_txn("渲染检查")
-                first_check = await self._await_cancellable(check_page_render(safe_html))
+                first_check = await self._check_render_unless_cancelled(safe_html)
 
                 if render_mode == "observe":
                     # observe 模式：只检查并记录到 page_versions.render_check，不修复、不向前端打标记。
@@ -1110,7 +1110,9 @@ class GenerationService:
                     ]
 
                     repair_applied = False
+                    repair_reverted = False
                     repair_raw = ""
+                    pre_repair = (final_html_document, final_model_output_text, safe_html, len(collected_edit_texts))
                     try:
                         async for event in self._run_with_truncation_continue(
                             task_id=task.id,
@@ -1125,12 +1127,13 @@ class GenerationService:
                         # 修复轮无论是否修好，一律并入用户计费账单。
                         tracker.commit_attempt_as_billable()
                         tracker.last_output_text = final_model_output_text
-                    except GenerationCancelled:
-                        raise
-                    except _REPAIR_RECOVERABLE_ERRORS as repair_exc:
-                        if not getattr(self.session, "is_active", True):
+                    except (GenerationCancelled, *_REPAIR_RECOVERABLE_ERRORS) as repair_exc:
+                        if not isinstance(repair_exc, GenerationCancelled) and not getattr(
+                            self.session, "is_active", True
+                        ):
                             raise
-                        print(f"[render-check] 自动修复轮模型异常 task={task.id}: {repair_exc}", flush=True)
+                        # 上游异常或用户中途点停止：放弃修复，照常发布已完整生成的修前页面。
+                        print(f"[render-check] 自动修复轮中止 task={task.id}: {repair_exc!r}", flush=True)
                         if tracker.attempt_rounds:
                             tracker.commit_attempt_as_billable()
                         tracker.current_round = RoundResult()
@@ -1197,7 +1200,15 @@ class GenerationService:
                             },
                         )
                         await self._release_read_txn("渲染复检")
-                        final_check = await self._await_cancellable(check_page_render(safe_html))
+                        final_check = await self._check_render_unless_cancelled(safe_html)
+                        if final_check.has_issues and len(final_check.issues) >= len(first_check.issues):
+                            # 修复没有减少问题：退回修前页面，避免发布一版同样坏、但已偏离原稿的页面。
+                            final_html_document, final_model_output_text, safe_html, edit_count = pre_repair
+                            del collected_edit_texts[edit_count:]
+                            tracker.last_output_text = final_model_output_text
+                            final_check = first_check
+                            repair_applied = False
+                            repair_reverted = True
                     else:
                         final_check = first_check
 
@@ -1206,6 +1217,8 @@ class GenerationService:
                     )
                     if not repair_applied:
                         render_check_dict["repair_applied"] = False
+                    if repair_reverted:
+                        render_check_dict["repair_reverted"] = True
                     render_issue_payload = final_check.to_render_issue()
                 else:
                     render_check_dict = first_check.to_dict(
@@ -1298,8 +1311,7 @@ class GenerationService:
         except TaskLost:
             raise
         except GenerationCancelled:
-            if not getattr(self.session, "is_active", True):
-                await self.session.rollback()
+            await self._recover_session_after_db_error(task, page)
             await self._fence(task.id)
             partial_output = tracker.partial_output_text()
             if partial_output and not task.model_output_text:
@@ -1330,8 +1342,7 @@ class GenerationService:
             await self._refund_flagship_trial_if_needed(task.batch_id)
             yield cancelled
         except Exception as exc:
-            if not getattr(self.session, "is_active", True):
-                await self.session.rollback()
+            await self._recover_session_after_db_error(task, page)
             await self._fence(task.id)
             partial_output = tracker.partial_output_text()
             if partial_output and not task.model_output_text:
@@ -1590,6 +1601,21 @@ class GenerationService:
             if not waiter.done():
                 waiter.cancel()
             raise
+
+    async def _check_render_unless_cancelled(self, html: str) -> RenderCheckResult:
+        """渲染检查时页面已完整生成：用户点停止只中断检查，页面照常发布，不再整单作废。"""
+        try:
+            return await self._await_cancellable(check_page_render(html))
+        except GenerationCancelled:
+            return RenderCheckResult(status="skipped", skip_reason="cancelled")
+
+    async def _recover_session_after_db_error(self, *instances: Any) -> None:
+        """事务因数据库报错失效时先回滚；回滚会让已加载对象过期，异步会话里不能懒加载，须显式刷新。"""
+        if getattr(self.session, "is_active", True):
+            return
+        await self.session.rollback()
+        for instance in instances:
+            await self.session.refresh(instance)
 
     async def _prepare_document_context(self, task: GenerationTask, page: Page, material: LineageMaterial) -> DocumentContext:
         """同模型、关闭思考、纯文本提取本轮用得上的资料。
@@ -2112,27 +2138,33 @@ def _looks_like_partial_edit_blocks(text: str) -> bool:
 def is_output_truncated(text: str, finish_reason: str | None) -> bool:
     """判定模型输出是否被截断。
 
-    - finish_reason == "length"：明确触及最大输出长度上限。
+    - finish_reason == "length"：明确触及最大输出长度上限；唯一例外是整页 HTML 恰好以 </html> 收尾（页面已完整）。
     - 厂商未给结束原因（None 或空串）：
       - 若已是完整闭合的 SEARCH/REPLACE 编辑块（ModelOutputKind.EDIT_BLOCKS），绝不算截断；
       - 若是完整 HTML 形态（ModelOutputKind.FULL_HTML），按正文是否含 </html>（忽略大小写）判定；
-      - 其余情况（空串、未闭合的半截编辑块等 ModelOutputKind.MALFORMED），视为截断。
+      - 空串、未闭合的半截编辑块或含 HTML 标签的残片视为截断；不含任何标签的纯文字（如拒答）不算截断。
     - 正常结束（如 "stop"）即使漏写 </html> 也不算截断，浏览器可容错。
     """
     reason = (finish_reason or "").strip().lower()
+    raw = text or ""
     if reason == "length":
+        if classify_model_output(raw) == ModelOutputKind.FULL_HTML:
+            tail = raw.rstrip().rstrip("`").rstrip().lower()
+            return not tail.endswith("</html>")
         return True
     if not reason:
-        raw = text or ""
+        if not raw.strip():
+            return True
         kind = classify_model_output(raw)
         if kind == ModelOutputKind.EDIT_BLOCKS:
             return False
         if kind == ModelOutputKind.FULL_HTML:
             return "</html>" not in raw.lower()
-        return True
+        return _looks_like_partial_edit_blocks(raw) or _contains_html_element(raw)
     return False
 
 
+_CONTINUATION_PREAMBLE_MAX_CHARS = 500
 _CONTINUATION_SEARCH_START_RE = re.compile(r"^[ \t]*<<<<<<<[ \t]+SEARCH[ \t]*$")
 _HTML_ELEMENT_TAG_RE = re.compile(r"<[a-zA-Z][a-zA-Z0-9-]*[\s>/]")
 
@@ -2152,7 +2184,8 @@ def join_continued_output(prefix: str, continuation: str) -> str:
     """拼接截断前的半页与续写段。
 
     - 若续写段外误包了代码围栏（```html / ```diff / ``` 等）则先剥除；
-    - 若模型忽略断点续写提示而从头重发了完整 HTML（以 <!doctype 或重复的 <html 开头），直接采用新完整文档，防止两份页面叠在一起；
+    - 若模型忽略断点续写提示而从头重发了完整 HTML（以 <!doctype 或重复的 <html 开头，或前面只多了一句不含标签的说明），直接采用新完整文档，防止两份页面叠在一起；
+      前缀是编辑块时不认 <html 重发，因为 REPLACE 内容本身可能从 <html 写起；
     - 若续写段以 <<<<<<< SEARCH 开头：当前缀尚无闭合块或续写段从第 1 块重发时直接采用续写段；否则保留前缀已闭合块并换行衔接；
     - 其余正常断点续写保持起止字符原样拼接，支持标签/属性名/词中无缝拼合。
     """
@@ -2164,11 +2197,19 @@ def join_continued_output(prefix: str, continuation: str) -> str:
     lstripped = stripped.lstrip()
     lowered_cont = lstripped.lower()
     lowered_prefix = prefix.lower()
+    prefix_is_edit = _looks_like_partial_edit_blocks(prefix)
 
     if lowered_cont.startswith("<!doctype"):
         return lstripped
-    if lowered_cont.startswith("<html") and ("<html" in lowered_prefix or "<!doctype" not in lowered_prefix):
-        return lstripped
+    if not prefix_is_edit:
+        if lowered_cont.startswith("<html") and ("<html" in lowered_prefix or "<!doctype" not in lowered_prefix):
+            return lstripped
+        # 模型先写一句说明再从头重发整页：说明文字里不含任何标签，且后面紧跟文档开头。
+        first_tag = lowered_cont.find("<")
+        if 0 < first_tag <= _CONTINUATION_PREAMBLE_MAX_CHARS:
+            restart = lowered_cont[first_tag:]
+            if restart.startswith("<!doctype") or (restart.startswith("<html") and "<html" in lowered_prefix):
+                return re.sub(r"\r?\n?```\s*$", "", lstripped[first_tag:])
 
     first_line = lstripped.split("\n", 1)[0].rstrip("\r")
     if _CONTINUATION_SEARCH_START_RE.match(first_line):

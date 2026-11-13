@@ -48,10 +48,13 @@ def test_is_output_truncated_rules():
     incomplete = "<!DOCTYPE html><html><head><title>cut</title></head><body><div class='ca"
     missing_html_but_body_closed = "<!DOCTYPE html><html><body><p>done</p></body>"
 
-    # finish_reason == "length" 一律判为截断（即使文本里碰巧出现过 </html> 字符串）
+    # finish_reason == "length"：判为截断，除非整页恰好以 </html> 收尾（中途出现 </html> 字符串不算）
     assert is_output_truncated(incomplete, "length") is True
-    assert is_output_truncated(complete, "length") is True
+    assert is_output_truncated(complete, "length") is False
+    assert is_output_truncated(complete + "\n```", "length") is False
     assert is_output_truncated(incomplete, " LENGTH ") is True
+    js_with_html_close = "<!DOCTYPE html><html><body><script>const s='</html>';</script><div>还没写完"
+    assert is_output_truncated(js_with_html_close, "length") is True
 
     # 正常结束（finish_reason == "stop"）：即使模型漏写 </html> 也不算截断，浏览器可容错
     assert is_output_truncated(complete, "stop") is False
@@ -62,6 +65,9 @@ def test_is_output_truncated_rules():
     assert is_output_truncated(complete.upper(), "") is False
     assert is_output_truncated(incomplete, None) is True
     assert is_output_truncated("", None) is True
+    # 无结束原因：含标签的残片算截断；不含任何标签的纯文字拒答不算，交给外层按无效 HTML 失败
+    assert is_output_truncated("<div class='hero'><h1>半截", None) is True
+    assert is_output_truncated("抱歉，我无法生成这个页面。", None) is False
 
 
 def test_is_output_truncated_with_edit_blocks_interaction():
@@ -222,6 +228,7 @@ class FakeMemorySession:
         self.dirty: set[Any] = set()
         self.deleted: set[Any] = set()
         self.commits = 0
+        self.refreshed: list[Any] = []
 
     async def get(self, entity: type, ident: Any, **_kwargs: Any) -> Any:
         return self._store.get((entity, ident))
@@ -242,6 +249,9 @@ class FakeMemorySession:
 
     async def rollback(self) -> None:
         return None
+
+    async def refresh(self, obj: Any) -> None:
+        self.refreshed.append(obj)
 
     def in_transaction(self) -> bool:
         return False
@@ -1062,8 +1072,148 @@ def test_repair_round_swallows_llm_error_but_propagates_db_error(monkeypatch):
     assert task_b.status == "failed"
     assert page_b.status == "failed"
     assert session_b.rollbacks >= 1
+    # 回滚会让 task/page 过期，异步会话里必须显式刷新后才能继续读写
+    assert task_b in session_b.refreshed and page_b in session_b.refreshed
     assert records_b["uploaded_html"] is None
     assert records_b["released_tasks"] == [task_b.id]
+
+
+# ---------------------------------------------------------------------------
+# 5. 第二轮审查回归测试（说明文字后重发整页、编辑块遇 <html、渲染检查期间停止、修复无改善退回）
+# ---------------------------------------------------------------------------
+
+
+def test_join_continued_output_handles_preamble_restart_and_edit_html_replace():
+    half_html = "<!doctype html><html><head><title>旧</title></head><body><div>未闭合半截"
+
+    # 先写一句说明再从头重发整页：丢弃半截前缀与说明文字
+    preamble_restart = "好的，下面重新输出完整页面：\n```html\n<!DOCTYPE html><html><body><p>完整</p></body></html>\n```"
+    joined = join_continued_output(half_html, preamble_restart)
+    assert joined.startswith("<!DOCTYPE html>")
+    assert "未闭合半截" not in joined and "好的" not in joined and "```" not in joined
+
+    # 正常续写里先有文字再有闭合标签：照常拼接
+    assert join_continued_output("<p>欢迎来到", "我们的网站</p></body></html>") == "<p>欢迎来到我们的网站</p></body></html>"
+
+    # 编辑块 REPLACE 恰好在 <html 前断开：续写接在后面，不丢弃已输出的编辑块
+    edit_prefix = "<<<<<<< SEARCH\n<html>\n<body>\n=======\n"
+    edit_cont = "<html lang=\"zh\">\n<body class=\"dark\">\n>>>>>>> REPLACE"
+    joined_edit = join_continued_output(edit_prefix, edit_cont)
+    assert joined_edit == edit_prefix + edit_cont
+    assert service_module.classify_model_output(joined_edit) == service_module.ModelOutputKind.EDIT_BLOCKS
+
+
+def _issue(message: str):
+    from app.services.page_render_check import RenderCheckResult, build_js_error_issue
+
+    return RenderCheckResult(
+        status="issues_found",
+        issues=[build_js_error_issue(name="ReferenceError", message=message, stack="")],
+    )
+
+
+V1_HTML = "<!doctype html><html><head><title>初版</title></head><body><h1>可用初版</h1></body></html>"
+
+
+def test_cancel_during_render_check_still_publishes_finished_page(monkeypatch):
+    """页面已完整生成后，用户在渲染检查期间点停止：只中断检查，页面照常发布并按成功结算。"""
+    session, _user, page, task, records = _setup_harness(monkeypatch, continues=1)
+    service_module.get_settings().page_render_check_mode = "observe"
+    cancel_flag = {"stop": False}
+
+    async def slow_render_check(_html: str):
+        cancel_flag["stop"] = True
+        await asyncio.sleep(5)
+        raise AssertionError("渲染检查应被停止请求中断")
+
+    monkeypatch.setattr(service_module, "check_page_render", slow_render_check)
+    llm = ScriptedLlmClient(
+        [[
+            LlmStreamChunk(type="text_delta", provider="qwen", model="qwen-mock", text=V1_HTML),
+            LlmStreamChunk(type="done", provider="qwen", model="qwen-mock", finish_reason="stop"),
+        ]]
+    )
+    monkeypatch.setattr(service_module, "create_llm_client", lambda _key: llm)
+
+    events = asyncio.run(_collect_events(GenerationService(session, cancel_check=lambda: cancel_flag["stop"]), task))
+    assert events[-1].event == "completed"
+    assert task.status == "succeeded" and page.status == "ready"
+    assert "可用初版" in (records["uploaded_html"] or "")
+    assert len(records["settle_calls"]) == 1
+    assert session.versions[0].render_check["skip_reason"] == "cancelled"
+
+
+def test_cancel_during_repair_round_publishes_pre_repair_page(monkeypatch):
+    """自动修复轮中途点停止：放弃修复，照常发布修前页面并带 render_issue。"""
+    session, _user, page, task, records = _setup_harness(monkeypatch, continues=1)
+    service_module.get_settings().page_render_check_mode = "repair"
+    cancel_flag = {"stop": False}
+
+    async def fake_render_check(_html: str):
+        return _issue("foo is not defined")
+
+    monkeypatch.setattr(service_module, "check_page_render", fake_render_check)
+
+    def on_chunk(call_idx: int, chunk_idx: int, _chunk: LlmStreamChunk) -> None:
+        if call_idx == 1 and chunk_idx == 1:
+            cancel_flag["stop"] = True
+
+    llm = ScriptedLlmClient(
+        [
+            [
+                LlmStreamChunk(type="text_delta", provider="qwen", model="qwen-mock", text=V1_HTML),
+                LlmStreamChunk(type="done", provider="qwen", model="qwen-mock", finish_reason="stop"),
+            ],
+            [
+                LlmStreamChunk(type="text_delta", provider="qwen", model="qwen-mock", text="<!doctype html><html><body>修"),
+                LlmStreamChunk(type="text_delta", provider="qwen", model="qwen-mock", text="复中"),
+            ],
+        ],
+        on_chunk=on_chunk,
+    )
+    monkeypatch.setattr(service_module, "create_llm_client", lambda _key: llm)
+
+    events = asyncio.run(_collect_events(GenerationService(session, cancel_check=lambda: cancel_flag["stop"]), task))
+    assert events[-1].event == "completed"
+    assert task.status == "succeeded" and page.status == "ready"
+    assert "可用初版" in (records["uploaded_html"] or "")
+    assert events[-1].data["render_issue"] is not None
+    assert session.versions[0].render_check["repair_applied"] is False
+
+
+def test_repair_without_improvement_reverts_to_pre_repair_page(monkeypatch):
+    """修复后复检问题没有减少：退回修前页面发布，并在 render_check 里记录 repair_reverted。"""
+    session, _user, _page, task, records = _setup_harness(monkeypatch, continues=1)
+    service_module.get_settings().page_render_check_mode = "repair"
+    checks = [_issue("foo is not defined"), _issue("bar is not defined")]
+
+    async def fake_render_check(_html: str):
+        return checks.pop(0)
+
+    monkeypatch.setattr(service_module, "check_page_render", fake_render_check)
+    repaired_html = "<!doctype html><html><head><title>修复版</title></head><body><h1>改坏了</h1></body></html>"
+    llm = ScriptedLlmClient(
+        [
+            [
+                LlmStreamChunk(type="text_delta", provider="qwen", model="qwen-mock", text=V1_HTML),
+                LlmStreamChunk(type="done", provider="qwen", model="qwen-mock", finish_reason="stop"),
+            ],
+            [
+                LlmStreamChunk(type="text_delta", provider="qwen", model="qwen-mock", text=repaired_html),
+                LlmStreamChunk(type="done", provider="qwen", model="qwen-mock", finish_reason="stop"),
+            ],
+        ]
+    )
+    monkeypatch.setattr(service_module, "create_llm_client", lambda _key: llm)
+
+    events = asyncio.run(_collect_events(GenerationService(session), task))
+    assert events[-1].event == "completed"
+    uploaded = records["uploaded_html"] or ""
+    assert "可用初版" in uploaded and "改坏了" not in uploaded
+    assert task.model_output_text == V1_HTML
+    stored = session.versions[0].render_check
+    assert stored["repair_applied"] is False and stored["repair_reverted"] is True
+    assert "foo is not defined" in events[-1].data["render_issue"]["issues"][0]
 
 
 async def _collect_events(service: GenerationService, task: GenerationTask):

@@ -957,7 +957,8 @@ def test_db_render_check_repair_still_failing_always_publishes_with_render_issue
         assert render_issue is not None
         assert "首屏疑似白屏" in render_issue["summary"]
         assert "脚本运行出错" in render_issue["summary"]
-        assert any("boom2" in item for item in render_issue["issues"])
+        # 修复后问题数没有减少：退回修前版本发布，提示的是修前页面的问题；修复轮用量照常计费
+        assert any("boom1" in item for item in render_issue["issues"])
         assert completed.data["usage"] == {"input_tokens": 3300, "output_tokens": 3100, "total_tokens": 6400}
         assert completed.data["billing"]["credits_charged"] > 0
 
@@ -973,7 +974,10 @@ def test_db_render_check_repair_still_failing_always_publishes_with_render_issue
         assert version.status == "ready"
         assert version.render_check["status"] == "issues_found"
         assert version.render_check["repaired"] is True
+        assert version.render_check["repair_applied"] is False
+        assert version.render_check["repair_reverted"] is True
         assert version.render_check["expose_issue"] is True
+        assert "隐藏标题" in (task.model_output_text or "")
         assert acc.frozen_gift_balance == 0
         assert acc.gift_balance == 600 - completed.data["billing"]["credits_charged"]
 
@@ -988,7 +992,7 @@ def test_db_render_check_repair_still_failing_always_publishes_with_render_issue
 
 
 # ---------------------------------------------------------------------------
-# 8. 渲染检查返回 skipped 时照常发布无标记 + 渲染检查期间停止立即取消
+# 8. 渲染检查返回 skipped 时照常发布无标记 + 渲染检查期间停止只中断检查、照常发布
 # ---------------------------------------------------------------------------
 
 
@@ -1045,7 +1049,7 @@ def test_db_render_check_skipped_and_cancel_during_render_check(monkeypatch, qua
         detail = await _fetch_conversation_detail_http(monkeypatch, factory, user, c1.conversation_id)
         assert detail["batches"][0]["nodes"][0]["render_issue"] is None
 
-        # (B) 在渲染检查等待期间触发取消：立即取消检查协程并走 cancelled 收尾
+        # (B) 在渲染检查等待期间触发停止：立即中断检查协程，但页面已完整生成，照常发布并结算
         stop_flag = {"cancelled": False}
         check_cancelled_flag = {"triggered": False}
 
@@ -1068,12 +1072,15 @@ def test_db_render_check_skipped_and_cancel_during_render_check(monkeypatch, qua
             cancel_check=lambda: stop_flag["cancelled"],
         )
         assert check_cancelled_flag["triggered"] is True
-        assert ev2[-1].event == "cancelled"
+        assert ev2[-1].event == "completed"
+        assert ev2[-1].data["render_issue"] is None
         async with factory() as session:
             t2 = await session.get(GenerationTask, c2.runs[0].task_id)
             p2 = await session.get(Page, c2.runs[0].page_id)
-        assert t2.status == "cancelled"
-        assert p2.status == "failed"
+            v2 = await session.get(PageVersion, p2.current_version_id)
+        assert t2.status == "succeeded"
+        assert p2.status == "ready"
+        assert v2.render_check["skip_reason"] == "cancelled"
 
     _run_db(flow)
 
