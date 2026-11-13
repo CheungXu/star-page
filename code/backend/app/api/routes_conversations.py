@@ -23,12 +23,14 @@ from app.schemas.conversations import (
     ConversationForkSource,
     ConversationListItem,
     ConversationNode,
+    ConversationRenderIssue,
     ConversationUsage,
     ConversationUpdate,
 )
 from app.schemas.generation import ModelInfo
 from app.services.conversation_tree import fork_source, release_deleted_pages, view_batches
 from app.services.document_parser.pipeline import discard_snapshots
+from app.services.page_render_check import render_issue_from_stored
 
 router = APIRouter(tags=["conversations"])
 
@@ -248,6 +250,7 @@ async def get_conversation(conversation_id: uuid.UUID, request: Request) -> Conv
                         page_url=build_page_url(settings, page.conversation_id, page.id),
                         usage=_build_usage(version),
                         billing=_build_billing(billing_by_version.get(str(version.id)) if version else None),
+                        render_issue=_build_render_issue(version),
                         duration_ms=_task_duration_ms(task),
                     )
                 )
@@ -309,6 +312,23 @@ def _build_billing(txn: CreditTransaction | None) -> ConversationBilling | None:
     if charged == 0 and discount == 0:
         return None
     return ConversationBilling(credits_charged=charged, discount_credits=discount)
+
+
+def _build_render_issue(version: PageVersion | None) -> ConversationRenderIssue | None:
+    """仅当版本在 repair 模式下仍有未修复的渲染问题时返回前端提示标签（observe 模式不暴露）。"""
+    if version is None:
+        return None
+    raw_check = getattr(version, "render_check", None)
+    issue_dict = render_issue_from_stored(raw_check)
+    if not issue_dict:
+        return None
+    summary = str(issue_dict.get("summary") or "").strip()
+    if not summary:
+        return None
+    return ConversationRenderIssue(
+        summary=summary,
+        issues=[str(item) for item in (issue_dict.get("issues") or []) if item],
+    )
 
 
 def _task_duration_ms(task: GenerationTask | None) -> int | None:

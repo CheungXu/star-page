@@ -15,11 +15,11 @@ import { creditsToYuan, fetchAccount, formatCredits, type BillingAccount } from 
 import { toAbsoluteUrl } from "./lib/links";
 import "./components/workspace/workspace.css";
 import { ResultActions } from "./components/workspace/actions";
-import { RoundSource } from "./components/workspace/bits";
+import { RenderIssueBadge, RoundSource } from "./components/workspace/bits";
 import { WorkspaceProvider } from "./components/workspace/context";
 import { GenerationProgress, GenerationResults } from "./components/workspace/panels";
 import { isLiveStatus } from "./components/workspace/progress-utils";
-import type { ActionLayout, PreviewPresentation, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
+import type { ActionLayout, PreviewPresentation, RenderIssue, RoundBase, RoundNav, WorkspaceRound, WorkspaceRun } from "./components/workspace/types";
 
 type GenerationStatus = "idle" | "queued" | "thinking" | "creating" | "completed" | "failed" | "cancelled";
 
@@ -120,6 +120,7 @@ type SsePayload = {
     reserved_credits?: number;
     refunded_credits?: number;
   };
+  render_issue?: RenderIssue | null;
 };
 
 type UsageCostSummary = {
@@ -165,6 +166,7 @@ type RunState = {
   errorMessage: string;
   progressSteps: ProgressStep[];
   usageSummary?: UsageCostSummary;
+  renderIssue?: RenderIssue | null;
   durationMs?: number;
 };
 
@@ -229,6 +231,7 @@ type ConversationNodeResponse = {
   page_url: string;
   usage?: ApiUsagePayload | null;
   billing?: { credits_charged?: number; discount_credits?: number } | null;
+  render_issue?: RenderIssue | null;
   duration_ms?: number | null;
 };
 
@@ -907,6 +910,7 @@ function PreviewCell({
           aria-hidden="true"
         />
         <strong className="preview-cell-model" title={run.modelLabel}>{run.modelLabel}</strong>
+        {run.status === "completed" && run.renderIssue && <RenderIssueBadge issue={run.renderIssue} />}
         {run.status !== "completed" && <span className={`run-status-chip is-${run.status}`}>{statusLabel}</span>}
       </header>
 
@@ -990,6 +994,7 @@ function FullscreenPreviewModal({ run, onClose }: { run: RunState; onClose: () =
             </div>
           </div>
           <div className="preview-modal-actions">
+            {run.status === "completed" && run.renderIssue && <RenderIssueBadge issue={run.renderIssue} />}
             <a href={absoluteUrl} target="_blank" rel="noreferrer">
               <ExternalLinkIcon />
               打开页面
@@ -1972,6 +1977,10 @@ export default function HomePage() {
         pageUrl: payload.url ?? run.pageUrl,
         pageId: payload.page_id ?? run.pageId,
         usageSummary: buildUsageSummary(payload) ?? run.usageSummary,
+        renderIssue:
+          payload.render_issue !== undefined
+            ? normalizeRenderIssue(payload.render_issue)
+            : run.renderIssue,
         durationMs: finishedDuration(run),
         progressSteps: run.progressSteps.map((step) => ({
           ...step,
@@ -1988,6 +1997,7 @@ export default function HomePage() {
         status: "failed",
         statusText: "生成失败",
         errorMessage: payload.message ?? "页面生成失败，请稍后重试。",
+        renderIssue: null,
         durationMs: finishedDuration(run),
         progressSteps: run.progressSteps.map((step) => (step.status === "running" ? { ...step, status: "failed" } : step)),
       }));
@@ -1999,6 +2009,7 @@ export default function HomePage() {
         status: "cancelled",
         statusText: "已停止",
         errorMessage: payload.message ?? "已停止生成",
+        renderIssue: null,
         durationMs: finishedDuration(run),
         progressSteps: run.progressSteps.map((step) => (step.status === "running" ? { ...step, status: "pending" } : step)),
       }));
@@ -2013,6 +2024,7 @@ export default function HomePage() {
         statusText: payload.message ?? "服务重启，已自动重新生成",
         errorMessage: "",
         usageSummary: undefined,
+        renderIssue: null,
         durationMs: undefined,
         progressSteps: createInitialProgressSteps({
           hasFile: run.progressSteps.some((step) => step.id === "upload_file"),
@@ -2248,20 +2260,25 @@ export default function HomePage() {
   }
 
   function applyStoredSession(session: StoredSession) {
+    const restoredRuns = (session.runs ?? []).map(normalizeStoredRun);
+    const restoredPastRounds = (session.pastRounds ?? []).map((round) => ({
+      ...round,
+      runs: (round.runs ?? []).map(normalizeStoredRun),
+    }));
     setIsModelMenuOpen(false);
     setPhase("active");
     setConversationId(session.conversationId);
     setBatchId(session.batchId);
     setSubmittedPrompt(session.prompt);
     setSubmittedFileNames(session.fileNames ?? []);
-    setRuns(session.runs ?? []);
-    setActiveModelKey(session.runs?.[0]?.modelKey ?? "");
+    setRuns(restoredRuns);
+    setActiveModelKey(restoredRuns[0]?.modelKey ?? "");
     setFullscreenRun(null);
     setSelectedFiles([]);
     setFileError("");
     setPrompt("");
     setRoundIndex(session.roundIndex ?? 0);
-    setPastRounds(session.pastRounds ?? []);
+    setPastRounds(restoredPastRounds);
     setCurrentBasedOn(session.currentBasedOn ?? null);
     setForkSource(session.forkSource ?? null);
     setViewedRound(null);
@@ -3520,9 +3537,26 @@ function buildRunsFromBatch(batch: ConversationBatchResponse, hasEarlierDocument
             : step.tokenSource,
       })),
       usageSummary,
+      renderIssue: normalizeRenderIssue(node.render_issue),
       durationMs: node.duration_ms ?? undefined,
     };
   });
+}
+
+function normalizeRenderIssue(raw?: RenderIssue | null): RenderIssue | null {
+  if (!raw || typeof raw.summary !== "string") return null;
+  const summary = raw.summary.trim();
+  if (!summary) return null;
+  const issues = Array.isArray(raw.issues)
+    ? raw.issues.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : undefined;
+  return issues && issues.length > 0 ? { summary, issues } : { summary };
+}
+
+function normalizeStoredRun<T extends { renderIssue?: RenderIssue | null; render_issue?: RenderIssue | null }>(run: T): T {
+  const raw = run.renderIssue !== undefined ? run.renderIssue : run.render_issue;
+  if (raw === undefined) return run;
+  return { ...run, renderIssue: normalizeRenderIssue(raw) };
 }
 
 function getStoredStatusText(status: GenerationStatus): string {

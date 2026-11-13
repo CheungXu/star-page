@@ -139,6 +139,35 @@ python3 script/probe-llm-models.py --capabilities --only=doubao
 
 探测结果直接输出到终端。换代时的判断顺序见 `wiki/llm-provider-abstraction.md` 的「模型换代检查清单」。2026-10 的结果见 `doc/20261010/llm-model-catalog-update.md`，2026-11 的结果见 `doc/20261110/llm-model-catalog-update.md`。
 
+## 生成质量巡检与模型局部编辑探测
+
+生成质量三步改造配套三个**纯只读**（连接级 `default_transaction_read_only=on` + 隐私脱敏）分析与探测脚本：
+
+### 1. 历史输出截断统计：`audit_truncation.py`
+
+在 PostgreSQL 端直接统计历史 `generation_tasks.model_output_text` 缺失 `</html>` 与同时缺失 `</body></html>`（硬截断）的比例、按模型分布及最近样本尾部摘要，不拉取大文本列到客户端内存。
+
+```bash
+code/backend/.venv/bin/python script/audit_truncation.py
+```
+
+### 2. 多模型续写局部编辑能力探测：`probe_page_edit.py`
+
+从数据库只读抽样短（~5KB）、中（~15KB）、长（~30KB）三档真实已发布页面，构造与线上完全一致的多轮消息结构，对 `config/llm.models.json` 中各可用模型并发执行「小幅改文案、局部调配色+加卡片、大幅赛博暗黑重排」9 组用例，直接调用 `app.services.page_edit` 验证 `SEARCH/REPLACE` 编辑块命中率、耗时与输出 Token 节省比例，给出各模型 `edit_mode: true/false` 建议并输出脱敏 JSON 报告。
+
+```bash
+code/backend/.venv/bin/python script/probe_page_edit.py --output=/tmp/page_edit_probe_report.json
+code/backend/.venv/bin/python script/probe_page_edit.py --only=qwen,doubao --per-model-concurrency=3
+```
+
+### 3. 已发布页面离线无头渲染抽检：`audit_render_check.py`
+
+纯只读抽样最近已发布页面（抽样完立即关闭数据库连接），先经 `extract_html_document` + `sanitize_html` 清洗，再并发调用 `app.services.page_render_check.check_page_render`（线上同款 CSP 沙箱与白名单 CDN），统计 `passed` / `issues_found` / `skipped` 比例、`js_error` / `blank_page` / `hang` 分布、分模型表现、P95 耗时与最大子进程 RSS，用于上线前基线评估和 `observe -> repair` 切换前的误报率核查。
+
+```bash
+code/backend/.venv/bin/python script/audit_render_check.py --limit=300 --concurrency=2 --output=/tmp/render_check_audit.json
+```
+
 ## 多端口衔接动画方案对比预览：`preview-transition/`
 
 `preview-transition/` 把上面的「多端口静态对比」模式扩展到**交互动画 / 多状态过渡**，

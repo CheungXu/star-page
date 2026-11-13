@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from json import JSONDecodeError
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -8,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,8 +46,28 @@ from app.services.html_sanitizer import extract_html_document, find_tailwind_run
 from app.services.image_assets import StoredImage
 from app.services.llm.client import create_llm_client
 from app.services.llm.cost import estimate_llm_cost, merge_cost_breakdowns, merge_llm_usage, usage_to_payload
-from app.services.llm.prompt import HTML_PAGE_SYSTEM_PROMPT, HTML_PAGE_TAILWIND_CORRECTION_PROMPT, build_skill_system_message
-from app.services.llm.types import LlmCostBreakdown, LlmImagePart, LlmMessage, LlmUsage
+from app.services.llm.prompt import (
+    HTML_PAGE_EDIT_TRUNCATION_CONTINUE_PROMPT,
+    HTML_PAGE_SYSTEM_PROMPT,
+    HTML_PAGE_TAILWIND_CORRECTION_PROMPT,
+    HTML_PAGE_TRUNCATION_CONTINUE_PROMPT,
+    build_page_edit_continue_prompt,
+    build_page_edit_fallback_prompt,
+    build_skill_system_message,
+)
+from app.services.llm.types import LlmCostBreakdown, LlmImagePart, LlmMessage, LlmModelConfig, LlmUsage
+from app.services.page_edit import (
+    DIVIDER_MARKER,
+    REPLACE_MARKER,
+    SEARCH_MARKER,
+    EditBlock,
+    ModelOutputKind,
+    apply_page_edits,
+    classify_model_output,
+    normalize_newlines,
+    parse_edit_blocks,
+)
+from app.services.page_render_check import check_page_render
 from app.services.scenes.catalog import get_scene
 from app.services.skills.registry import get_skill_registry
 from app.services.skills.selector import SkillSelectionResult, select_skill_for_prompt
@@ -59,6 +82,12 @@ CANCELLED_USER_MESSAGE = "已停止生成"
 
 
 VISION_SKIPPED_MESSAGE = "该模型仅支持文本，已跳过图片视觉读取"
+TRUNCATION_CONTINUE_STATUS_TEXT = "输出被截断，正在续写"
+TRUNCATED_USER_MESSAGE = "页面内容过长，未能完整生成"
+EDIT_FALLBACK_STATUS_TEXT = "局部修改未能精确匹配原文，正在改为生成完整页面..."
+RENDER_CHECK_STATUS_TEXT = "正在检查页面渲染效果..."
+RENDER_REPAIR_STATUS_TEXT = "检测到页面存在显示或脚本问题，正在自动修复..."
+RENDER_RECHECK_STATUS_TEXT = "正在复检修复后的页面渲染效果..."
 # 等待解析、提取时多久检查一次停止请求。
 CANCEL_POLL_SECONDS = 0.5
 
@@ -67,8 +96,105 @@ class GenerationCancelled(Exception):
     """用户主动停止。在两个模型 chunk 之间检查到停止请求时抛出，走正常收尾写成 cancelled。"""
 
 
+class GenerationTruncatedError(Exception):
+    """模型输出被截断且用尽自动续写次数后仍未完成：标失败并全额退回预扣积分。"""
+
+    def __init__(self, message: str = TRUNCATED_USER_MESSAGE) -> None:
+        super().__init__(message)
+        self.user_message = message
+
+
 class TaskLost(Exception):
     """任务已不归本 worker（续期过期后被别的 worker 接手）。已回滚，什么都不再写。"""
+
+
+# 渲染自动修复轮仅吞掉上游模型/截断类可恢复异常以保住修前已生成的页面；数据库异常与系统错误照常外抛。
+_REPAIR_RECOVERABLE_ERRORS = (
+    GenerationTruncatedError,
+    httpx.HTTPError,
+    JSONDecodeError,
+    ValueError,
+)
+
+
+@dataclass
+class RoundResult:
+    """单轮模型流式调用的结果（流式期间实时更新，供中途取消时读取已收到的字符与用量）。"""
+
+    answer_parts: list[str] = field(default_factory=list)
+    reasoning_chars: int = 0
+    answer_chars: int = 0
+    usage: LlmUsage | None = None
+    finish_reason: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+
+    @property
+    def text(self) -> str:
+        return "".join(self.answer_parts)
+
+
+@dataclass
+class _GenerationTracker:
+    """跨多轮调用（截断续写、Tailwind 重试及后续局部编辑回退/渲染修复）追踪正文与双账本用量。"""
+
+    current_messages: list[LlmMessage] = field(default_factory=list)
+    current_round: RoundResult = field(default_factory=RoundResult)
+    accumulated_text: str = ""
+    last_output_text: str = ""
+    model_provider: str | None = None
+    model_name: str | None = None
+    # 当前候选尝试内已跑完各轮的 (真实 usage, 含字符估算兜底的 usage)
+    attempt_rounds: list[tuple[LlmUsage | None, LlmUsage | None]] = field(default_factory=list)
+    # 已确认计入用户账单的轮次 (真实 usage, 含字符估算兜底的 usage)
+    billable_rounds: list[tuple[LlmUsage | None, LlmUsage | None]] = field(default_factory=list)
+    # 平台承担成本的废弃轮次（如 Tailwind 违规重试的首轮）
+    wasted_retry_usage: LlmUsage | None = None
+
+    def record_round_finished(self, *, joined_text: str) -> None:
+        round_result = self.current_round
+        self.model_provider = round_result.model_provider or self.model_provider
+        self.model_name = round_result.model_name or self.model_name
+        estimated = round_result.usage or _estimate_stream_usage(
+            self.current_messages, round_result.reasoning_chars, round_result.answer_chars
+        )
+        self.attempt_rounds.append((round_result.usage, estimated))
+        self.accumulated_text = joined_text
+        self.current_round = RoundResult()
+
+    def commit_attempt_as_billable(self) -> None:
+        self.billable_rounds.extend(self.attempt_rounds)
+        self.attempt_rounds.clear()
+        self.last_output_text = self.accumulated_text
+        self.accumulated_text = ""
+
+    def discard_attempt_as_wasted(self) -> None:
+        for _actual, estimated in self.attempt_rounds:
+            self.wasted_retry_usage = merge_llm_usage(self.wasted_retry_usage, estimated)
+        self.attempt_rounds.clear()
+        self.accumulated_text = ""
+
+    def billable_usage(self) -> LlmUsage | None:
+        if not self.billable_rounds:
+            return None
+        if not any(actual is not None for actual, _estimated in self.billable_rounds):
+            return None
+        merged: LlmUsage | None = None
+        for actual, estimated in self.billable_rounds:
+            merged = merge_llm_usage(merged, actual or estimated)
+        return merged
+
+    def prior_billable_estimated_usage(self) -> LlmUsage | None:
+        merged: LlmUsage | None = None
+        for _actual, estimated in (*self.billable_rounds, *self.attempt_rounds):
+            merged = merge_llm_usage(merged, estimated)
+        return merged
+
+    def partial_output_text(self) -> str:
+        cur = self.current_round.text
+        if self.accumulated_text and cur:
+            return join_continued_output(self.accumulated_text, cur)
+        return self.accumulated_text or cur or self.last_output_text
 
 
 @dataclass
@@ -90,6 +216,16 @@ class BatchCreation:
     runs: list[BatchRunRef] = field(default_factory=list)
     # 这一轮分叉出了新会话时，记下分叉点所属的来源会话和轮次。
     forked_from: ForkSource | None = None
+
+
+@dataclass(frozen=True)
+class _PreparedMessages:
+    """组装发给模型的初始消息链，同时携带续写局部编辑所需的上一版原文基准与开关状态。"""
+
+    messages: list[LlmMessage]
+    parent_html: str | None = None
+    use_edit_mode: bool = False
+    history_summary: str | None = None
 
 
 class GenerationService:
@@ -444,14 +580,37 @@ class GenerationService:
         page: Page,
         doc_context: DocumentContext | None = None,
         images: tuple[LlmImagePart, ...] = (),
+        *,
+        model_config: LlmModelConfig | None = None,
     ) -> list[LlmMessage]:
-        """构造发给模型的消息。
+        """构造发给模型的消息（保持返回 list[LlmMessage] 向后兼容）。"""
+        prepared = await self._prepare_llm_messages(
+            task,
+            page,
+            doc_context,
+            images,
+            model_config=model_config,
+        )
+        return prepared.messages
+
+    async def _prepare_llm_messages(
+        self,
+        task: GenerationTask,
+        page: Page,
+        doc_context: DocumentContext | None = None,
+        images: tuple[LlmImagePart, ...] = (),
+        *,
+        model_config: LlmModelConfig | None = None,
+    ) -> _PreparedMessages:
+        """构造发给模型的消息并返回上一版 HTML 基准与局部编辑启用状态。
 
         首轮：system(通用规则) + user(构造好的需求 + 本轮资料提取)。
         续写：system + user(历次全部需求清单) + assistant(最近一版完整 HTML) + user(本轮新指令 + 本轮资料提取)。
         策略：历次"指令"都带上（短、廉价，保留完整意图）；"答案"只保留最近一版 HTML
         （HTML 是完整快照，已包含此前全部改动，无需再带更早版本，避免上下文爆炸）。
         资料每轮重新提取，只放进本轮最后一条 user 消息；本轮要看的图片也挂在这条消息上。
+        当满足续写条件且全局与模型均开启局部编辑时，使用 SEARCH/REPLACE 二选一续写指令，
+        并将发给 assistant 的同一份 parent_html 原文作为后续编辑应用的唯一基准。
         """
         system_messages = self._build_system_messages(task)
         extra = doc_context.prompt_block() if doc_context is not None else ""
@@ -460,12 +619,12 @@ class GenerationService:
             return LlmMessage(role="user", content=f"{text}\n\n{extra}" if extra else text, images=images)
 
         if page.parent_page_id is None:
-            return [*system_messages, current(task.prompt)]
+            return _PreparedMessages(messages=[*system_messages, current(task.prompt)])
 
         parent_html = await self._load_node_html(page.parent_page_id)
         if not parent_html:
             # 拿不到上一版 HTML 时退化为普通生成，至少不报错。
-            return [*system_messages, current(task.prompt)]
+            return _PreparedMessages(messages=[*system_messages, current(task.prompt)])
 
         instructions = await self._collect_ancestor_instructions(page.parent_page_id)
         if instructions:
@@ -473,16 +632,31 @@ class GenerationService:
             history_text = "这是该页面到目前为止的历次需求（按先后顺序）：\n" + history_lines
         else:
             history_text = "这是该页面到目前为止的需求。"
-        continue_instruction = (
-            "请在上面这版页面的基础上，按以下新的要求调整，并输出修改后的完整 HTML（未提到的部分尽量保持不变）：\n"
-            + task.prompt
-        )
-        return [
+
+        resolved_cfg = model_config or get_model_registry().get(task.model_key or "")
+        model_allows_edit = bool(getattr(resolved_cfg, "edit_mode", True)) if resolved_cfg is not None else True
+        use_edit_mode = bool(self.settings.page_edit_mode_enabled and model_allows_edit)
+
+        if use_edit_mode:
+            continue_instruction = build_page_edit_continue_prompt(task.prompt)
+        else:
+            continue_instruction = (
+                "请在上面这版页面的基础上，按以下新的要求调整，并输出修改后的完整 HTML（未提到的部分尽量保持不变）：\n"
+                + task.prompt
+            )
+
+        messages = [
             *system_messages,
             LlmMessage(role="user", content=history_text),
             LlmMessage(role="assistant", content=parent_html),
             current(continue_instruction),
         ]
+        return _PreparedMessages(
+            messages=messages,
+            parent_html=parent_html,
+            use_edit_mode=use_edit_mode,
+            history_summary=history_text,
+        )
 
     def _build_system_messages(self, task: GenerationTask) -> list[LlmMessage]:
         """通用系统提示 + （如选中技能则）该技能的专项指南。"""
@@ -605,18 +779,8 @@ class GenerationService:
         extraction_usage: LlmUsage | None = None
         router_usage: LlmUsage | None = None
         router_model_key: str | None = None
-        wasted_retry_usage: LlmUsage | None = None
-        messages: list[LlmMessage] = []
-        answer_parts: list[str] = []
-        answer_started = False
-        model_provider: str | None = None
-        model_name: str | None = None
-        generation_usage: LlmUsage | None = None
+        tracker = _GenerationTracker()
         cost: LlmCostBreakdown | None = None
-        reasoning_total_chars = 0
-        answer_text_length = 0
-        reported_output_tokens = 0
-        next_token_report = 50
         tailwind_retry_used = False
 
         try:
@@ -683,111 +847,58 @@ class GenerationService:
             )
             if vision_skipped:
                 yield await self._record_event(task.id, "status", {"type": "status", "text": VISION_SKIPPED_MESSAGE})
-            messages = await self._build_llm_messages(task, page, doc_context, images)
+            prepared = await self._prepare_llm_messages(
+                task, page, doc_context, images, model_config=model_config
+            )
+            messages = list(prepared.messages)
+            system_messages = [m for m in messages if m.role == "system"]
+            edit_base_html: str | None = prepared.parent_html if prepared.use_edit_mode else None
+            tailwind_retry_base_html: str | None = None
+            edit_fallback_used = False
+            collected_edit_texts: list[str] = []
+
+            tracker.current_messages = messages
             task.model_prompt = _model_prompt_record(messages, doc_context)
             await self.session.commit()
 
-            llm_attempts = max(1, self.settings.llm_retry_attempts)
-            llm_attempt = 1
+            final_html_document = ""
+            final_model_output_text = ""
+
             while True:
-                stream = llm_client.stream_text(messages)
-                try:
-                    async for chunk in stream:
-                        # 停止请求在两个 chunk 之间生效；finally 里关掉流，模型连接随之断开。
-                        self._raise_if_cancelled()
-                        model_provider = chunk.provider or model_provider
-                        model_name = chunk.model or model_name
+                async for event in self._run_with_truncation_continue(
+                    task_id=task.id,
+                    llm_client=llm_client,
+                    messages=messages,
+                    tracker=tracker,
+                ):
+                    yield event
 
-                        if chunk.type == "reasoning_delta" and chunk.reasoning_text:
-                            reasoning_total_chars += len(chunk.reasoning_text)
-                            self._buffer_reasoning(chunk.reasoning_text)
-                            if self._reasoning_due():
-                                payload = self._take_reasoning_payload()
-                                if payload is not None:
-                                    yield await self._record_event(task.id, "reasoning_delta", payload)
+                raw_output = tracker.accumulated_text
+                used_edit_this_attempt = False
 
-                        if chunk.type == "text_delta" and chunk.text:
-                            if not answer_started:
-                                answer_started = True
-                                yield await self._record_event(
-                                    task.id,
-                                    "progress",
-                                    {
-                                        "type": "progress",
-                                        "step": "model_thinking",
-                                        "status": "completed",
-                                        "text": "模型思考完成",
-                                    },
-                                )
-                                yield await self._record_event(task.id, "answer_started", {"type": "answer_started"})
-                                yield await self._record_event(
-                                    task.id,
-                                    "status",
-                                    {"type": "status", "text": "页面创建中..."},
-                                )
-                                self._note_progress_written()
-                                yield await self._record_event(
-                                    task.id,
-                                    "progress",
-                                    {
-                                        "type": "progress",
-                                        "step": "model_output",
-                                        "status": "running",
-                                        "text": "模型正在输出页面 HTML",
-                                        "output_tokens": 0,
-                                        "token_source": "estimated",
-                                    },
-                                )
-                            answer_parts.append(chunk.text)
-                            answer_text_length += len(chunk.text)
-                            estimated_output_tokens = _estimate_output_tokens(answer_text_length)
-                            if estimated_output_tokens >= next_token_report and self._running_progress_due():
-                                reported_output_tokens = estimated_output_tokens
-                                next_token_report = estimated_output_tokens + 50
-                                self._note_progress_written()
-                                yield await self._record_event(
-                                    task.id,
-                                    "progress",
-                                    {
-                                        "type": "progress",
-                                        "step": "model_output",
-                                        "status": "running",
-                                        "text": "模型正在输出页面 HTML",
-                                        "output_tokens": reported_output_tokens,
-                                        "token_source": "estimated",
-                                    },
-                                )
-
-                        if chunk.type == "done" and chunk.usage:
-                            generation_usage = chunk.usage
-
-                    if answer_parts:
-                        model_output_text = "".join(answer_parts)
-                        html_document = extract_html_document(model_output_text)
-                        violation = await asyncio.to_thread(find_tailwind_runtime_violation, html_document)
-                        if violation and not tailwind_retry_used:
-                            tailwind_retry_used = True
-                            # 保留首轮违规已消耗的 usage 用于 6001 COGS 真实记账，对用户计价只收成功轮。
-                            first_round_usage = generation_usage or _estimate_stream_usage(
-                                messages, reasoning_total_chars, answer_text_length
-                            )
-                            wasted_retry_usage = merge_llm_usage(wasted_retry_usage, first_round_usage)
+                if edit_base_html is not None:
+                    output_kind = classify_model_output(raw_output)
+                    if output_kind == ModelOutputKind.EDIT_BLOCKS:
+                        edit_result = apply_page_edits(edit_base_html, raw_output)
+                        if edit_result.ok and edit_result.html is not None:
+                            used_edit_this_attempt = True
+                            candidate_output_text = edit_result.html
+                            html_document = extract_html_document(candidate_output_text)
+                        elif not edit_fallback_used:
+                            edit_fallback_used = True
+                            edit_base_html = None
+                            # 局部编辑失败回退的模型调用计入用户账单。
+                            tracker.commit_attempt_as_billable()
+                            fallback_prompt = build_page_edit_fallback_prompt(edit_result.error_message)
                             messages = [
                                 *messages,
-                                LlmMessage(role="assistant", content=model_output_text),
-                                LlmMessage(role="user", content=HTML_PAGE_TAILWIND_CORRECTION_PROMPT),
+                                LlmMessage(role="assistant", content=raw_output),
+                                LlmMessage(role="user", content=fallback_prompt),
                             ]
-                            answer_parts.clear()
-                            answer_started = False
-                            generation_usage = None
-                            reasoning_total_chars = 0
-                            answer_text_length = 0
-                            reported_output_tokens = 0
-                            next_token_report = 50
                             yield await self._record_event(
                                 task.id,
                                 "status",
-                                {"type": "status", "text": f"{violation.message}，正在要求模型改用普通内联 CSS..."},
+                                {"type": "status", "text": EDIT_FALLBACK_STATUS_TEXT},
                             )
                             self._note_progress_written()
                             yield await self._record_event(
@@ -797,106 +908,317 @@ class GenerationService:
                                     "type": "progress",
                                     "step": "model_output",
                                     "status": "running",
-                                    "text": "正在重新输出不依赖 Tailwind 的自包含 HTML",
+                                    "text": "正在改为生成完整页面 HTML",
                                     "output_tokens": 0,
                                     "token_source": "estimated",
                                 },
                             )
                             continue
-                        if violation:
-                            raise ValueError(violation.message)
-                        break
+                        else:
+                            raise ValueError(edit_result.error_message or "局部编辑应用失败")
+                    elif output_kind == ModelOutputKind.FULL_HTML:
+                        candidate_output_text = raw_output
+                        html_document = extract_html_document(candidate_output_text)
+                    else:
+                        # MALFORMED（残缺编辑块标记或无 <html）：处于局部编辑且尚未回退过时同样计入账单并回退整页重写。
+                        probe = apply_page_edits(edit_base_html, raw_output)
+                        err_reason = probe.error_message or "模型输出格式异常，未包含有效编辑块或 HTML"
+                        if not edit_fallback_used:
+                            edit_fallback_used = True
+                            edit_base_html = None
+                            tracker.commit_attempt_as_billable()
+                            fallback_prompt = build_page_edit_fallback_prompt(err_reason)
+                            messages = [
+                                *messages,
+                                LlmMessage(role="assistant", content=raw_output),
+                                LlmMessage(role="user", content=fallback_prompt),
+                            ]
+                            yield await self._record_event(
+                                task.id,
+                                "status",
+                                {"type": "status", "text": EDIT_FALLBACK_STATUS_TEXT},
+                            )
+                            self._note_progress_written()
+                            yield await self._record_event(
+                                task.id,
+                                "progress",
+                                {
+                                    "type": "progress",
+                                    "step": "model_output",
+                                    "status": "running",
+                                    "text": "正在改为生成完整页面 HTML",
+                                    "output_tokens": 0,
+                                    "token_source": "estimated",
+                                },
+                            )
+                            continue
+                        raise ValueError(err_reason)
+                elif tailwind_retry_base_html is not None:
+                    output_kind = classify_model_output(raw_output)
+                    if output_kind == ModelOutputKind.FULL_HTML:
+                        candidate_output_text = raw_output
+                        html_document = extract_html_document(candidate_output_text)
+                    elif output_kind == ModelOutputKind.EDIT_BLOCKS:
+                        tw_edit = apply_page_edits(tailwind_retry_base_html, raw_output)
+                        if tw_edit.ok and tw_edit.html is not None:
+                            used_edit_this_attempt = True
+                            candidate_output_text = tw_edit.html
+                            html_document = extract_html_document(candidate_output_text)
+                        else:
+                            raise ValueError(tw_edit.error_message or "Tailwind 修正轮局部编辑块应用失败")
+                    else:
+                        raise ValueError("Tailwind 修正轮模型未返回有效 HTML 文档")
+                else:
+                    output_kind = classify_model_output(raw_output)
+                    if edit_fallback_used and output_kind != ModelOutputKind.FULL_HTML:
+                        raise ValueError("回退整页重写后模型仍未返回有效 HTML 文档")
+                    if output_kind == ModelOutputKind.EDIT_BLOCKS or (
+                        parse_edit_blocks(raw_output).error_code == "malformed_markers"
+                    ):
+                        raise ValueError("模型返回了局部编辑块标记，但当前无可应用的基准页面")
+                    if output_kind != ModelOutputKind.FULL_HTML and not _contains_html_element(raw_output):
+                        raise ValueError("模型未返回有效 HTML 内容")
+                    candidate_output_text = raw_output
+                    html_document = extract_html_document(candidate_output_text)
 
-                    if llm_attempt >= llm_attempts:
-                        break
-
-                    generation_usage = None
-                    answer_text_length = 0
-                    reported_output_tokens = 0
-                    next_token_report = 50
+                violation = await asyncio.to_thread(find_tailwind_runtime_violation, html_document)
+                if violation and not tailwind_retry_used:
+                    tailwind_retry_used = True
+                    if used_edit_this_attempt:
+                        collected_edit_texts.append(raw_output)
+                    edit_base_html = None
+                    tailwind_retry_base_html = html_document
+                    # 保留首轮违规已消耗的 usage 用于 6001 COGS 真实记账，对用户计价只收成功轮。
+                    tracker.discard_attempt_as_wasted()
+                    messages = [
+                        *messages,
+                        LlmMessage(role="assistant", content=html_document),
+                        LlmMessage(role="user", content=HTML_PAGE_TAILWIND_CORRECTION_PROMPT),
+                    ]
                     yield await self._record_event(
                         task.id,
                         "status",
-                        {"type": "status", "text": f"模型未返回正文，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
+                        {"type": "status", "text": f"{violation.message}，正在要求模型改用普通内联 CSS..."},
                     )
-                    await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
-                    self._raise_if_cancelled()
-                    llm_attempt += 1
-                except GenerationCancelled:
-                    raise
-                except Exception:
-                    if answer_started or llm_attempt >= llm_attempts:
+                    self._note_progress_written()
+                    yield await self._record_event(
+                        task.id,
+                        "progress",
+                        {
+                            "type": "progress",
+                            "step": "model_output",
+                            "status": "running",
+                            "text": "正在重新输出不依赖 Tailwind 的自包含 HTML",
+                            "output_tokens": 0,
+                            "token_source": "estimated",
+                        },
+                    )
+                    continue
+                if violation:
+                    raise ValueError(violation.message)
+
+                tracker.commit_attempt_as_billable()
+                if used_edit_this_attempt:
+                    collected_edit_texts.append(raw_output)
+                    final_model_output_text = html_document
+                else:
+                    final_model_output_text = candidate_output_text
+                final_html_document = html_document
+                tracker.last_output_text = final_model_output_text
+                break
+
+            usage, billable_cost, cost = _summarize_usage_and_cost(
+                task_model_key=task.model_key or "",
+                tracker=tracker,
+                extraction_usage=extraction_usage,
+                router_usage=router_usage,
+                router_model_key=router_model_key,
+            )
+            yield await self._record_event(
+                task.id,
+                "progress",
+                _build_model_output_completed_payload(
+                    usage=usage,
+                    router_usage=router_usage,
+                    answer_text_length=len(final_model_output_text),
+                ),
+            )
+
+            safe_html = await asyncio.to_thread(sanitize_html, final_html_document)
+            render_mode = self.settings.page_render_check_mode
+            render_check_dict: dict[str, Any] | None = None
+            render_issue_payload: dict[str, Any] | None = None
+
+            if render_mode in {"observe", "repair"}:
+                yield await self._record_event(
+                    task.id,
+                    "status",
+                    {"type": "status", "text": RENDER_CHECK_STATUS_TEXT},
+                )
+                yield await self._record_event(
+                    task.id,
+                    "progress",
+                    {
+                        "type": "progress",
+                        "step": "deploy",
+                        "status": "running",
+                        "text": "正在检查页面渲染效果",
+                    },
+                )
+                await self._release_read_txn("渲染检查")
+                first_check = await self._await_cancellable(check_page_render(safe_html))
+
+                if render_mode == "observe":
+                    # observe 模式：只检查并记录到 page_versions.render_check，不修复、不向前端打标记。
+                    render_check_dict = first_check.to_dict(
+                        repaired=False, mode="observe", expose_issue=False
+                    )
+                    render_issue_payload = None
+                elif first_check.has_issues:
+                    yield await self._record_event(
+                        task.id,
+                        "status",
+                        {"type": "status", "text": RENDER_REPAIR_STATUS_TEXT},
+                    )
+                    self._note_progress_written()
+                    yield await self._record_event(
+                        task.id,
+                        "progress",
+                        {
+                            "type": "progress",
+                            "step": "model_output",
+                            "status": "running",
+                            "text": "正在自动修复页面显示或脚本问题",
+                            "output_tokens": 0,
+                            "token_source": "estimated",
+                        },
+                    )
+
+                    model_allows_edit = (
+                        bool(getattr(model_config, "edit_mode", True)) if model_config is not None else True
+                    )
+                    repair_allow_edit = bool(self.settings.page_edit_mode_enabled and model_allows_edit)
+                    repair_prompt = first_check.format_for_repair_prompt(
+                        prefer_edit_blocks=repair_allow_edit
+                    )
+                    repair_context_text = _build_repair_context_text(task, prepared.history_summary)
+                    repair_messages = [
+                        *system_messages,
+                        LlmMessage(role="user", content=repair_context_text),
+                        LlmMessage(role="assistant", content=final_html_document),
+                        LlmMessage(role="user", content=repair_prompt),
+                    ]
+
+                    repair_applied = False
+                    repair_raw = ""
+                    try:
+                        async for event in self._run_with_truncation_continue(
+                            task_id=task.id,
+                            llm_client=llm_client,
+                            messages=repair_messages,
+                            tracker=tracker,
+                            initial_status_text="正在自动修复页面问题...",
+                            output_progress_text="正在输出修复后的页面代码",
+                        ):
+                            yield event
+                        repair_raw = tracker.accumulated_text
+                        # 修复轮无论是否修好，一律并入用户计费账单。
+                        tracker.commit_attempt_as_billable()
+                        tracker.last_output_text = final_model_output_text
+                    except GenerationCancelled:
                         raise
+                    except _REPAIR_RECOVERABLE_ERRORS as repair_exc:
+                        if not getattr(self.session, "is_active", True):
+                            raise
+                        print(f"[render-check] 自动修复轮模型异常 task={task.id}: {repair_exc}", flush=True)
+                        if tracker.attempt_rounds:
+                            tracker.commit_attempt_as_billable()
+                        tracker.current_round = RoundResult()
+                        tracker.accumulated_text = ""
+                        tracker.last_output_text = final_model_output_text
 
-                    answer_parts.clear()
-                    generation_usage = None
-                    answer_text_length = 0
-                    reported_output_tokens = 0
-                    next_token_report = 50
+                    if repair_raw:
+                        repair_kind = classify_model_output(repair_raw)
+                        candidate_repaired_html: str | None = None
+                        if repair_kind == ModelOutputKind.EDIT_BLOCKS:
+                            repair_edit = apply_page_edits(final_html_document, repair_raw)
+                            if repair_edit.ok and repair_edit.html is not None:
+                                candidate_repaired_html = extract_html_document(repair_edit.html)
+                        elif repair_kind == ModelOutputKind.FULL_HTML:
+                            candidate_repaired_html = extract_html_document(repair_raw)
+
+                        if candidate_repaired_html is not None:
+                            tw_violation = await asyncio.to_thread(
+                                find_tailwind_runtime_violation, candidate_repaired_html
+                            )
+                            if tw_violation is None:
+                                if repair_kind == ModelOutputKind.EDIT_BLOCKS:
+                                    collected_edit_texts.append(repair_raw)
+                                    final_model_output_text = candidate_repaired_html
+                                else:
+                                    final_model_output_text = repair_raw
+                                final_html_document = candidate_repaired_html
+                                tracker.last_output_text = final_model_output_text
+                                safe_html = await asyncio.to_thread(sanitize_html, final_html_document)
+                                repair_applied = True
+
+                    # 重新汇总包含修复轮用量的账单，并刷新 model_output 完成事件
+                    usage, billable_cost, cost = _summarize_usage_and_cost(
+                        task_model_key=task.model_key or "",
+                        tracker=tracker,
+                        extraction_usage=extraction_usage,
+                        router_usage=router_usage,
+                        router_model_key=router_model_key,
+                    )
                     yield await self._record_event(
                         task.id,
-                        "status",
-                        {"type": "status", "text": f"模型调用失败，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
+                        "progress",
+                        _build_model_output_completed_payload(
+                            usage=usage,
+                            router_usage=router_usage,
+                            answer_text_length=len(final_model_output_text),
+                        ),
                     )
-                    await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
-                    self._raise_if_cancelled()
-                    llm_attempt += 1
-                finally:
-                    await stream.aclose()
 
-            # 模型已完整输出后不再响应停止：页面马上就能用，丢掉反而浪费这次调用。
-            if not answer_parts:
-                raise ValueError("模型未返回 HTML 正文")
+                    if repair_applied:
+                        yield await self._record_event(
+                            task.id,
+                            "status",
+                            {"type": "status", "text": RENDER_RECHECK_STATUS_TEXT},
+                        )
+                        yield await self._record_event(
+                            task.id,
+                            "progress",
+                            {
+                                "type": "progress",
+                                "step": "deploy",
+                                "status": "running",
+                                "text": "正在复检修复后的页面渲染效果",
+                            },
+                        )
+                        await self._release_read_txn("渲染复检")
+                        final_check = await self._await_cancellable(check_page_render(safe_html))
+                    else:
+                        final_check = first_check
 
-            model_output_text = "".join(answer_parts)
-            html_document = extract_html_document(model_output_text)
+                    render_check_dict = final_check.to_dict(
+                        repaired=True, mode="repair", expose_issue=True
+                    )
+                    if not repair_applied:
+                        render_check_dict["repair_applied"] = False
+                    render_issue_payload = final_check.to_render_issue()
+                else:
+                    render_check_dict = first_check.to_dict(
+                        repaired=False, mode="repair", expose_issue=True
+                    )
+                    render_issue_payload = None
 
-            # 技能路由单独按实际轻量模型（如 qwen-plus）单价核计，避免误按写码旗舰单价高估。
-            router_cost = (
-                estimate_llm_cost(router_model_key or task.model_key or "", router_usage)
-                if router_usage is not None
-                else None
-            )
-            billable_main_usage = merge_llm_usage(extraction_usage, generation_usage)
-            billable_cost = merge_cost_breakdowns(
-                router_cost, estimate_llm_cost(task.model_key or "", billable_main_usage)
-            )
-
-            full_main_usage = merge_llm_usage(billable_main_usage, wasted_retry_usage)
-            full_cost = merge_cost_breakdowns(
-                router_cost, estimate_llm_cost(task.model_key or "", full_main_usage)
-            )
-
-            usage = merge_llm_usage(router_usage, full_main_usage)
-            cost = full_cost or billable_cost
-            output_tokens = (
-                usage.output_tokens
-                if usage and usage.output_tokens is not None
-                else _estimate_output_tokens(answer_text_length)
-            )
-            progress_payload: dict[str, Any] = {
-                "type": "progress",
-                "step": "model_output",
-                "status": "completed",
-                "text": "模型答案输出完成",
-                "output_tokens": output_tokens,
-                "token_source": "actual" if usage and usage.output_tokens is not None else "estimated",
-            }
-            if usage and usage.input_tokens is not None:
-                progress_payload["input_tokens"] = usage.input_tokens
-            if usage and usage.total_tokens is not None:
-                progress_payload["total_tokens"] = usage.total_tokens
-            if usage and usage.cached_input_tokens is not None:
-                progress_payload["cached_input_tokens"] = usage.cached_input_tokens
-            if usage and usage.reasoning_tokens is not None:
-                progress_payload["reasoning_tokens"] = usage.reasoning_tokens
-            if router_usage is not None:
-                progress_payload["router_usage"] = usage_to_payload(router_usage)
-            yield await self._record_event(task.id, "progress", progress_payload)
-
-            task.model_output_text = model_output_text or None
-
-            safe_html = await asyncio.to_thread(sanitize_html, html_document)
+            # 模型调用与渲染检查已全部完成，不再响应停止：照常上传发布并结算。
+            model_provider = tracker.model_provider
+            model_name = tracker.model_name
+            task.model_output_text = final_model_output_text or None
+            if collected_edit_texts:
+                task.model_edit_text = "\n\n".join(collected_edit_texts)
 
             yield await self._record_event(
                 task.id,
@@ -910,16 +1232,19 @@ class GenerationService:
             )
             version_id, storage_key = await self._upload_page_html(page, safe_html)
             task.output_html_storage_key = _build_storage_debug_link(storage_key, self.settings.object_storage_bucket)
-            version = await self._create_page_version(
-                page=page,
-                task=task,
-                version_id=version_id,
-                storage_key=storage_key,
-                model_provider=model_provider,
-                model_name=model_name,
-                usage=usage,
-                cost=cost,
-            )
+            version_kwargs: dict[str, Any] = {
+                "page": page,
+                "task": task,
+                "version_id": version_id,
+                "storage_key": storage_key,
+                "model_provider": model_provider,
+                "model_name": model_name,
+                "usage": usage,
+                "cost": cost,
+            }
+            if render_check_dict is not None:
+                version_kwargs["render_check"] = render_check_dict
+            version = await self._create_page_version(**version_kwargs)
 
             await self._fence(task.id)
             page.current_version_id = version.id
@@ -927,7 +1252,7 @@ class GenerationService:
             task.status = "succeeded"
             task.finished_at = datetime.now(UTC)
 
-            # 计费结算：向用户按成功轮 billable_cost 计价扣积分，总账 6001/1102 按含重试的真实 full_cost 入账。
+            # 计费结算：向用户按 billable_cost 计价扣积分，总账 6001/1102 按含重试的真实 full_cost 入账。
             settle = await self._settle_generation_billing(
                 task, version, billable_cost or cost, ledger_cost=cost
             )
@@ -952,6 +1277,7 @@ class GenerationService:
                 "page_id": str(page.id),
                 "url": page_url,
                 "model_key": task.model_key,
+                "render_issue": render_issue_payload,
             }
             if usage is not None:
                 completed_payload["usage"] = usage_to_payload(usage)
@@ -972,21 +1298,25 @@ class GenerationService:
         except TaskLost:
             raise
         except GenerationCancelled:
+            if not getattr(self.session, "is_active", True):
+                await self.session.rollback()
             await self._fence(task.id)
-            if answer_parts and not task.model_output_text:
-                task.model_output_text = "".join(answer_parts)
+            partial_output = tracker.partial_output_text()
+            if partial_output and not task.model_output_text:
+                task.model_output_text = partial_output
             task.status = "cancelled"
             task.error_message = "用户停止了生成"
             task.finished_at = datetime.now(UTC)
             page.status = "failed"
             await self._settle_cancelled_generation(
                 task=task,
-                messages=messages,
-                reasoning_chars=reasoning_total_chars,
-                answer_chars=answer_text_length,
-                generation_usage=generation_usage,
+                messages=tracker.current_messages,
+                reasoning_chars=tracker.current_round.reasoning_chars,
+                answer_chars=tracker.current_round.answer_chars,
+                generation_usage=tracker.current_round.usage,
+                prior_billable_usage=tracker.prior_billable_estimated_usage(),
                 extraction_usage=extraction_usage,
-                wasted_retry_usage=wasted_retry_usage,
+                wasted_retry_usage=tracker.wasted_retry_usage,
                 router_usage=router_usage,
                 router_model_key=router_model_key,
             )
@@ -1000,11 +1330,15 @@ class GenerationService:
             await self._refund_flagship_trial_if_needed(task.batch_id)
             yield cancelled
         except Exception as exc:
+            if not getattr(self.session, "is_active", True):
+                await self.session.rollback()
             await self._fence(task.id)
-            if answer_parts and not task.model_output_text:
-                task.model_output_text = "".join(answer_parts)
+            partial_output = tracker.partial_output_text()
+            if partial_output and not task.model_output_text:
+                task.model_output_text = partial_output
             document_stage = isinstance(exc, DocumentStageError)
-            user_message = exc.user_message if document_stage else "页面生成失败，请稍后重试。"
+            custom_user_message = getattr(exc, "user_message", None)
+            user_message = str(custom_user_message) if custom_user_message else "页面生成失败，请稍后重试。"
             task.status = "failed"
             task.error_message = ((DocumentStageError.ERROR_PREFIX if document_stage else "") + str(exc))[:2000]
             task.finished_at = datetime.now(UTC)
@@ -1021,6 +1355,216 @@ class GenerationService:
                 await self._refund_if_batch_failed_on_documents(task.batch_id)
             await self._refund_flagship_trial_if_needed(task.batch_id)
             yield failed
+
+    async def _run_with_truncation_continue(
+        self,
+        *,
+        task_id: uuid.UUID,
+        llm_client: Any,
+        messages: list[LlmMessage],
+        tracker: _GenerationTracker,
+        initial_status_text: str = "页面创建中...",
+        output_progress_text: str = "模型正在输出页面 HTML",
+    ) -> AsyncIterator[SseEvent]:
+        """调用模型生成完整输出；若被截断则按 GENERATION_TRUNCATION_CONTINUES 自动续写拼接，仍截断则抛 GenerationTruncatedError。"""
+        base_messages = list(messages)
+        max_continues = max(0, int(self.settings.generation_truncation_continues))
+        continues_used = 0
+        tracker.accumulated_text = ""
+        tracker.attempt_rounds.clear()
+
+        while True:
+            if continues_used == 0:
+                round_messages = base_messages
+                status_text = initial_status_text
+            else:
+                continue_prompt = (
+                    HTML_PAGE_EDIT_TRUNCATION_CONTINUE_PROMPT
+                    if _looks_like_partial_edit_blocks(tracker.accumulated_text)
+                    else HTML_PAGE_TRUNCATION_CONTINUE_PROMPT
+                )
+                round_messages = [
+                    *base_messages,
+                    LlmMessage(role="assistant", content=tracker.accumulated_text),
+                    LlmMessage(role="user", content=continue_prompt),
+                ]
+                status_text = TRUNCATION_CONTINUE_STATUS_TEXT
+
+            tracker.current_messages = round_messages
+            tracker.current_round = RoundResult()
+            async for event in self._stream_llm_round(
+                task_id=task_id,
+                llm_client=llm_client,
+                messages=round_messages,
+                result=tracker.current_round,
+                prior_answer_chars=len(tracker.accumulated_text),
+                output_status_text=status_text,
+                output_progress_text=output_progress_text,
+            ):
+                yield event
+
+            finish_reason = tracker.current_round.finish_reason
+            joined_text = (
+                join_continued_output(tracker.accumulated_text, tracker.current_round.text)
+                if tracker.accumulated_text
+                else tracker.current_round.text
+            )
+            tracker.record_round_finished(joined_text=joined_text)
+
+            if not is_output_truncated(tracker.accumulated_text, finish_reason):
+                return
+
+            if continues_used >= max_continues:
+                raise GenerationTruncatedError()
+
+            continues_used += 1
+            yield await self._record_event(
+                task_id,
+                "status",
+                {"type": "status", "text": TRUNCATION_CONTINUE_STATUS_TEXT},
+            )
+
+    async def _stream_llm_round(
+        self,
+        *,
+        task_id: uuid.UUID,
+        llm_client: Any,
+        messages: list[LlmMessage],
+        result: RoundResult,
+        prior_answer_chars: int = 0,
+        output_status_text: str = "页面创建中...",
+        output_progress_text: str = "模型正在输出页面 HTML",
+    ) -> AsyncIterator[SseEvent]:
+        """调用一轮模型，流式产出事件并实时把正文、思考字符、用量和结束原因写入 result。
+
+        空正文重试与吐字前的异常重试都在本层处理；若重试耗尽仍无正文则抛 ValueError。
+        """
+        llm_attempts = max(1, self.settings.llm_retry_attempts)
+        llm_attempt = 1
+        initial_tokens = _estimate_output_tokens(prior_answer_chars)
+        next_token_report = (initial_tokens // 50 + 1) * 50 if prior_answer_chars > 0 else 50
+
+        while True:
+            answer_started = False
+            had_reasoning = False
+            stream = llm_client.stream_text(messages)
+            try:
+                async for chunk in stream:
+                    # 停止请求在两个 chunk 之间生效；finally 里关掉流，模型连接随之断开。
+                    self._raise_if_cancelled()
+                    result.model_provider = chunk.provider or result.model_provider
+                    result.model_name = chunk.model or result.model_name
+                    if chunk.finish_reason:
+                        result.finish_reason = chunk.finish_reason
+
+                    if chunk.type == "reasoning_delta" and chunk.reasoning_text:
+                        had_reasoning = True
+                        result.reasoning_chars += len(chunk.reasoning_text)
+                        self._buffer_reasoning(chunk.reasoning_text)
+                        if self._reasoning_due():
+                            payload = self._take_reasoning_payload()
+                            if payload is not None:
+                                yield await self._record_event(task_id, "reasoning_delta", payload)
+
+                    if chunk.type == "text_delta" and chunk.text:
+                        if not answer_started:
+                            answer_started = True
+                            if prior_answer_chars == 0 or had_reasoning:
+                                yield await self._record_event(
+                                    task_id,
+                                    "progress",
+                                    {
+                                        "type": "progress",
+                                        "step": "model_thinking",
+                                        "status": "completed",
+                                        "text": "模型思考完成",
+                                    },
+                                )
+                                yield await self._record_event(task_id, "answer_started", {"type": "answer_started"})
+                                yield await self._record_event(
+                                    task_id,
+                                    "status",
+                                    {"type": "status", "text": output_status_text},
+                                )
+                            if prior_answer_chars == 0:
+                                self._note_progress_written()
+                                yield await self._record_event(
+                                    task_id,
+                                    "progress",
+                                    {
+                                        "type": "progress",
+                                        "step": "model_output",
+                                        "status": "running",
+                                        "text": output_progress_text,
+                                        "output_tokens": 0,
+                                        "token_source": "estimated",
+                                    },
+                                )
+                        result.answer_parts.append(chunk.text)
+                        result.answer_chars += len(chunk.text)
+                        estimated_output_tokens = _estimate_output_tokens(prior_answer_chars + result.answer_chars)
+                        if estimated_output_tokens >= next_token_report and self._running_progress_due():
+                            next_token_report = estimated_output_tokens + 50
+                            self._note_progress_written()
+                            yield await self._record_event(
+                                task_id,
+                                "progress",
+                                {
+                                    "type": "progress",
+                                    "step": "model_output",
+                                    "status": "running",
+                                    "text": output_progress_text,
+                                    "output_tokens": estimated_output_tokens,
+                                    "token_source": "estimated",
+                                },
+                            )
+
+                    if chunk.type == "done" and chunk.usage:
+                        result.usage = chunk.usage
+
+                if result.answer_parts:
+                    return
+
+                if llm_attempt >= llm_attempts:
+                    break
+
+                result.usage = None
+                result.finish_reason = None
+                result.answer_chars = 0
+                next_token_report = (initial_tokens // 50 + 1) * 50 if prior_answer_chars > 0 else 50
+                yield await self._record_event(
+                    task_id,
+                    "status",
+                    {"type": "status", "text": f"模型未返回正文，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
+                )
+                await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
+                self._raise_if_cancelled()
+                llm_attempt += 1
+            except GenerationCancelled:
+                raise
+            except Exception:
+                if answer_started or llm_attempt >= llm_attempts:
+                    raise
+
+                result.answer_parts.clear()
+                result.usage = None
+                result.finish_reason = None
+                result.answer_chars = 0
+                next_token_report = (initial_tokens // 50 + 1) * 50 if prior_answer_chars > 0 else 50
+                yield await self._record_event(
+                    task_id,
+                    "status",
+                    {"type": "status", "text": f"模型调用失败，正在重试（{llm_attempt + 1}/{llm_attempts}）..."},
+                )
+                await asyncio.sleep(_retry_delay_seconds(self.settings, llm_attempt))
+                self._raise_if_cancelled()
+                llm_attempt += 1
+            finally:
+                aclose = getattr(stream, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+
+        raise ValueError("模型未返回 HTML 正文")
 
     async def _progress(self, task_id: uuid.UUID, step: str, status: str, text: str) -> SseEvent:
         return await self._record_event(task_id, "progress", {"type": "progress", "step": step, "status": status, "text": text})
@@ -1140,8 +1684,9 @@ class GenerationService:
         wasted_retry_usage: LlmUsage | None,
         router_usage: LlmUsage | None,
         router_model_key: str | None,
+        prior_billable_usage: LlmUsage | None = None,
     ) -> None:
-        """用户主动取消时的结算：把思考字符 + 正文字符一并纳入输出 Token 估算。"""
+        """用户主动取消时的结算：把思考字符 + 正文字符（及已跑完的前序轮次用量）一并纳入输出 Token 估算。"""
         try:
             async with self.session.begin_nested():
                 actor = await self.session.get(User, task.requested_by_user_id)
@@ -1151,13 +1696,16 @@ class GenerationService:
 
                 stream_usage = generation_usage or _estimate_stream_usage(messages, reasoning_chars, answer_chars)
                 est_out_tokens = 0
-                if stream_usage and stream_usage.output_tokens:
-                    est_out_tokens += int(stream_usage.output_tokens)
-                if wasted_retry_usage and wasted_retry_usage.output_tokens:
-                    est_out_tokens += int(wasted_retry_usage.output_tokens)
+                for usage_item in (stream_usage, prior_billable_usage, wasted_retry_usage):
+                    if usage_item and usage_item.output_tokens:
+                        est_out_tokens += int(usage_item.output_tokens)
 
                 main_usage = merge_llm_usage(
-                    merge_llm_usage(extraction_usage, stream_usage), wasted_retry_usage
+                    merge_llm_usage(
+                        merge_llm_usage(extraction_usage, prior_billable_usage),
+                        stream_usage,
+                    ),
+                    wasted_retry_usage,
                 )
                 router_cost = (
                     estimate_llm_cost(router_model_key or task.model_key or "", router_usage)
@@ -1203,6 +1751,7 @@ class GenerationService:
         model_name: str | None,
         usage: LlmUsage | None,
         cost: LlmCostBreakdown | None = None,
+        render_check: dict[str, Any] | None = None,
     ) -> PageVersion:
         result = await self.session.execute(
             select(func.count(PageVersion.id)).where(PageVersion.page_id == page.id)
@@ -1229,6 +1778,7 @@ class GenerationService:
             output_cost_cny=cost.output_cost_cny if cost else None,
             total_cost_cny=cost.total_cost_cny if cost else None,
             training_consent=task.training_consent,
+            render_check=render_check,
         )
         self.session.add(version)
         await self.session.flush()
@@ -1477,6 +2027,172 @@ def _retry_delay_seconds(settings: Any, attempt: int) -> float:
         settings.llm_retry_initial_delay_ms * (2 ** max(0, attempt - 1)),
     )
     return delay_ms / 1000
+
+
+def _summarize_usage_and_cost(
+    *,
+    task_model_key: str,
+    tracker: _GenerationTracker,
+    extraction_usage: LlmUsage | None,
+    router_usage: LlmUsage | None,
+    router_model_key: str | None,
+) -> tuple[LlmUsage | None, LlmCostBreakdown | None, LlmCostBreakdown | None]:
+    """统一汇总总 usage、向用户收费的 billable_cost 与含平台重试的总账 cost。"""
+    generation_usage = tracker.billable_usage()
+    wasted_retry_usage = tracker.wasted_retry_usage
+    # 技能路由单独按实际轻量模型（如 qwen-plus）单价核计，避免误按写码旗舰单价高估。
+    router_cost = (
+        estimate_llm_cost(router_model_key or task_model_key, router_usage)
+        if router_usage is not None
+        else None
+    )
+    billable_main_usage = merge_llm_usage(extraction_usage, generation_usage)
+    billable_cost = merge_cost_breakdowns(
+        router_cost, estimate_llm_cost(task_model_key, billable_main_usage)
+    )
+    full_main_usage = merge_llm_usage(billable_main_usage, wasted_retry_usage)
+    full_cost = merge_cost_breakdowns(
+        router_cost, estimate_llm_cost(task_model_key, full_main_usage)
+    )
+    usage = merge_llm_usage(router_usage, full_main_usage)
+    cost = full_cost or billable_cost
+    return usage, billable_cost, cost
+
+
+def _build_model_output_completed_payload(
+    *,
+    usage: LlmUsage | None,
+    router_usage: LlmUsage | None,
+    answer_text_length: int,
+) -> dict[str, Any]:
+    output_tokens = (
+        usage.output_tokens
+        if usage and usage.output_tokens is not None
+        else _estimate_output_tokens(answer_text_length)
+    )
+    progress_payload: dict[str, Any] = {
+        "type": "progress",
+        "step": "model_output",
+        "status": "completed",
+        "text": "模型答案输出完成",
+        "output_tokens": output_tokens,
+        "token_source": "actual" if usage and usage.output_tokens is not None else "estimated",
+    }
+    if usage and usage.input_tokens is not None:
+        progress_payload["input_tokens"] = usage.input_tokens
+    if usage and usage.total_tokens is not None:
+        progress_payload["total_tokens"] = usage.total_tokens
+    if usage and usage.cached_input_tokens is not None:
+        progress_payload["cached_input_tokens"] = usage.cached_input_tokens
+    if usage and usage.reasoning_tokens is not None:
+        progress_payload["reasoning_tokens"] = usage.reasoning_tokens
+    if router_usage is not None:
+        progress_payload["router_usage"] = usage_to_payload(router_usage)
+    return progress_payload
+
+
+def _build_repair_context_text(task: GenerationTask, history_summary: str | None) -> str:
+    """构造渲染修复轮的用户背景说明，保证上下文只有唯一一份待修 HTML，防止编辑块锚点串版本。"""
+    current_req = (task.user_prompt or task.prompt or "").strip()
+    if history_summary:
+        return f"{history_summary}\n\n本轮页面要求：\n{current_req}"
+    return f"该页面的制作要求：\n{current_req}"
+
+
+def _looks_like_partial_edit_blocks(text: str) -> bool:
+    """判断截断前的已输出前缀是否处于 SEARCH/REPLACE 局部编辑块形态。"""
+    if not text:
+        return False
+    parsed = parse_edit_blocks(text)
+    if parsed.blocks or parsed.error_code == "malformed_markers":
+        return True
+    return "<<<<<<<" in text and "<html" not in text.lower()
+
+
+def is_output_truncated(text: str, finish_reason: str | None) -> bool:
+    """判定模型输出是否被截断。
+
+    - finish_reason == "length"：明确触及最大输出长度上限。
+    - 厂商未给结束原因（None 或空串）：
+      - 若已是完整闭合的 SEARCH/REPLACE 编辑块（ModelOutputKind.EDIT_BLOCKS），绝不算截断；
+      - 若是完整 HTML 形态（ModelOutputKind.FULL_HTML），按正文是否含 </html>（忽略大小写）判定；
+      - 其余情况（空串、未闭合的半截编辑块等 ModelOutputKind.MALFORMED），视为截断。
+    - 正常结束（如 "stop"）即使漏写 </html> 也不算截断，浏览器可容错。
+    """
+    reason = (finish_reason or "").strip().lower()
+    if reason == "length":
+        return True
+    if not reason:
+        raw = text or ""
+        kind = classify_model_output(raw)
+        if kind == ModelOutputKind.EDIT_BLOCKS:
+            return False
+        if kind == ModelOutputKind.FULL_HTML:
+            return "</html>" not in raw.lower()
+        return True
+    return False
+
+
+_CONTINUATION_SEARCH_START_RE = re.compile(r"^[ \t]*<<<<<<<[ \t]+SEARCH[ \t]*$")
+_HTML_ELEMENT_TAG_RE = re.compile(r"<[a-zA-Z][a-zA-Z0-9-]*[\s>/]")
+
+
+def _contains_html_element(raw_text: str) -> bool:
+    return bool(raw_text and _HTML_ELEMENT_TAG_RE.search(raw_text))
+
+
+def _format_edit_blocks(blocks: tuple[EditBlock, ...]) -> str:
+    return "\n".join(
+        f"{SEARCH_MARKER}\n{b.search}\n{DIVIDER_MARKER}\n{b.replace}\n{REPLACE_MARKER}"
+        for b in blocks
+    )
+
+
+def join_continued_output(prefix: str, continuation: str) -> str:
+    """拼接截断前的半页与续写段。
+
+    - 若续写段外误包了代码围栏（```html / ```diff / ``` 等）则先剥除；
+    - 若模型忽略断点续写提示而从头重发了完整 HTML（以 <!doctype 或重复的 <html 开头），直接采用新完整文档，防止两份页面叠在一起；
+    - 若续写段以 <<<<<<< SEARCH 开头：当前缀尚无闭合块或续写段从第 1 块重发时直接采用续写段；否则保留前缀已闭合块并换行衔接；
+    - 其余正常断点续写保持起止字符原样拼接，支持标签/属性名/词中无缝拼合。
+    """
+    if not prefix:
+        return continuation
+    if not continuation:
+        return prefix
+    stripped = _strip_continuation_fence(continuation)
+    lstripped = stripped.lstrip()
+    lowered_cont = lstripped.lower()
+    lowered_prefix = prefix.lower()
+
+    if lowered_cont.startswith("<!doctype"):
+        return lstripped
+    if lowered_cont.startswith("<html") and ("<html" in lowered_prefix or "<!doctype" not in lowered_prefix):
+        return lstripped
+
+    first_line = lstripped.split("\n", 1)[0].rstrip("\r")
+    if _CONTINUATION_SEARCH_START_RE.match(first_line):
+        prefix_parsed = parse_edit_blocks(prefix)
+        if not prefix_parsed.blocks:
+            return lstripped
+        cont_parsed = parse_edit_blocks(lstripped)
+        if (
+            cont_parsed.blocks
+            and normalize_newlines(cont_parsed.blocks[0].search).strip()
+            == normalize_newlines(prefix_parsed.blocks[0].search).strip()
+        ):
+            return lstripped
+        return f"{_format_edit_blocks(prefix_parsed.blocks)}\n{lstripped}"
+
+    return prefix + stripped
+
+
+def _strip_continuation_fence(continuation: str) -> str:
+    match = re.match(r"^\s*```[a-zA-Z0-9_-]*[ \t]*\r?\n", continuation)
+    if not match:
+        return continuation
+    body = continuation[match.end() :]
+    return re.sub(r"\r?\n?```\s*$", "", body)
 
 
 def _build_storage_debug_link(storage_key: str, bucket: str) -> str:

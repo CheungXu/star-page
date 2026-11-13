@@ -50,6 +50,72 @@
   to { transform: rotate(360deg); }
 }
 
+/* 渲染检查提醒：页面已照常发布可用，不用报错红，采用温和克制的浅琥珀微徽 */
+.render-issue-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px 0 6px;
+  border: 1px solid rgba(217, 119, 6, 0.22);
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: help;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.render-issue-badge:hover {
+  border-color: rgba(217, 119, 6, 0.36);
+  background: rgba(245, 158, 11, 0.16);
+}
+
+.render-issue-badge > svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.render-issue-badge > svg .is-dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+.render-issue-badge.is-row {
+  height: 18px;
+  padding: 0 7px 0 5px;
+  border-color: rgba(217, 119, 6, 0.18);
+  background: rgba(245, 158, 11, 0.1);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.render-issue-badge.is-row > svg {
+  width: 11px;
+  height: 11px;
+}
+
+.render-issue-badge.is-on-dark {
+  border-color: rgba(251, 191, 36, 0.34);
+  background: rgba(245, 158, 11, 0.2);
+  color: #fde68a;
+}
+
+.render-issue-badge.is-on-dark:hover {
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(245, 158, 11, 0.28);
+}
+
 .vp-ring {
   width: 72px;
   height: 72px;
@@ -846,6 +912,14 @@ body.is-resizing-panes iframe {
   overflow: hidden;
 }
 
+.vb-mini-issue {
+  display: flex;
+  grid-column: 2 / -1;
+  grid-row: 3;
+  min-width: 0;
+  padding-top: 1px;
+}
+
 .vb-mini-cell {
   grid-row: 1 / 3;
   color: var(--color-text-secondary);
@@ -1038,6 +1112,13 @@ body.is-resizing-panes iframe {
   animation: dot-breathe 1.5s ease-in-out infinite;
 }
 
+.vb-heading-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .vb-carousel-btn {
   margin-left: auto;
   min-height: 28px;
@@ -1048,6 +1129,10 @@ body.is-resizing-panes iframe {
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 700;
+}
+
+.vb-heading-tools .vb-carousel-btn {
+  margin-left: 0;
 }
 
 .vb-gallery {
@@ -1421,8 +1506,17 @@ body.is-resizing-panes iframe {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   color: #fff;
   font-weight: 700;
+}
+
+.vb-carousel-title {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .vb-carousel header button,

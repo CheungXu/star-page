@@ -73,9 +73,9 @@
 | --- | --- |
 | `context.tsx` | `WorkspaceProvider`：当前批次的 runs、聚焦模型、完成顺序与"新完成"提示、前端计时；`useArrowModelNav` 左右键切模型 |
 | `panels.tsx` | `GenerationProgress`（对话栏里的进度回复气泡，传 `history` 时是已结束轮次的摘要卡）、`GenerationResults`（结果区） |
-| `bits.tsx` | 进度环、状态标、`RoundSource`（用户气泡上的来源标识：新建 / 基于某结果 / 各自续改） |
+| `bits.tsx` | 进度环、状态标、`RenderIssueBadge`（「可能有显示问题」温和提醒微徽）、`RoundSource`（用户气泡上的来源标识：新建 / 基于某结果 / 各自续改） |
 | `progress-utils.ts` | 估算进度、token 与积分汇总、时长格式化、模型配色与首字头像 |
-| `types.ts` | `WorkspaceRun`、`WorkspaceRound`（`inherited` 标记分叉会话里继承来的轮次）、`RoundBase`、`RoundNav`、`ActionLayout` |
+| `types.ts` | `WorkspaceRun`（含 `renderIssue`）、`WorkspaceRound`（`inherited` 标记分叉会话里继承来的轮次）、`RoundBase`、`RoundNav`、`ActionLayout` |
 | `actions.tsx` / `actions.css` | `ResultActions`：每个结果的四个操作（新标签页打开、放大预览、分享、继续改）按 `ActionLayout` 摆放；`SharePopover` 分享浮层 |
 | `share-poster.ts` | 浏览器端绘制分享图（与后端 `share_card._render_poster` 同一版式） |
 | `variant.ts` | `UX_VARIANT`：结果区舞台方案，构建时读 `NEXT_PUBLIC_UX_VARIANT`（默认 `C1`；`A` / `C2` 为 AB 备选，见 `alternatives/preview-toolbar/`） |
@@ -84,7 +84,7 @@
 - **进度回复气泡**：左对齐、固定宽度 `min(100% - 20px, 440px)`，展开收起宽度不变，「明细」按钮位置不动。收起时一行概要（N 个模型生成中 / N/M 已完成、用时、tokens、积分）；展开是模型明细表（输出 tokens 带比例条、用时、积分），完成后给出「最快 / 最省」标签。点模型行切换右侧聚焦版本。
 - **多轮**：每轮一个 `.chat-round`。已结束轮次的摘要卡点一下就在右侧显示那一轮的结果并标「显示中」，被下一轮选作基础的模型带「→第N轮」标签；结果区标题旁的「正在回看 第 N 轮 · 回到第 M 轮」胶囊用于回到当前轮。不再做顶部轮次 Tab，轮次多了也只在对话栏里滚动。
 - **轮次数据来源**：会话内提交新一轮时，把上一轮（需求、来源、runs，去掉 reasoning）归档进 `pastRounds`；打开历史会话时 `buildSessionFromDetail` 用会话详情的全部 batches 还原，`base_page_id` 反查出基础结果所在轮次和模型。历史结果的用时来自后端 `duration_ms`，本次会话发起的任务在完成时按提交时刻算出 `durationMs`，重连的任务交给工作区计时。
-- **结果区**：1-2 个模型并排，卡片底栏「打开 / 放大 / 分享 / 以此结果继续」；3 个以上为大舞台 + 胶片条 + 全屏轮播（左右键切换）。大预览上不放任何浮层：
+- **结果区**：1-2 个模型并排，卡片底栏「打开 / 放大 / 分享 / 以此结果继续」；3 个以上为大舞台 + 胶片条 + 全屏轮播（左右键切换）。当后端渲染检查修复后仍有异常并照常发布时，`completed` 事件与会话详情节点携带 `render_issue`，前端在并排结果卡头部 / 画廊预览顶栏及左侧轮次明细对应模型行显示克制的浅琥珀色「可能有显示问题」标签，悬停展示具体原因并引导再改一轮。大预览上不放任何浮层：
   - 线上方案 C1：选中的缩略图向右展开焦点卡，tokens / 用时 / 积分与「打开 / 放大 / 分享」按列对齐成一张小表（底边对齐缩略图），模型名左缩进到与第一列按钮图标同一竖线、在表上方竖向居中；「继续改」是缩略图底部 32px 宽条。整张卡 6px 内边距。
   - 胶片条：竖向滚轮直接横向平滑滚动（触控板横滑、Shift+滚轮交给浏览器；别处改了滚动位置时动画让出），两端按可滚动方向渐隐。
   - 切换动画：焦点卡常驻、靠宽度过渡同时展开 / 收起；一块高亮底板逐帧缓动追随选中格滑动，并把选中格平滑带进可视区；大预览新图层点击即 0.2s 淡入（未画出前透明、由旧图层顶着防闪白），iframe 加载完或 1.5 秒后移除旧图层。

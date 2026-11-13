@@ -3740,8 +3740,9 @@ h1 {
 
 .preview-cell-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 9px;
+  gap: 4px 9px;
   flex-shrink: 0;
   padding: 9px 12px;
   border-bottom: 0;
@@ -3749,12 +3750,17 @@ h1 {
 
 .preview-cell-model {
   min-width: 0;
+  max-width: calc(100% - 17px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
   font-weight: 700;
   color: var(--color-text-primary);
+}
+
+.preview-cell-head .render-issue-badge {
+  margin-left: auto;
 }
 
 .run-status-chip {

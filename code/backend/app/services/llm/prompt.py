@@ -50,6 +50,62 @@ HTML_PAGE_TAILWIND_CORRECTION_PROMPT = """上一版 HTML 使用了平台当前�
 5. 只输出完整 HTML 文档，不要输出解释或 Markdown。"""
 
 
+HTML_PAGE_TRUNCATION_CONTINUE_PROMPT = (
+    "上一段 HTML 输出因长度限制在末尾中断了。"
+    "请严格紧接上一段最后一个字符从断点处继续输出剩余的 HTML，直到 </html> 闭合为止。"
+    "不要重复上一段已输出的内容，不要使用 ```html 代码块包裹，也不要附加任何解释或说明。"
+)
+
+HTML_PAGE_EDIT_TRUNCATION_CONTINUE_PROMPT = (
+    "上一段局部编辑块输出因长度限制在末尾中断了。"
+    "请严格紧接上一段最后一个字符从断点处继续输出剩余的编辑块内容，直到最后一个 >>>>>>> REPLACE 完整闭合为止。"
+    "不要重复上一段已输出的内容，不要使用代码块包裹，也不要附加任何解释或说明。"
+)
+
+HTML_PAGE_EDIT_CONTINUE_PROMPT_TEMPLATE = """请在上面这版 HTML 页面的基础上，按本轮新要求完成修改（未提及的部分保持不变）。
+
+【输出方式：二选一，严禁混用】
+请根据本轮改动范围，在以下两种输出方式中任选其一（本轮对系统提示中「只输出完整 HTML」规则做如下特例扩展）：
+
+方式 A —— 局部编辑块（推荐用于小中幅修改：改文案/数字、调局部样式或配色、增删改单个模块/卡片/交互等）
+只输出一个或多个如下格式的查找替换块，不要输出未改动的代码，也不要附带任何解释文字或代码块围栏：
+<<<<<<< SEARCH
+（从上一版 HTML 原文逐字复制的连续片段）
+=======
+（替换后的新片段）
+>>>>>>> REPLACE
+
+局部编辑硬性规则：
+1. 三行标记 `<<<<<<< SEARCH`、`=======`、`>>>>>>> REPLACE` 必须完全一致且各自独占一行，严禁缺省、拼写变形、嵌套或只写半截标记。
+2. 每个 `SEARCH` 块必须从上一版 HTML 原文中原封不动复制（保留原有缩进、空格、换行与属性顺序），严禁自行缩写或用 `...` / `<!-- 省略 -->` 跳过中间内容。
+3. 每个 `SEARCH` 块在上一版 HTML 中必须**唯一命中 1 处**：若目标行在页面中重复出现（如 `</div>`、通用样式或相似卡片），必须连带上下相邻的 2～5 行特征上下文一起复制，确保唯一性；同时避免把大段无关代码塞进同一个块。
+4. 需要在某处新增内容（如加一个卡片、一段 CSS 或脚本）时，`SEARCH` 块必须选取插入点紧邻的一小段已有原文作为锚点，在 `REPLACE` 块中保留该锚点并附上新增内容（`SEARCH` 绝不能为空）。
+5. 如有多处修改，按在上一版 HTML 中从上到下的顺序依次输出多个编辑块，且各块的 `SEARCH` 范围不要重叠。
+6. 若启用了深度思考，请快速定位目标行号与锚点后立即输出编辑块，不要在思考中反复重写未改动段落。
+
+方式 B —— 完整 HTML 页面（用于大幅改版：整体换风格/重做视觉体系、重排大部分版式结构，或改动遍布全页超过一半代码时）
+直接输出修改后的完整 HTML 文档（从 `<!doctype html>` 开始到 `</html>` 结束），不要使用 ```html 代码块，更不要混入任何 `<<<<<<< SEARCH` 标记。
+
+【本轮修改要求】
+{prompt}"""
+
+HTML_PAGE_EDIT_FALLBACK_FULL_PROMPT = """上一轮局部修改未能应用到上一版 HTML（原因：{reason}）。
+
+请改用完整页面方式：在前面那版 HTML 页面的基础上按本轮要求完成修改（未提及的部分保持不变），直接输出修改后的完整自包含 HTML 文档（从 <!doctype html> 开始到 </html> 结束）。
+严禁再输出任何 `<<<<<<< SEARCH`、`=======`、`>>>>>>> REPLACE` 编辑块标记，不要使用 ```html 代码块包裹，也不要附加任何解释或说明。"""
+
+
+def build_page_edit_continue_prompt(prompt: str) -> str:
+    """构造续写轮启用局部编辑模式的用户提示词（安全替换，不受用户输入中花括号影响）。"""
+    return HTML_PAGE_EDIT_CONTINUE_PROMPT_TEMPLATE.replace("{prompt}", prompt.strip())
+
+
+def build_page_edit_fallback_prompt(error_message: str | None = None) -> str:
+    """构造局部编辑失败后回退整页重写的修正提示词。"""
+    reason = (error_message or "编辑块未能唯一匹配上一版页面原文").strip()
+    return HTML_PAGE_EDIT_FALLBACK_FULL_PROMPT.replace("{reason}", reason)
+
+
 def build_skill_system_message(skill: "SkillDefinition") -> str:
     """把选中的网页技能正文包装成一条 system 指令，叠加在通用规则之上。"""
     return (

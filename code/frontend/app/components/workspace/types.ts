@@ -35,6 +35,11 @@ export type UsageCostSummary = {
   discountCredits?: number;
 };
 
+export type RenderIssue = {
+  summary: string;
+  issues?: string[];
+};
+
 /** 工作区插槽看到的单个模型运行。与页面里的 RunState 结构对齐。 */
 export type WorkspaceRun = {
   taskId: string;
@@ -48,6 +53,8 @@ export type WorkspaceRun = {
   errorMessage: string;
   progressSteps: ProgressStep[];
   usageSummary?: UsageCostSummary;
+  /** 发布前渲染检查修复后仍检出的显示问题；页面照常发布，仅温和提示。 */
+  renderIssue?: RenderIssue | null;
   /** 服务端记录的生成用时；有值时优先于前端计时（从历史还原的结果没有前端计时）。 */
   durationMs?: number;
 };

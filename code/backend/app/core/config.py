@@ -140,6 +140,17 @@ class Settings(BaseSettings):
     generation_reasoning_flush_chars: int = Field(default=8000, alias="GENERATION_REASONING_FLUSH_CHARS")
     # 输出阶段每 50 token 的运行中进度，还要距上次进度满这么多秒才写。首条 0 token 和完成时的真实用量不节流。
     generation_progress_flush_seconds: float = Field(default=2, alias="GENERATION_PROGRESS_FLUSH_SECONDS")
+    # 模型输出被截断时最多自动续写的次数（默认 1 次；0 表示检测到截断后不续写直接判失败退款）。
+    generation_truncation_continues: int = Field(default=1, alias="GENERATION_TRUNCATION_CONTINUES")
+    # 续写与修复轮局部编辑（SEARCH/REPLACE）总开关；单个模型还可在 llm.models.json 用 edit_mode 覆盖。
+    page_edit_mode_enabled: bool = Field(default=True, alias="PAGE_EDIT_MODE_ENABLED")
+    # 发布前无头浏览器渲染检查档位：off（关闭，默认）/ observe（仅检查落库不修不打标）/ repair（有问题自动修一次，仍失败照常发布并打标）。
+    page_render_check_mode: str = Field(default="off", alias="PAGE_RENDER_CHECK_MODE")
+    page_render_check_concurrency: int = Field(default=2, alias="PAGE_RENDER_CHECK_CONCURRENCY")
+    page_render_check_timeout_seconds: float = Field(default=15.0, alias="PAGE_RENDER_CHECK_TIMEOUT_SECONDS")
+    page_render_check_max_queue: int = Field(default=8, alias="PAGE_RENDER_CHECK_MAX_QUEUE")
+    page_render_check_settle_ms: int = Field(default=1300, alias="PAGE_RENDER_CHECK_SETTLE_MS")
+    page_render_check_chromium_path: str | None = Field(default=None, alias="PAGE_RENDER_CHECK_CHROMIUM_PATH")
 
     object_storage_provider: str = Field(default="aliyun", alias="OBJECT_STORAGE_PROVIDER")
     object_storage_bucket: str = Field(default="", alias="OBJECT_STORAGE_BUCKET")
@@ -256,7 +267,7 @@ class Settings(BaseSettings):
 
         return value
 
-    @field_validator("auth_cookie_secure", mode="before")
+    @field_validator("auth_cookie_secure", "page_edit_mode_enabled", mode="before")
     @classmethod
     def parse_bool(cls, value: object) -> object:
         if isinstance(value, str):
@@ -266,6 +277,16 @@ class Settings(BaseSettings):
             if normalized in {"0", "false", "no", "off"}:
                 return False
         return value
+
+    @field_validator("page_render_check_mode", mode="before")
+    @classmethod
+    def parse_page_render_check_mode(cls, value: object) -> str:
+        mode = str(value if value is not None else "off").strip().lower()
+        if not mode:
+            mode = "off"
+        if mode not in {"off", "observe", "repair"}:
+            raise ValueError("PAGE_RENDER_CHECK_MODE 只能是 off、observe 或 repair")
+        return mode
 
     @field_validator("app_role", mode="before")
     @classmethod
@@ -524,11 +545,26 @@ def _resolve_api_key(entry: dict[str, Any]) -> str:
     return ""
 
 
+# defaults 中仅用于内部行为开关、不可直接透传进上游 OpenAI chat/completions 请求体的字段。
+_CATALOG_INTERNAL_DEFAULT_KEYS = frozenset({"edit_mode"})
+
+
 def _resolve_params(defaults: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
-    merged = {**(defaults or {}), **(entry.get("params") or {})}
+    base_defaults = {
+        key: value for key, value in (defaults or {}).items() if key not in _CATALOG_INTERNAL_DEFAULT_KEYS
+    }
+    merged = {**base_defaults, **(entry.get("params") or {})}
     omit = set(entry.get("omit") or [])
     # 值为 None 表示显式不发该字段；omit 批量丢弃。
     return {key: value for key, value in merged.items() if value is not None and key not in omit}
+
+
+def _resolve_edit_mode(defaults: dict[str, Any], entry: dict[str, Any]) -> bool:
+    if "edit_mode" in entry and entry["edit_mode"] is not None:
+        return bool(entry["edit_mode"])
+    if defaults and "edit_mode" in defaults and defaults["edit_mode"] is not None:
+        return bool(defaults["edit_mode"])
+    return True
 
 
 def _legacy_registry(settings: Settings) -> LlmModelRegistry:
@@ -580,6 +616,7 @@ def get_model_registry() -> LlmModelRegistry:
             available=bool(api_key and entry.get("model")),
             supports_vision=bool(entry.get("supports_vision")),
             extraction_extra_body=dict(entry.get("extraction_extra_body") or {}),
+            edit_mode=_resolve_edit_mode(defaults, entry),
         )
 
     if not models:

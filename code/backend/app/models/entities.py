@@ -190,6 +190,7 @@ class PageVersion(Base):
     output_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
     total_cost_cny: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
     training_consent: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    render_check: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     page: Mapped[Page] = relationship("Page")
@@ -275,6 +276,7 @@ class GenerationTask(Base):
     scene_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_edit_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_html_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -53,7 +53,7 @@ journalctl -u 'star-page-worker@*' -u 'star-page-web@*' -f
 journalctl -u 'star-page-*' --since -10min -o cat | grep '^\[metrics\]'   # 每个进程每分钟一行运行指标
 ```
 
-每个进程每 `METRICS_INTERVAL_SECONDS`（默认 60，0 关闭）打印一行 `[metrics]`：事件循环延迟（平均 / 最大毫秒）、默认线程池的线程数和排队数、连接池借出数和突发数、内存（`rss_mb`）、文件描述符数；web 另有事件流订阅数和分享页缓存（条数、MB、命中、未命中），worker 另有 `worker_id`、在跑任务数、是否在排空、在做的批次解析数，以及解析子进程指标（`parse_waiting`、`parse_procs`、`parse_last_rss_mb`、`parse_last_ms`、`parse_timeouts`、`parse_ooms`）。代码在 `app/core/metrics.py`。
+每个进程每 `METRICS_INTERVAL_SECONDS`（默认 60，0 关闭）打印一行 `[metrics]`：事件循环延迟（平均 / 最大毫秒）、默认线程池的线程数和排队数、连接池借出数和突发数、内存（`rss_mb`）、文件描述符数；web 另有事件流订阅数和分享页缓存（条数、MB、命中、未命中），worker 另有 `worker_id`、在跑任务数、是否在排空、在做的批次解析数、解析子进程指标（`parse_waiting`、`parse_procs`、`parse_last_rss_mb`、`parse_last_ms`、`parse_timeouts`、`parse_ooms`）以及发布前渲染检查子进程指标（`render_check_waiting`、`render_check_procs`、`render_check_last_rss_mb`、`render_check_last_ms`、`render_check_timeouts`、`render_check_skipped`、`render_check_issues`）。代码在 `app/core/metrics.py`。
 
 > 备忘（重要）：常驻服务直接从仓库目录运行且**未开 `--reload`**，只在启动时加载一次代码，改完后端代码必须重启。按改动范围选：
 > - 只改接口、分享页、计费展示、登录等请求路径上的代码：`script/restart_web.sh`。
@@ -84,7 +84,7 @@ journalctl -u 'star-page-*' --since -10min -o cat | grep '^\[metrics\]'   # 每�
 - `POST /api/generations/batches/{batch_id}/cancel`：停止这一轮还没完成的模型，返回 `stopping` 个数。已完成的照常结算，被停的写成 `cancelled`、不扣积分。
 - `GET /api/generations/{task_id}/events`：单个任务的只读事件流，旧前端兼容用。
 - `GET /api/conversations`：查询当前登录用户的会话历史列表，支持 `favorite_only=true` 和 `q=关键词`。分叉会话带 `forked_from`（来源会话 id、标题、第几轮、来源是否还在）。
-- `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树和多轮回看。`batches` 含从来源会话继承来的轮次（`inherited=true`，排在前面）。每个批次带 `kind` / `base_page_id`，每个节点带用量 `usage`、扣费 `billing` 和生成用时 `duration_ms`（任务 `finished_at - started_at`，未结束为空）。
+- `GET /api/conversations/{conversation_id}`：获取会话详情，供左侧历史恢复生成树和多轮回看。`batches` 含从来源会话继承来的轮次（`inherited=true`，排在前面）。每个批次带 `kind` / `base_page_id`，每个节点带用量 `usage`、扣费 `billing`、可选的渲染问题提示 `render_issue`（仅在 `repair` 模式修复后仍有问题时下发）和生成用时 `duration_ms`（任务 `finished_at - started_at`，未结束为空）。
 - `PATCH /api/conversations/{conversation_id}`：更新会话收藏状态。
 - `DELETE /api/conversations/{conversation_id}`：软删除会话，写入 `deleted_at` 后不再出现在历史列表；其下节点同步软删，但仍被未删除分叉会话继承的那段历史保留。
 - `GET /api/models`：返回多模型目录（含可用性）供前端勾选。
@@ -195,10 +195,28 @@ Nginx 入口需要同步放开上传体积限制，当前示例配置为 `client
 - 文件抽取文本（带图片锚点，批次和任务上都有）。
 - 本轮从资料里提取出的内容（`extracted_context`，空串表示本轮与资料无关）和提取 prompt 说明（`compression_prompt`）。
 - 最终输入页面生成模型的 prompt（附图只记说明，不存图片数据）。
-- 模型原始输出文本，便于排查 HTML 提取或清洗导致的内容丢失。
-- 生成 HTML 上传后的 OSS 调试定位信息。
+- 模型原始输出文本（`model_output_text` 始终存最终合并后的完整 HTML，供下一轮续写读取；若本轮模型输出了局部编辑块，原始编辑块另存 `model_edit_text`，见迁移 `028_page_edit_and_render_check.sql`），便于排查 HTML 提取、局部替换或清洗导致的内容丢失。
+- 生成 HTML 上传后的 OSS 调试定位信息，以及 `page_versions.render_check`（JSONB，记录发布前无头浏览器渲染检查状态、问题明细、检查档位与是否修复过）。
 
-LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY_INITIAL_DELAY_MS`、`LLM_RETRY_MAX_DELAY_MS`。底层客户端会重试可恢复的网络、超时、限流和 5xx 错误；资料提取会对“调用成功但正文为空”的情况重试（「与资料无关」用 `<EMPTY/>` 表示，不会被当成空正文）；页面生成会在正式 HTML 输出开始前失败或空输出时重试；带图请求在输出前返回 400 时，去掉图片再试一次。页面生成后、上传前还会检测 Tailwind 运行时依赖，首次命中时追加修正提示并自动重试一次。
+LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY_INITIAL_DELAY_MS`、`LLM_RETRY_MAX_DELAY_MS`。底层客户端会重试可恢复的网络、超时、限流和 5xx 错误；资料提取会对“调用成功但正文为空”的情况重试（「与资料无关」用 `<EMPTY/>` 表示，不会被当成空正文）；页面生成会在正式 HTML 输出开始前失败或空输出时重试；带图请求在输出前返回 400 时，去掉图片再试一次。页面生成后、上传前还会检测 Tailwind 运行时依赖，首次命中时追加修正提示并自动重试一次（废弃轮由平台承担成本）。
+
+### 生成质量三步增强（截断续写、局部编辑、发布前渲染检查）
+
+迁移 `028_page_edit_and_render_check.sql` 新增可空列 `generation_tasks.model_edit_text` 与 `page_versions.render_check`。单次生成任务围绕「单轮流式调用 `RoundResult`」外层编排三道质量闭环（新增的续写、局部编辑回退和渲染修复轮均并入用户账单 `billable`，超出预扣部分走既有 ≤100 积分欠费封顶机制）：
+
+1. **截断检测与自动续写**（`GENERATION_TRUNCATION_CONTINUES`，默认 `1`）：
+   - `openai_compatible.py` 捕获流式分片的 `choices[0].finish_reason` 挂到 `done` 分片上。
+   - 判定截断：`finish_reason == "length"`，或厂商未返回 `finish_reason` 且输出缺失闭合（完整 HTML 缺 `</html>`，或编辑块模式标记未闭合）。正常 `stop` 但仅漏写 `</html>` 不算截断。
+   - 触发后发 `status`「输出被截断，正在续写」，把半截输出作为 assistant 上下文并追加断点续写指令再调一次、无缝拼接；若续写次数用尽仍截断，判任务 `failed`（「页面内容过长，未能完整生成」）并全额退回预冻结积分。
+2. **续写与修复轮局部编辑（`app/services/page_edit.py`）**：
+   - 总开关 `PAGE_EDIT_MODE_ENABLED`（默认 `true`），且 `config/llm.models.json` 支持全局 `defaults.edit_mode` 与单模型 `edit_mode: true/false` 覆盖（当前 9 个模型实测均开启，探测脚本 `script/probe_page_edit.py`）。
+   - 续写提示词采用「二选一」：小中幅修改输出 `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE` 编辑块，大幅改版直接输出完整 HTML。`classify_model_output` 自动识别输出形态。
+   - 编辑基准严格取发给模型看的那份上一版原文（`_load_node_html` 返回值，未经二次清洗）；每块必须唯一命中（精确匹配失败时退回「按行忽略首尾空白」唯一匹配）。
+   - 任一编辑块为空、未命中或多处歧义，整次编辑原子作废并追加提示回退到输出完整 HTML。成功后 `model_output_text` 存合并后的完整 HTML，`model_edit_text` 存原始编辑块。
+3. **发布前无头浏览器渲染检查（`app/services/page_render_check/`）**：
+   - 开关 `PAGE_RENDER_CHECK_MODE` 三档：`off`（默认关闭）、`observe`（仅运行检查并写入 `page_versions.render_check`，不自动修复、不向前端暴露标签）、`repair`（检测到未捕获 JS 报错、首屏白屏或主线程死循环时，附带行号与堆栈让模型修复 1 次并复检；复检仍有问题照常发布，并在 `completed` 事件与会话详情下发 `render_issue`，前端结果卡展示「可能有显示问题」小标签）。
+   - 检查运行在独立一次性子进程（`PAGE_RENDER_CHECK_CONCURRENCY=2`、`PAGE_RENDER_CHECK_TIMEOUT_SECONDS=15`、`PAGE_RENDER_CHECK_MAX_QUEUE=8`、`PAGE_RENDER_CHECK_SETTLE_MS=1300`、`PAGE_RENDER_CHECK_CHROMIUM_PATH` 默认自动探测 `/root/.cache/ms-playwright/chromium-*/chrome-linux64/chrome`）。浏览器缺失、排队满或子进程报错一律 `skipped` 放行，绝不阻断发布。详见 `app/services/page_render_check/README.md`。
+   - 测试：`tests/test_truncation.py`、`tests/test_page_edit.py`、`tests/test_page_render_check.py`（含真实 Chromium 沙箱用例）、`tests/test_conversation_detail.py`、`tests/test_generation_quality_db.py`。
 
 ## 后台生成
 
@@ -231,7 +249,7 @@ LLM 调用默认带重试机制，配置项为 `LLM_RETRY_ATTEMPTS`、`LLM_RETRY
 - `reasoning_delta`：模型流式返回的 `reasoning_content`。写入前已按上面的间隔合并；回放时同一任务连续的几段还会再合成一条。
 - `answer_started`：模型进入正式 HTML 输出阶段，前端开始展示“页面创建中”。
 - `progress`：创建节点状态，目前包含 `upload_file`、`parse_file`、`compress_document`、`model_thinking`、`model_output`、`deploy`。`model_output` 完成时携带真实 `input_tokens`/`output_tokens`。
-- `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；携带 `usage` 与 `billing`（扣掉的积分和授权优惠）。
+- `completed`：页面已上传 OSS、数据库已更新，返回可访问链接；携带 `usage`、`billing`（扣掉的积分和授权优惠）以及可选的 `render_issue`（仅在 `PAGE_RENDER_CHECK_MODE=repair` 修复后仍存在渲染问题时带出）。
 - `failed`：生成失败。
 - `queued`：名额已满在排队，带 `reason`（`user_limit` / `global_limit`）和 `message`。
 - `started`：排队的任务拿到名额、开始调用模型（没排过队的任务不发）。

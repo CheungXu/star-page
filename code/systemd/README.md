@@ -20,7 +20,16 @@ systemctl status star-page-analytics.timer
 
 机器是 4 核：3 个 web 加 2 个 worker 刚好每核都有活。再加实例前先看 `[metrics]` 日志（每个进程每分钟一行，见 `code/backend/README.md`）：web 的 `loop_lag_max_ms` 常在 100 以上才值得加 web；worker 的 `running` 常贴着全站上限、或 `loop_lag` 高才值得加 worker。
 
-后端 unit 都设了 `LimitNOFILE=65536` 与 cgroup 内存兜底（worker 设 `MemoryHigh=2G`、`MemoryMax=3G` 并设 `DOCUMENT_PARSE_THREADS=1`；web 设 `MemoryMax=1G`）。systemd 默认文件描述符软上限只有 1024，每条事件流、模型调用、OSS 和数据库连接各占一个；内存封顶保证极端坏文件也只重启单个实例，不会触发整机无 swap 下的内核 OOM。改 unit 后要 `systemctl daemon-reload` 并重启进程。
+后端 unit 都设了 `LimitNOFILE=65536` 与 cgroup 内存兜底（worker 设 `MemoryHigh=2G`、`MemoryMax=3G` 并设 `DOCUMENT_PARSE_THREADS=1`、`PAGE_RENDER_CHECK_CONCURRENCY=2`；web 设 `MemoryMax=1G`）。systemd 默认文件描述符软上限只有 1024，每条事件流、模型调用、OSS 和数据库连接各占一个；内存封顶保证极端坏文件也只重启单个实例，不会触发整机无 swap 下的内核 OOM。注意文档解析子进程设了 `RLIMIT_AS`，但 Chromium 渲染检查子进程不能设 `RLIMIT_AS`（V8 会预留大块虚拟地址空间），靠 `--max-old-space-size=256`、15 秒超时杀进程树和 worker 单元的 `MemoryMax=3G` 兜底。
+
+worker 单元另承载生成质量三步改造的环境变量开关：
+
+- `GENERATION_TRUNCATION_CONTINUES=1`：模型输出被截断时最多自动续写 1 次。
+- `PAGE_EDIT_MODE_ENABLED=true`：续写与修复轮开启 `SEARCH/REPLACE` 局部编辑模式（单模型还可在 `config/llm.models.json` 用 `edit_mode` 覆盖）。
+- `PAGE_RENDER_CHECK_MODE=observe`：发布前无头浏览器渲染检查三档开关（`off` 关闭 / `observe` 仅检查落库不修不打标 / `repair` 有问题自动修 1 次、仍失败照常发布并下发 `render_issue`）。线上先跑 `observe` 观察期，确认误报率后再改 `repair` 并用 `script/restart_worker.sh` 轮流重启。
+- `PAGE_RENDER_CHECK_CONCURRENCY=2`、`PAGE_RENDER_CHECK_CHROMIUM_PATH=/root/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome`：控制单 worker 并发浏览器子进程数与 Chromium 路径（路径不配或设为 `auto` 时也会自动探测）。
+
+改 unit 后要 `systemctl daemon-reload` 并重启进程。
 
 ## 改了代码要重启哪个
 

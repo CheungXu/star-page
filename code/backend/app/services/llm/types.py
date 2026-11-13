@@ -16,6 +16,7 @@ class LlmModelConfig:
     - available：密钥是否就绪；缺失则该模型在多选中不可用。
     - supports_vision：实测能读 image_url 内容块；为假时图片在适配层被丢弃。
     - extraction_extra_body：资料提取时关闭思考的写法，替换 extra_body 里的思考相关字段。
+    - edit_mode：续写与渲染修复轮次是否允许该模型使用 SEARCH/REPLACE 局部编辑块（默认开启）。
     """
 
     key: str
@@ -31,6 +32,7 @@ class LlmModelConfig:
     available: bool = False
     supports_vision: bool = False
     extraction_extra_body: dict[str, Any] = field(default_factory=dict)
+    edit_mode: bool = True
 
 
 @dataclass(frozen=True)
@@ -88,3 +90,4 @@ class LlmStreamChunk:
     reasoning_text: str | None = None
     usage: LlmUsage | None = None
     raw_chunk: dict[str, Any] | None = None
+    finish_reason: str | None = None

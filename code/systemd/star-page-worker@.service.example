@@ -18,11 +18,17 @@ Environment=APP_ROLE=worker
 Environment=DB_POOL_SIZE=20
 Environment=DB_MAX_OVERFLOW=30
 Environment=DOCUMENT_PARSE_THREADS=1
+# 生成质量三步改造：截断自动续写、续写局部编辑（SEARCH/REPLACE）、发布前无头渲染检查（off / observe / repair）
+Environment=GENERATION_TRUNCATION_CONTINUES=1
+Environment=PAGE_EDIT_MODE_ENABLED=true
+Environment=PAGE_RENDER_CHECK_MODE=observe
+Environment=PAGE_RENDER_CHECK_CONCURRENCY=2
+Environment=PAGE_RENDER_CHECK_CHROMIUM_PATH=/root/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome
 ExecStart=/root/star-page/code/backend/.venv/bin/python -m app.worker
 Restart=always
 # 每路模型流式调用、OSS、数据库连接都占一个文件描述符，默认软上限 1024。
 LimitNOFILE=65536
-# 内存兜底（含解析子进程）：超过 2G 开始回收，到 3G 只杀当前 worker，不连累整机。
+# 内存兜底（含解析与渲染检查子进程）：超过 2G 开始回收，到 3G 只杀当前 worker，不连累整机。
 MemoryHigh=2G
 MemoryMax=3G
 RestartSec=3

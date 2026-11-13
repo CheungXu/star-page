@@ -10,7 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Ring, StatusMark } from "./bits";
+import { RenderIssueBadge, Ring, StatusMark } from "./bits";
 import { useArrowModelNav, useWorkspace } from "./context";
 import {
   batchElapsed,
@@ -295,6 +295,7 @@ function MiniRow({
   const failedAt = run.status === "failed" ? PHASES.findIndex((phase) => progress < phase.to) : -1;
   const isFastest = insights.fastestKey === run.modelKey;
   const isCheapest = insights.cheapestKey === run.modelKey;
+  const hasRenderIssue = run.status === "completed" && Boolean(run.renderIssue);
   const stage = SHORT_STAGE[stageLabel(run)] ?? stageLabel(run);
 
   return (
@@ -357,6 +358,11 @@ function MiniRow({
           )}
           {discount ? <i aria-label="有优惠" /> : null}
         </span>
+        {hasRenderIssue && (
+          <span className="vb-mini-issue">
+            <RenderIssueBadge issue={run.renderIssue} variant="row" />
+          </span>
+        )}
       </button>
     </li>
   );
@@ -713,9 +719,14 @@ export function GenerationResults() {
         </h2>
         <PastRoundChip />
         {many && (
-          <button type="button" className="vb-carousel-btn" onClick={() => setCarousel(true)}>
-            全屏轮播
-          </button>
+          <div className="vb-heading-tools">
+            {active?.status === "completed" && active.renderIssue && (
+              <RenderIssueBadge issue={active.renderIssue} modelLabel={active.modelLabel} />
+            )}
+            <button type="button" className="vb-carousel-btn" onClick={() => setCarousel(true)}>
+              全屏轮播
+            </button>
+          </div>
         )}
       </div>
       {!many && (
@@ -815,7 +826,12 @@ export function GenerationResults() {
       {carousel && active && (
         <div className="vb-carousel" role="dialog" aria-modal="true" aria-label="全屏轮播">
           <header>
-            <span>{activeIndex + 1} / {runs.length} · {active.modelLabel}</span>
+            <span className="vb-carousel-title">
+              <span>{activeIndex + 1} / {runs.length} · {active.modelLabel}</span>
+              {active.status === "completed" && active.renderIssue && (
+                <RenderIssueBadge issue={active.renderIssue} variant="on-dark" />
+              )}
+            </span>
             <button type="button" onClick={() => setCarousel(false)}>关闭</button>
           </header>
           <div className="vb-carousel-body">

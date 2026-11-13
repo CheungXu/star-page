@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ConversationForkSource(BaseModel):
@@ -47,6 +47,11 @@ class ConversationBilling(BaseModel):
     discount_credits: int = 0
 
 
+class ConversationRenderIssue(BaseModel):
+    summary: str
+    issues: list[str] = Field(default_factory=list)
+
+
 class ConversationNode(BaseModel):
     page_id: UUID
     task_id: UUID | None
@@ -59,6 +64,7 @@ class ConversationNode(BaseModel):
     page_url: str
     usage: ConversationUsage | None = None
     billing: ConversationBilling | None = None
+    render_issue: ConversationRenderIssue | None = None
     # 生成任务从开始到结束的用时；任务未结束或缺时间戳时为空。
     duration_ms: int | None = None
 

@@ -90,9 +90,11 @@ def _web_metrics(bus: GenerationBus | None) -> dict[str, object]:
         values["bus"] = int(bus.healthy)
     else:
         from app.services.document_parser.child import parse_subprocess_stats
+        from app.services.page_render_check import render_check_stats
 
         values["running"] = len(generation_runner._tasks)
         values.update(parse_subprocess_stats())
+        values.update(render_check_stats())
     return values
 
 

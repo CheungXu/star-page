@@ -18,6 +18,7 @@ from app.services.document_parser.child import parse_subprocess_stats
 from app.services.document_parser.pipeline import active_parse_jobs, hand_over_on_exit, shutdown_parse_jobs
 from app.services.generation_bus import CHANNEL_CANCEL, CHANNEL_DISPATCH, GenerationBus
 from app.services.generation_runner import generation_runner
+from app.services.page_render_check import render_check_stats
 
 
 async def run_worker() -> None:
@@ -68,6 +69,7 @@ async def run_worker() -> None:
             **generation_runner.stats(),
             "parse_jobs": active_parse_jobs(),
             **parse_subprocess_stats(),
+            **render_check_stats(),
             "bus": int(bus.healthy),
         },
     )

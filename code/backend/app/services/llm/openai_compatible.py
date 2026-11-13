@@ -101,6 +101,9 @@ class OpenAICompatibleClient:
             ) as response:
                 response.raise_for_status()
 
+                finish_reason: str | None = None
+                last_model: str = self.model.model
+
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -111,7 +114,12 @@ class OpenAICompatibleClient:
 
                     raw_chunk = json.loads(payload)
                     model = raw_chunk.get("model") or self.model.model
-                    delta = (raw_chunk.get("choices") or [{}])[0].get("delta") or {}
+                    last_model = model
+                    choices = raw_chunk.get("choices") or []
+                    first_choice = choices[0] if choices else {}
+                    if first_choice.get("finish_reason"):
+                        finish_reason = str(first_choice["finish_reason"])
+                    delta = first_choice.get("delta") or {}
 
                     reasoning_text = delta.get("reasoning_content")
                     if reasoning_text:
@@ -149,12 +157,14 @@ class OpenAICompatibleClient:
                                 reasoning_tokens=completion_details.get("reasoning_tokens"),
                             ),
                             raw_chunk=raw_chunk,
+                            finish_reason=finish_reason,
                         )
 
         yield LlmStreamChunk(
             type="done",
             provider=self.model.provider,
-            model=self.model.model,
+            model=last_model,
+            finish_reason=finish_reason,
         )
 
     def _retry_attempts(self) -> int:

@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { modelAccent, modelGlyph } from "./progress-utils";
-import type { WorkspaceRound, WorkspaceRun } from "./types";
+import type { RenderIssue, WorkspaceRound, WorkspaceRun } from "./types";
 
 export function Ring({ value, label }: { value: number; label?: string }) {
   const radius = 26;
@@ -28,6 +28,47 @@ export function StatusMark({ status }: { status: WorkspaceRun["status"] }) {
   if (status === "cancelled") return <span className="vp-mark is-stop" title="已停止" />;
   if (status === "queued") return <span className="vp-mark is-queue" title="排队中" />;
   return <span className="vp-mark is-run" />;
+}
+
+export function formatRenderIssueTip(issue: RenderIssue, modelLabel?: string): string {
+  const summary = issue.summary.replace(/\s+/g, " ").trim() || "检测到页面可能有显示异常";
+  const head = modelLabel ? `「${modelLabel}」${summary}` : summary;
+  const normalizedIssues = (issue.issues ?? [])
+    .map((item) => item.replace(/\s+/g, " ").trim())
+    .filter((item) => item.length > 0 && item !== summary);
+  const shown = normalizedIssues.slice(0, 3).map((item) => (item.length > 120 ? `${item.slice(0, 120)}…` : item));
+  const lines = [head, ...shown.map((item) => `· ${item}`)];
+  if (normalizedIssues.length > shown.length) {
+    lines.push(`· 另有 ${normalizedIssues.length - shown.length} 项问题`);
+  }
+  lines.push("可在下方输入框继续描述问题，让模型再修改一轮");
+  return lines.join("\n");
+}
+
+/** 渲染检查发现异常但仍已发布时的温和提醒微徽。 */
+export function RenderIssueBadge({
+  issue,
+  modelLabel,
+  variant = "default",
+}: {
+  issue?: RenderIssue | null;
+  modelLabel?: string;
+  variant?: "default" | "row" | "on-dark";
+}) {
+  if (!issue) return null;
+  return (
+    <span
+      className={`render-issue-badge ${variant !== "default" ? `is-${variant}` : ""}`}
+      title={formatRenderIssueTip(issue, modelLabel)}
+    >
+      <svg viewBox="0 0 12 12" aria-hidden="true">
+        <circle cx="6" cy="6" r="4.75" />
+        <path d="M6 3.7v2.7" />
+        <circle className="is-dot" cx="6" cy="8.3" r="0.6" />
+      </svg>
+      <span>可能有显示问题</span>
+    </span>
+  );
 }
 
 export function MiniAvatar({ modelKey, label }: { modelKey: string; label: string }) {
